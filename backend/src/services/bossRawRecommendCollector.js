@@ -101,7 +101,7 @@ function chooseExactJob(options, title) {
   const matches = (options || []).filter(item =>
     normalizeTitle(item.label) === title && /^[A-Za-z0-9_-]{1,128}$/.test(item.value || ''));
   if (matches.length !== 1) throw fail('BOSS_RECOMMENDED_JOB_UNAVAILABLE',
-    `BOSS 企业账号下没有唯一的“${title}”岗位，已暂停采集`);
+    `BOSS 企业账号下没有唯一的“${title}”在招岗位；请改用“官方搜索结果”模式，或在平台确认同名在招岗位`);
   return matches[0];
 }
 

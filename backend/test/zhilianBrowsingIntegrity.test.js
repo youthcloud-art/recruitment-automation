@@ -17,6 +17,34 @@ function readyService() {
   return service;
 }
 
+test('智联清理旧岗位城市筛选时接受新版关闭图标并确认已变成不限', async () => {
+  const service = readyService();
+  let chipVisible = true;
+  let cityLabel = '惠州';
+  let clicks = 0;
+  const chip = {
+    first: () => chip,
+    filter: () => chip,
+    isVisible: async () => chipVisible,
+    locator: selector => ({
+      count: async () => selector === '[class*="times-circle"]' ? 1 : 0,
+      isVisible: async () => true,
+      click: async () => { clicks++; chipVisible = false; cityLabel = '不限'; }
+    }),
+    waitFor: async ({ state }) => { assert.equal(state, 'hidden'); assert.equal(chipVisible, false); }
+  };
+  service.page.locator = selector => {
+    if (selector === '.search-condition-result-new__item') return chip;
+    if (selector === '.keyword-panel__city') return {
+      first: () => ({ isVisible: async () => true, innerText: async () => cityLabel })
+    };
+    return { first: () => ({ isVisible: async () => false }) };
+  };
+  await service.clearInheritedSearchFilters({ location: '不限' });
+  assert.equal(clicks, 1);
+  assert.equal(cityLabel, '不限');
+});
+
 test('智联多关键词让当前关键词采集全部剩余额度，达到目标后停止', async () => {
   const service = readyService();
   const calls = [];

@@ -1066,16 +1066,32 @@ class ZhilianService {
     const cityChip = this.page.locator('.search-condition-result-new__item')
       .filter({ hasText: '期望工作地：' }).first();
     if (await cityChip.isVisible().catch(() => false)) {
-      const close = cityChip.locator('i.sati-times-circle-s').first();
-      if (!await close.isVisible().catch(() => false)) {
+      let close = null;
+      for (const selector of ['i.sati-times-circle-s', '[class*="times-circle"]',
+        '[class*="close"]', '[aria-label*="关闭"]', '[aria-label*="清除"]',
+        'button', 'svg']) {
+        const candidate = cityChip.locator(selector);
+        if (await candidate.count().catch(() => 0) !== 1 ||
+            !await candidate.isVisible().catch(() => false)) continue;
+        close = candidate;
+        break;
+      }
+      if (!close) {
         throw new Error('智联保留了上一个岗位的工作地点，无法清除；已停止当前搜索');
       }
       await close.click({ timeout: 5000 });
-      await this.page.waitForTimeout(500);
+      await cityChip.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {
+        throw new Error('智联保留了上一个岗位的工作地点，无法清除；已停止当前搜索');
+      });
     }
     const city = this.page.locator('.keyword-panel__city').first();
     if (await city.isVisible().catch(() => false)) {
-      const label = (await city.innerText()).trim();
+      let label = '';
+      for (let poll = 0; poll < 6; poll++) {
+        label = (await city.innerText()).trim();
+        if (label === '不限') break;
+        await this.page.waitForTimeout(500);
+      }
       if (label !== '不限') {
         throw new Error(`智联工作地点仍为“${label}”，与当前岗位“不限”不符；已停止当前搜索`);
       }

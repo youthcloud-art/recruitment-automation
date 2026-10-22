@@ -9,6 +9,7 @@
     "build": "echo 'Backend build completed - Netlify Functions ready'",
     "lint": "echo 'Backend lint check passed'",
     "test": "node --test --test-concurrency=2 test/*.test.js",
+    "postinstall": "node scripts/check-ocr-assets.js",
     "db:migrate": "node src/database/migrate.js"
   },
   "dependencies": {

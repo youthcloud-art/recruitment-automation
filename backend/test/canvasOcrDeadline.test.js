@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const CanvasOcrService = require('../src/services/canvasOcrService');
 
@@ -20,10 +22,28 @@ test('OCR loads bundled languages without relying on process cwd or a CDN', asyn
   await service.initializeOcr();
   assert.equal(invocation[0], 'chi_sim+eng');
   assert.equal(invocation[1], 1);
-  assert.equal(invocation[2].langPath, path.resolve(__dirname, '..'));
+  assert.equal(invocation[2].langPath, path.resolve(__dirname, '../assets/tessdata'));
   assert.equal(invocation[2].cacheMethod, 'none');
   assert.equal(invocation[2].gzip, false);
   await service.destroy();
+});
+
+test('missing or invalid bundled OCR models fail before a worker starts', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'recruitment-ocr-model-'));
+  let starts = 0;
+  const service = new CanvasOcrService({ languagePath: folder,
+    createOcrWorker: async () => { starts++; return { terminate: async () => {} }; } });
+  try {
+    await assert.rejects(service.initializeOcr(), error =>
+      error.code === 'OCR_LANGUAGE_DATA_MISSING');
+    fs.writeFileSync(path.join(folder, 'chi_sim.traineddata'), 'broken');
+    await assert.rejects(service.initializeOcr(), error =>
+      error.code === 'OCR_LANGUAGE_DATA_INVALID');
+    assert.equal(starts, 0);
+  } finally {
+    fs.unlinkSync(path.join(folder, 'chi_sim.traineddata'));
+    fs.rmdirSync(folder);
+  }
 });
 
 test('OCR worker initialization has a deadline and closes a late worker', async () => {

@@ -38,6 +38,17 @@ if (Test-Path -LiteralPath (Join-Path $SourceRoot '.git')) {
 foreach ($relative in @('backend\src\index.js','backend\package-lock.json','frontend\package-lock.json','deploy\company\gateway.js')) {
     if (-not (Test-Path -LiteralPath (Join-Path $release $relative) -PathType Leaf)) { throw "Release is missing $relative" }
 }
+$ocrHashes = @{
+    'chi_sim.traineddata' = 'A5FCB6F0DB1E1D6D8522F39DB4E848F05984669172E584E8D76B6B3141E1F730'
+    'eng.traineddata' = '7D4322BD2A7749724879683FC3912CB542F19906C83BCC1A52132556427170B2'
+}
+foreach ($name in $ocrHashes.Keys) {
+    $model = Join-Path $release ('backend\assets\tessdata\' + $name)
+    if (-not (Test-Path -LiteralPath $model -PathType Leaf)) { throw "Release is missing OCR language data: $name" }
+    if ((Get-FileHash -LiteralPath $model -Algorithm SHA256).Hash -cne $ocrHashes[$name]) {
+        throw "Release OCR language data checksum failed: $name"
+    }
+}
 # Never let historical CRA environment files override the company build.
 Get-ChildItem -LiteralPath (Join-Path $release 'frontend') -Force -File | Where-Object { $_.Name -match '^\.env($|\.)' } | Remove-Item -Force
 foreach ($relative in @('.local','backend\storage','backend\uploads','backend\.env')) {
@@ -55,7 +66,10 @@ try {
         [Environment]::SetEnvironmentVariable($name, $buildEnvironment[$name], 'Process')
     }
     Push-Location (Join-Path $release 'backend')
-    try { Invoke-Checked $config.npmPath @('ci', '--omit=dev', '--no-audit', '--no-fund') } finally { Pop-Location }
+    try {
+        Invoke-Checked $config.npmPath @('ci', '--omit=dev', '--no-audit', '--no-fund')
+        Invoke-Checked $config.nodePath @('scripts\check-ocr-assets.js')
+    } finally { Pop-Location }
     Push-Location (Join-Path $release 'frontend')
     try {
         Invoke-Checked $config.npmPath @('ci', '--include=dev', '--no-audit', '--no-fund')

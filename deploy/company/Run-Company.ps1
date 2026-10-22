@@ -10,7 +10,7 @@ try {
     if (Test-Path -LiteralPath (Join-Path $control 'stop.request')) { exit 0 }
     $pointer = Get-Content -LiteralPath (Join-Path $control 'current-release.json') -Raw | ConvertFrom-Json
     $release = Assert-ChildPath (Join-Path $InstallRoot 'releases') ([string]$pointer.root)
-    Assert-CompanyPortsFree -BackendPort $config.backendPort
+    Assert-CompanyPortsFree -BackendPort $config.backendPort -GatewayPort $config.gatewayPort
     $definitions = @(Get-CompanyRuntimeDefinitions $config $release)
     foreach ($definition in $definitions) {
         $children += Start-CompanyChild $config $definition

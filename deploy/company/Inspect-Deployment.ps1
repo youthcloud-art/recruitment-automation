@@ -48,7 +48,7 @@ function Read-InventoryJson([string]$Path) {
 
 $inventoryErrors = @()
 $allListeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)
-$listeners = @($allListeners | Where-Object { $_.LocalPort -in @(4000,5001,19501) } | ForEach-Object {
+$listeners = @($allListeners | Where-Object { $_.LocalPort -in @(4000,4001,5001,19501) } | ForEach-Object {
     [pscustomobject]@{
         address=$_.LocalAddress; port=$_.LocalPort; pid=$_.OwningProcess
         processChain=@(Get-ProcessChain ([int]$_.OwningProcess))
@@ -103,6 +103,7 @@ $report = [pscustomobject]@{
     configured=[bool]$config
     bootstrapCommit=if ($config) {$config.bootstrapCommit} else {$null}
     configuredBackendPort=if ($config -and $config.PSObject.Properties['backendPort']) {$config.backendPort} else {5001}
+    configuredGatewayPort=if ($config -and $config.PSObject.Properties['gatewayPort']) {$config.gatewayPort} else {4000}
     candidateBackendPort=19501
     candidateBackendPortHasNoListener=(@($allListeners | Where-Object { $_.LocalPort -eq 19501 }).Count -eq 0)
     preparedRelease=$preparedDetails

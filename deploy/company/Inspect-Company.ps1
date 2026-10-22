@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
-$listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in @(4000,5001,19501) } | ForEach-Object {
+$listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in @(4000,4001,5001,19501) } | ForEach-Object {
     $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)" -ErrorAction SilentlyContinue
     [pscustomobject]@{address=$_.LocalAddress;port=$_.LocalPort;pid=$_.OwningProcess;executable=$process.ExecutablePath;parentPid=$process.ParentProcessId}
 })

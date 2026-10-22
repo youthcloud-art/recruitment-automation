@@ -41,7 +41,7 @@ try {
         Disable-ScheduledTask -TaskName $old.name | Out-Null
         if ($old.running) { Stop-ScheduledTask -TaskName $old.name }
     }
-    Assert-CompanyPortsFree -BackendPort $config.backendPort
+    Assert-CompanyPortsFree -BackendPort $config.backendPort -GatewayPort $config.gatewayPort
     New-Item -ItemType Directory -Path $snapshot | Out-Null
     Copy-DirectoryChecked (Join-Path $InstallRoot 'shared') (Join-Path $snapshot 'shared')
     $snapshotComplete = $true
@@ -49,22 +49,22 @@ try {
     Write-JsonFile $pointerPath @{root=$ReleaseRoot; commit=[string]$release.commit; activatedAtUtc=[datetime]::UtcNow.ToString('o')}
     $changed = $true
     Start-CompanyRuntime $config
-    Wait-CompanyHealth ("http://" + $config.companyHost + ':4000/healthz')
+    Wait-CompanyHealth ("http://" + $config.companyHost + ':' + $config.gatewayPort + '/healthz')
     Write-JsonFile (Join-Path $InstallRoot 'delivery\last-deployment.json') @{ok=$true;commit=[string]$release.commit;release=$ReleaseRoot;snapshot=$snapshot;timeUtc=[datetime]::UtcNow.ToString('o')}
-    Write-Host "DEPLOYED: $($release.commit) http://$($config.companyHost):4000/"
+    Write-Host "DEPLOYED: $($release.commit) http://$($config.companyHost):$($config.gatewayPort)/"
 } catch {
     $failure = $_
     if (-not $switchLock) { throw $failure }
     if ($changed) {
         try { Stop-CompanyRuntime $config } catch { Write-Warning $_.Exception.Message }
         # Refuse to restore a database while any known application port is live.
-        Assert-CompanyPortsFree -BackendPort $config.backendPort
+        Assert-CompanyPortsFree -BackendPort $config.backendPort -GatewayPort $config.gatewayPort
         if ($snapshotComplete) { Copy-DirectoryChecked (Join-Path $snapshot 'shared') (Join-Path $InstallRoot 'shared') -Mirror }
         if ($previous) { Write-JsonFile $pointerPath $previous } else { Remove-Item -LiteralPath $pointerPath -Force -ErrorAction SilentlyContinue }
     }
     if ($previous -and $stopped) {
         Start-CompanyRuntime $config
-        Wait-CompanyHealth ("http://" + $config.companyHost + ':4000/healthz')
+        Wait-CompanyHealth ("http://" + $config.companyHost + ':' + $config.gatewayPort + '/healthz')
     }
     foreach ($old in $oldTasks) {
         if ($old.enabled) { Enable-ScheduledTask -TaskName $old.name | Out-Null }

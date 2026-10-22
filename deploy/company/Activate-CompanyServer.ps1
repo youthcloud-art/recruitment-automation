@@ -1,9 +1,11 @@
 # Complete the reviewed, prepared installation. The operator stops the old
 # manually launched app only AFTER Gitee fetch, build and runtime checks pass.
+# -Parallel uses the new port 4001 and never prompts or touches the old app.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{40}$')][string]$Commit,
-    [string]$InstallRoot = 'D:\App\SXF\Smart-Recruitment-Agent'
+    [string]$InstallRoot = 'D:\App\SXF\Smart-Recruitment-Agent',
+    [switch]$Parallel
 )
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -29,8 +31,10 @@ foreach ($taskName in @($config.runtimeTask,$config.syncTask)) {
     if (-not $runtime -and ($task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or [string]$task.Principal.LogonType -ne 'ServiceAccount' -or $task.State -ne 'Disabled')) { throw 'The mirror task must still be disabled and owned by SYSTEM.' }
 }
 
+$publicPort = if ($Parallel) {4001} else {4000}
+$publicUrl = 'http://192.168.1.24:' + $publicPort + '/'
 $resultPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AutoRecru-Deployment-Result.json'
-$result = @{ok=$false;state='preparing';commit=$Commit;installRoot=$InstallRoot;url='http://192.168.1.24:4000/';backendPort=19501;timeUtc=[datetime]::UtcNow.ToString('o')}
+$result = @{ok=$false;state='preparing';commit=$Commit;installRoot=$InstallRoot;url=$publicUrl;gatewayPort=$publicPort;backendPort=19501;parallel=[bool]$Parallel;timeUtc=[datetime]::UtcNow.ToString('o')}
 $setupLock = $null
 $testChildren = @()
 $previousSsh = [Environment]::GetEnvironmentVariable('GIT_SSH_COMMAND','Process')
@@ -59,12 +63,21 @@ try {
             $actual = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
             $incoming = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
             $old = $baseline.files.PSObject.Properties[$file.Name]
-            if ($actual -ine $incoming -and (-not $old -or $actual -ine [string]$old.Value)) { throw "Delivery script has local changes and was preserved: $($file.Name)" }
+            $accepted = $actual -ieq $incoming -or ($old -and $actual -ieq [string]$old.Value)
+            if ($baseline.PSObject.Properties['reviewedVersions']) {
+                foreach ($version in $baseline.reviewedVersions) {
+                    $reviewed = $version.files.PSObject.Properties[$file.Name]
+                    if ($reviewed -and $actual -ieq [string]$reviewed.Value) { $accepted = $true }
+                }
+            }
+            if (-not $accepted) { throw "Delivery script has local changes and was preserved: $($file.Name)" }
         }
     }
     # Windows PID 4 owns 5001 on this server. Do not modify or stop it.
     Assert-CompanyPortsFree -BackendPort 19501 -GatewayPort 19502
+    if ($Parallel) { Assert-CompanyPortsFree -BackendPort 19501 -GatewayPort $publicPort }
     $config.backendPort = 19501
+    $config.gatewayPort = $publicPort
     $knownHosts = Join-Path $InstallRoot 'delivery\known_hosts'
     $env:GIT_SSH_COMMAND = '"' + $config.sshPath + '" -i "' + $config.deployKeyPath + '" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="' + $knownHosts + '"'
     Write-Host 'STEP 1: Verify the server read-only key by fetching Gitee main.'
@@ -114,29 +127,35 @@ try {
     Assert-CompanyPortsFree -BackendPort 19501 -GatewayPort 19502
 
     # Create only the dedicated, narrow company rule; never replace another rule.
-    $rule = Get-NetFirewallRule -Name 'AutoRecru-Company-TCP4000' -ErrorAction SilentlyContinue
+    $ruleName = 'AutoRecru-Company-TCP' + $publicPort
+    $rule = Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
     if ($rule) {
         $ports = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule
         $addresses = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $rule
         $application = Get-NetFirewallApplicationFilter -AssociatedNetFirewallRule $rule
         if ($rule.Enabled -ne 'True' -or $rule.Direction -ne 'Inbound' -or $rule.Action -ne 'Allow' -or
-            [string]$ports.LocalPort -ne '4000' -or [string]$ports.Protocol -notin @('TCP','6') -or
+            [string]$ports.LocalPort -ne [string]$publicPort -or [string]$ports.Protocol -notin @('TCP','6') -or
             [string]$addresses.LocalAddress -ne [string]$config.companyHost -or $application.Program -ine [string]$config.nodePath -or
             ((@($addresses.RemoteAddress | ForEach-Object { ConvertTo-CanonicalFirewallNetwork $_ }) | Sort-Object) -join ',') -cne ((@($config.allowedNetworks) | Sort-Object) -join ',')) { throw 'The existing company firewall rule differs from the reviewed configuration.' }
     } else {
-        New-NetFirewallRule -Name 'AutoRecru-Company-TCP4000' -DisplayName 'AutoRecru company networks TCP 4000' -Direction Inbound -Action Allow -Protocol TCP -LocalAddress $config.companyHost -LocalPort 4000 -RemoteAddress $config.allowedNetworks -Program $config.nodePath -Profile Any | Out-Null
+        New-NetFirewallRule -Name $ruleName -DisplayName ('AutoRecru company networks TCP ' + $publicPort) -Direction Inbound -Action Allow -Protocol TCP -LocalAddress $config.companyHost -LocalPort $publicPort -RemoteAddress $config.allowedNetworks -Program $config.nodePath -Profile Any | Out-Null
     }
     $result.state = 'ready_for_cutover'
     Write-JsonFile $resultPath $result
     Write-Host ''
-    Write-Host 'READY_TO_SWITCH: Gitee fetch, build and local runtime checks passed.'
-    Write-Host 'The old recruitment app was manually launched in another PowerShell window.'
-    Write-Host 'Keep that OLD window open. Press Ctrl+C there to stop the old app, then return HERE.'
-    Write-Host 'Do not press Ctrl+C in this new activation window. Do not log off Windows.'
-    Write-Host 'If the first activation fails, use the OLD window to re-run its previous launch command.'
-    $answer = Read-Host 'After stopping the old app, type SWITCH here (or type CANCEL to leave the new app inactive)'
-    if ($answer -cne 'SWITCH') { throw 'Cutover cancelled. No new runtime was started; keep or restart the old application as needed.' }
-    Assert-CompanyPortsFree -BackendPort $config.backendPort
+    if ($Parallel) {
+        Write-Host 'READY_TO_START: checks passed. Starting automatically on the new port 4001.'
+        Write-Host 'The old port 4000 app remains unchanged. No SWITCH input is required.'
+    } else {
+        Write-Host 'READY_TO_SWITCH: Gitee fetch, build and local runtime checks passed.'
+        Write-Host 'The old recruitment app was manually launched in another PowerShell window.'
+        Write-Host 'Keep that OLD window open. Press Ctrl+C there to stop the old app, then return HERE.'
+        Write-Host 'Do not press Ctrl+C in this new activation window. Do not log off Windows.'
+        Write-Host 'If the first activation fails, use the OLD window to re-run its previous launch command.'
+        $answer = Read-Host 'After stopping the old app, type SWITCH here (or type CANCEL to leave the new app inactive)'
+        if ($answer -cne 'SWITCH') { throw 'Cutover cancelled. No new runtime was started; keep or restart the old application as needed.' }
+    }
+    Assert-CompanyPortsFree -BackendPort $config.backendPort -GatewayPort $config.gatewayPort
     & (Join-Path $InstallRoot 'delivery\Switch-Release.ps1') -InstallRoot $InstallRoot -ReleaseRoot $release
     $activated = $true
     $result.ok = $true
@@ -146,12 +165,12 @@ try {
     Enable-ScheduledTask -TaskName $config.syncTask | Out-Null
     Write-JsonFile (Join-Path $InstallRoot 'delivery\last-sync.json') @{ok=$true;result='initial_gitee_release_verified';commit=$Commit;timeUtc=[datetime]::UtcNow.ToString('o')}
     $result.mirrorTaskEnabled = $true
-    Write-Host 'DEPLOYMENT_COMPLETE: http://192.168.1.24:4000/'
+    Write-Host "DEPLOYMENT_COMPLETE: $publicUrl"
 } catch {
     $result.state = if ($activated) {'deployed_delivery_needs_attention'} else {'stopped_before_activation_or_rolled_back'}
     $result.error = $_.Exception.Message
     Write-Host 'The script never stopped or deleted the old recruitment app.'
-    if (-not $activated) { Write-Host 'If you manually stopped the old app, re-run its previous command in its original PowerShell window.' }
+    if (-not $activated -and -not $Parallel) { Write-Host 'If you manually stopped the old app, re-run its previous command in its original PowerShell window.' }
     throw
 } finally {
     foreach ($record in $testChildren) { try { Stop-VerifiedChild $record } catch { Write-Warning $_.Exception.Message } }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-22T01:37:12.624Z",
+  "generatedAt": "2026-10-22T02:06:45.140Z",
   "source": "Auto-Recru current working tree; fresh history required",
   "files": [
     {
@@ -1059,20 +1059,20 @@
     },
     {
       "path": "deploy/company/Activate-CompanyServer.ps1",
-      "sha256": "5f7b3a581776df1e80cf29115c49e388a0ed8146a81b3bfc99295aa90054453e",
-      "sourceSha256": "5f7b3a581776df1e80cf29115c49e388a0ed8146a81b3bfc99295aa90054453e",
+      "sha256": "72749af3e8e7f706d3da96bbd15458a5daa8bbb6d83bc3e23f3299a913351cbc",
+      "sourceSha256": "72749af3e8e7f706d3da96bbd15458a5daa8bbb6d83bc3e23f3299a913351cbc",
       "transformations": []
     },
     {
       "path": "deploy/company/bootstrap-delivery-baseline.json",
-      "sha256": "c03774babff4c5d2047a4ff963e84ddda25e19dfaa9be2cb578cbc9c49e2cc9e",
-      "sourceSha256": "c03774babff4c5d2047a4ff963e84ddda25e19dfaa9be2cb578cbc9c49e2cc9e",
+      "sha256": "ccf0d5b0cc228ada6b6cfd617ef84c11c9bc9241b7cd190c0bcccfcae8d63a25",
+      "sourceSha256": "ccf0d5b0cc228ada6b6cfd617ef84c11c9bc9241b7cd190c0bcccfcae8d63a25",
       "transformations": []
     },
     {
       "path": "deploy/company/Common.ps1",
-      "sha256": "2aef18aae6618ef3854e77b60b81283521b439edac40294ca392b57d0d4a8f8c",
-      "sourceSha256": "2aef18aae6618ef3854e77b60b81283521b439edac40294ca392b57d0d4a8f8c",
+      "sha256": "8182939c7fab34ea6ac42b6ce60c119c857761471b993aba909719aece631b95",
+      "sourceSha256": "8182939c7fab34ea6ac42b6ce60c119c857761471b993aba909719aece631b95",
       "transformations": []
     },
     {
@@ -1089,26 +1089,26 @@
     },
     {
       "path": "deploy/company/Inspect-Company.ps1",
-      "sha256": "08b99dca496fcc3b2c8cceea6f6f669a8db59b0dda2fd2456c050424b13f4b71",
-      "sourceSha256": "08b99dca496fcc3b2c8cceea6f6f669a8db59b0dda2fd2456c050424b13f4b71",
+      "sha256": "4c1eeee17ecec9fd5b35c47b9877432a0db795b3fe05255260fef2d01b2fb0fe",
+      "sourceSha256": "4c1eeee17ecec9fd5b35c47b9877432a0db795b3fe05255260fef2d01b2fb0fe",
       "transformations": []
     },
     {
       "path": "deploy/company/Inspect-Deployment.ps1",
-      "sha256": "983fe9bcb2b340782e024fefe57ce35599c14ff238dcceb572bcfc2a398d547a",
-      "sourceSha256": "983fe9bcb2b340782e024fefe57ce35599c14ff238dcceb572bcfc2a398d547a",
+      "sha256": "cd51c021a3d0582b5d716809cc917d8b39c6ae81377301708816c70918e63bb8",
+      "sourceSha256": "cd51c021a3d0582b5d716809cc917d8b39c6ae81377301708816c70918e63bb8",
       "transformations": []
     },
     {
       "path": "deploy/company/Install-Company.ps1",
-      "sha256": "0f1dae311a95f1138b9ab1531b3730206991e495561e8128fe3ff7d8fcb3ba09",
-      "sourceSha256": "0f1dae311a95f1138b9ab1531b3730206991e495561e8128fe3ff7d8fcb3ba09",
+      "sha256": "f8a89dd5cd840d229e45e80144e5016b67814bb8b3f3350699dda6e23e46b031",
+      "sourceSha256": "f8a89dd5cd840d229e45e80144e5016b67814bb8b3f3350699dda6e23e46b031",
       "transformations": []
     },
     {
       "path": "deploy/company/Prepare-CompanyServer.ps1",
-      "sha256": "2dfa4f6aa75c27850e6ebab253f6787751c02a6fbdefe57a62522afac16e5d2e",
-      "sourceSha256": "2dfa4f6aa75c27850e6ebab253f6787751c02a6fbdefe57a62522afac16e5d2e",
+      "sha256": "4906f1068c0aa910437711eaa993fd3637395873bb52176d96bb1207cef29251",
+      "sourceSha256": "4906f1068c0aa910437711eaa993fd3637395873bb52176d96bb1207cef29251",
       "transformations": []
     },
     {
@@ -1125,20 +1125,20 @@
     },
     {
       "path": "deploy/company/README.md",
-      "sha256": "dafa79949b8a6a1c01c44d2754bf1502b6c1c1641013f9d8efbe2b7bb8084b0b",
-      "sourceSha256": "dafa79949b8a6a1c01c44d2754bf1502b6c1c1641013f9d8efbe2b7bb8084b0b",
+      "sha256": "85567d500f3426ee5b1dd49f86813fbdccc1df4714bd1965a883a41ef363842d",
+      "sourceSha256": "85567d500f3426ee5b1dd49f86813fbdccc1df4714bd1965a883a41ef363842d",
       "transformations": []
     },
     {
       "path": "deploy/company/Run-Company.ps1",
-      "sha256": "cf9d2fc148b465fae40e1ce5d68397cbef1718d305642011a80f383ab7ea846d",
-      "sourceSha256": "cf9d2fc148b465fae40e1ce5d68397cbef1718d305642011a80f383ab7ea846d",
+      "sha256": "bb6348a1103b85824da21fa2882a0940f6e2001608704c6970cf86efc425e1a0",
+      "sourceSha256": "bb6348a1103b85824da21fa2882a0940f6e2001608704c6970cf86efc425e1a0",
       "transformations": []
     },
     {
       "path": "deploy/company/Switch-Release.ps1",
-      "sha256": "6ea746d636b558cf8c8763d485fe42c362fbad89d4d67ad20816321875d82c74",
-      "sourceSha256": "6ea746d636b558cf8c8763d485fe42c362fbad89d4d67ad20816321875d82c74",
+      "sha256": "5dc77d676350bf45900ccd09aab7e1836a081812ac9ff5509ea25960b114b079",
+      "sourceSha256": "5dc77d676350bf45900ccd09aab7e1836a081812ac9ff5509ea25960b114b079",
       "transformations": []
     },
     {
@@ -1796,7 +1796,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "78da723ebff71798cc716515d2fb7771daf1943f280dfa7a807d604f55124ed4",
+      "sha256": "2f510a352727657b6b8cd5ce102643d6dd433322fb2f0c9085591d5e0f028fbc",
       "sourceSha256": null,
       "transformations": [
         "generated-company-file"
@@ -1828,8 +1828,8 @@
     },
     {
       "path": "scripts/prepare-company-release.js",
-      "sha256": "0650947cb4d8eee0a3bb63e1a93abbf9eef5facc485e6aebd2bb9b120d0976c3",
-      "sourceSha256": "0650947cb4d8eee0a3bb63e1a93abbf9eef5facc485e6aebd2bb9b120d0976c3",
+      "sha256": "94ce194fadea9683fb96ced3fd31a829abba0b19e278b7a73b38d592ac115b16",
+      "sourceSha256": "94ce194fadea9683fb96ced3fd31a829abba0b19e278b7a73b38d592ac115b16",
       "transformations": []
     },
     {

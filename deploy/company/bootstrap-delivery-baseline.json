@@ -10,5 +10,23 @@
     "Run-Company.ps1": "6d0dc0de72509db5514758e4f29aa6ce0a80de3ea721a7a61b16a0ff1303035f",
     "Switch-Release.ps1": "bf64b0cbcf3513e03b976b5bd85ee0e3565175a30c1c0fb3207f8a26537558e9",
     "Sync-Company.ps1": "463599ad3a81d96ff2b04552e52e046755176f46ae965ae23ef380f7d647d206"
-  }
+  },
+  "reviewedVersions": [
+    {
+      "commit": "c93ad352a654dcc6b6ef5a95374cd26fb7af285f",
+      "files": {
+        "Activate-CompanyServer.ps1": "5f7b3a581776df1e80cf29115c49e388a0ed8146a81b3bfc99295aa90054453e",
+        "Common.ps1": "2aef18aae6618ef3854e77b60b81283521b439edac40294ca392b57d0d4a8f8c",
+        "Inspect-Company.ps1": "08b99dca496fcc3b2c8cceea6f6f669a8db59b0dda2fd2456c050424b13f4b71",
+        "Inspect-Deployment.ps1": "983fe9bcb2b340782e024fefe57ce35599c14ff238dcceb572bcfc2a398d547a",
+        "Install-Company.ps1": "0f1dae311a95f1138b9ab1531b3730206991e495561e8128fe3ff7d8fcb3ba09",
+        "Prepare-CompanyServer.ps1": "2dfa4f6aa75c27850e6ebab253f6787751c02a6fbdefe57a62522afac16e5d2e",
+        "Prepare-Release.ps1": "955b17b33085f761d224d9bd017fbdabd58e29efca52034e4a2fb5d3f5a03c7f",
+        "Publish-Company.ps1": "de8bf2368a30d508f311fce8f3df69e7c0908a8475f779292c2664fd6989b173",
+        "Run-Company.ps1": "cf9d2fc148b465fae40e1ce5d68397cbef1718d305642011a80f383ab7ea846d",
+        "Switch-Release.ps1": "6ea746d636b558cf8c8763d485fe42c362fbad89d4d67ad20816321875d82c74",
+        "Sync-Company.ps1": "463599ad3a81d96ff2b04552e52e046755176f46ae965ae23ef380f7d647d206"
+      }
+    }
+  ]
 }

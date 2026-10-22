@@ -23,8 +23,11 @@ function Read-CompanyConfig([string]$InstallRoot) {
     }
     # Compatibility with the first bootstrap, which used a fixed port 5001.
     if (-not $config.PSObject.Properties['backendPort']) { $config | Add-Member -NotePropertyName backendPort -NotePropertyValue 5001 }
+    if (-not $config.PSObject.Properties['gatewayPort']) { $config | Add-Member -NotePropertyName gatewayPort -NotePropertyValue 4000 }
+    $gateway = 0
+    if (-not [int]::TryParse([string]$config.gatewayPort, [ref]$gateway) -or $gateway -lt 1024 -or $gateway -gt 65535) { throw 'The configured gateway port is invalid.' }
     $port = 0
-    if (-not [int]::TryParse([string]$config.backendPort, [ref]$port) -or $port -lt 1024 -or $port -gt 65535 -or $port -eq 4000) {
+    if (-not [int]::TryParse([string]$config.backendPort, [ref]$port) -or $port -lt 1024 -or $port -gt 65535 -or $port -eq $gateway) {
         throw 'The configured backend port is invalid or conflicts with the public gateway.'
     }
     return $config
@@ -85,8 +88,9 @@ function Assert-CompanyPortsFree([int]$BackendPort = 5001, [int]$GatewayPort = 4
     }
 }
 
-function Get-CompanyRuntimeDefinitions($Config, [string]$ReleaseRoot, [string]$GatewayHost, [int]$GatewayPort = 4000) {
+function Get-CompanyRuntimeDefinitions($Config, [string]$ReleaseRoot, [string]$GatewayHost, [int]$GatewayPort = 0) {
     if (-not $GatewayHost) { $GatewayHost = [string]$Config.companyHost }
+    if ($GatewayPort -eq 0) { $GatewayPort = [int]$Config.gatewayPort }
     @(
         @{name='backend'; script=(Join-Path $ReleaseRoot 'backend\src\index.js'); cwd=(Join-Path $ReleaseRoot 'backend'); env=@{HOST='127.0.0.1';PORT=[string]$Config.backendPort;NODE_ENV='production';COMPANY_DEPLOYMENT='true';RECRUITMENT_ENV_FILE=(Join-Path $Config.installRoot 'shared\backend.env')}},
         @{name='gateway'; script=(Join-Path $ReleaseRoot 'deploy\company\gateway.js'); cwd=$ReleaseRoot; env=@{COMPANY_HOST=$GatewayHost;COMPANY_PORT=[string]$GatewayPort;BACKEND_PORT=[string]$Config.backendPort;LAN_ALLOW_CIDRS=([string[]]$Config.allowedNetworks -join ',');NODE_ENV='production';PUBLIC_ORIGIN=('http://' + $GatewayHost + ':' + $GatewayPort)}}

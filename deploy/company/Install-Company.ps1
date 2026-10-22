@@ -6,6 +6,7 @@ param(
     [string]$RunAs = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
     [string]$RepositoryUrl = 'git@gitee.com:felixshe/auto-recru-company.git',
     [string]$CompanyHost = '192.168.1.24',
+    [ValidateRange(1024,65535)][int]$GatewayPort = 4001,
     [ValidateRange(1024,65535)][int]$BackendPort = 19501,
     [string[]]$AllowedNetworks = @('192.168.1.0/24','192.168.11.0/24'),
     [string[]]$LegacyTaskName = @(),
@@ -15,7 +16,7 @@ param(
     [switch]$Resume
 )
 . (Join-Path $PSScriptRoot 'Common.ps1')
-if ($BackendPort -eq 4000) { throw 'The backend port cannot be the public gateway port.' }
+if ($BackendPort -eq $GatewayPort) { throw 'The backend port cannot be the public gateway port.' }
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run Windows PowerShell as Administrator on the company server.' }
 if ($CompanyHost -ne '192.168.1.24') { throw 'This installation is prepared for the reviewed company server 192.168.1.24.' }
@@ -40,7 +41,7 @@ if (Test-Path -LiteralPath $configPath) {
     if (-not $Resume) { throw 'This installation is already initialized. Resume an incomplete first installation with -Resume; use Sync-Company.ps1 for later upgrades.' }
     if (Test-Path -LiteralPath (Join-Path $InstallRoot 'control\current-release.json')) { throw 'Resume is only for an incomplete first installation, never an active deployment.' }
     $savedConfig = Read-CompanyConfig $InstallRoot
-    if ($savedConfig.bootstrapCommit -ine $Commit -or $savedConfig.runAs -ine $RunAs -or [int]$savedConfig.backendPort -ne $BackendPort -or
+    if ($savedConfig.bootstrapCommit -ine $Commit -or $savedConfig.runAs -ine $RunAs -or [int]$savedConfig.backendPort -ne $BackendPort -or [int]$savedConfig.gatewayPort -ne $GatewayPort -or
         $savedConfig.repositoryUrl -cne $RepositoryUrl -or $savedConfig.companyHost -cne $CompanyHost -or
         (([string[]]$savedConfig.allowedNetworks | Sort-Object) -join ',') -cne (($AllowedNetworks | Sort-Object) -join ',') -or
         $savedConfig.nodePath -ine $nodePath -or $savedConfig.npmPath -ine $npmPath -or $savedConfig.gitPath -ine $gitPath) {
@@ -81,7 +82,7 @@ if (-not (Test-Path -LiteralPath $keyPath)) {
 }
 Invoke-Checked 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', '*S-1-5-18:(R)', '*S-1-5-32-544:(F)')
 $config = @{
-    installRoot=$InstallRoot; companyHost=$CompanyHost; backendPort=$BackendPort; allowedNetworks=$AllowedNetworks;
+    installRoot=$InstallRoot; companyHost=$CompanyHost; backendPort=$BackendPort; gatewayPort=$GatewayPort; allowedNetworks=$AllowedNetworks;
     repositoryUrl=$RepositoryUrl; branch='main'; nodePath=$nodePath; npmPath=$npmPath; gitPath=$gitPath;
     sshPath=$sshPath; deployKeyPath=$keyPath; runAs=$RunAs; bootstrapCommit=$Commit;
     runtimeTask='AutoRecru-Company-Runtime'; syncTask='AutoRecru-Company-MirrorDeploy'
@@ -123,7 +124,7 @@ foreach ($file in Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File
 # Keep delivery paused until the first reviewed activation has succeeded.
 Disable-ScheduledTask -TaskName $config.syncTask | Out-Null
 if ($OpenFirewall) {
-    $ruleName = 'AutoRecru-Company-TCP4000'
+    $ruleName = 'AutoRecru-Company-TCP' + $GatewayPort
     $existingRule = Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
     if ($existingRule) {
         if (-not $Resume) { throw "Firewall rule already exists; review it instead of overwriting: $ruleName" }
@@ -131,12 +132,12 @@ if ($OpenFirewall) {
         $addressFilter = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $existingRule
         $applicationFilter = Get-NetFirewallApplicationFilter -AssociatedNetFirewallRule $existingRule
         if ($existingRule.Enabled -ne 'True' -or $existingRule.Direction -ne 'Inbound' -or $existingRule.Action -ne 'Allow' -or
-            [string]$portFilter.LocalPort -ne '4000' -or [string]$portFilter.Protocol -notin @('TCP','6') -or
+            [string]$portFilter.LocalPort -ne [string]$GatewayPort -or [string]$portFilter.Protocol -notin @('TCP','6') -or
             [string]$addressFilter.LocalAddress -ne $CompanyHost -or $applicationFilter.Program -ine $nodePath -or
             ((@($addressFilter.RemoteAddress | ForEach-Object { ConvertTo-CanonicalFirewallNetwork $_ }) | Sort-Object) -join ',') -cne (($AllowedNetworks | Sort-Object) -join ',')) {
             throw 'The existing firewall rule does not match the reviewed incomplete installation.'
         }
-    } else { New-NetFirewallRule -Name $ruleName -DisplayName 'AutoRecru company networks TCP 4000' -Direction Inbound -Action Allow -Protocol TCP -LocalAddress $CompanyHost -LocalPort 4000 -RemoteAddress $AllowedNetworks -Program $nodePath -Profile Any | Out-Null }
+    } else { New-NetFirewallRule -Name $ruleName -DisplayName ('AutoRecru company networks TCP ' + $GatewayPort) -Direction Inbound -Action Allow -Protocol TCP -LocalAddress $CompanyHost -LocalPort $GatewayPort -RemoteAddress $AllowedNetworks -Program $nodePath -Profile Any | Out-Null }
 }
 & (Join-Path $InstallRoot 'delivery\Prepare-Release.ps1') -InstallRoot $InstallRoot -SourceRoot $InitialRepositoryRoot -Commit $Commit
 $prepared = Get-Content -LiteralPath (Join-Path $InstallRoot 'delivery\prepared-release.json') -Raw | ConvertFrom-Json

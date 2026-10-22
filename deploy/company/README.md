@@ -1,6 +1,6 @@
 # 公司服务器发布与维护
 
-目标入口为 `http://192.168.1.24:4000/`。网关统一提供 React 页面、API 和 Socket.IO；招聘后端仅监听服务器回环地址，当前实测选用 `127.0.0.1:19501`，由 `delivery/config.json` 的 `backendPort` 指定。早期准备包缺少此配置时按旧端口 5001 兼容读取。员工连接公司有线或获准的 Wi-Fi 后使用同一个地址，不在员工电脑安装后端。
+当前目标入口为 `http://192.168.1.24:4001/`，保留旧项目 4000。网关统一提供 React 页面、API 和 Socket.IO；招聘后端仅监听服务器回环地址，当前实测选用 `127.0.0.1:19501`。`delivery/config.json` 的 `gatewayPort` 和 `backendPort` 指定这两个端口。早期准备包缺少这些配置时按旧网关 4000、后端 5001 兼容读取。员工连接公司有线或获准的 Wi-Fi 后使用同一个地址，不在员工电脑安装后端。
 
 代码流向固定为 **GitHub 的 main → Gitee 镜像 main → 公司服务器每 5 分钟拉取**。GitHub 是开发源；Gitee 保存同一提交的代码镜像；简历、附件、招聘网站浏览器配置、模型密钥和运行数据只保存在服务器 `shared`，不进入两个代码仓库。
 
@@ -26,6 +26,8 @@
 
 服务器需要 Node.js 24 或更高版本、npm、Git for Windows（含 OpenSSH）和已安装的 Chrome。使用固定 Windows 运行账户。后端与 Chrome 由 `AutoRecru-Company-Runtime` 以 **Interactive** 计划任务运行，以便维护人员进入同一 Windows 会话完成招聘网站登录。保持此账户登录；断开远程桌面可继续运行，注销账户会结束交互进程，服务器重启后须重新登录该账户。脚本不修改自动登录或公司会话策略。
 
+**当前并行部署入口**：使用新版包的 `Start-New-Port.cmd`，它调用 `Activate-CompanyServer.ps1 -Parallel -Commit <完整提交>`。脚本核验原准备包或 `c93ad35` 的部署脚本哈希，保留原数据、配置及部署密钥，并检查 4001、19501、19502 可用；从 Gitee 拉取、构建并通过回环预检后，自动在 4001 启动新助手并启用每 5 分钟的镜像更新。它不会进入 `Read-Host` 或要求输入 SWITCH，不需要停止旧 4000 程序。防火墙仅新增已确认公司网段访问本机 Node 的 4001 规则。桌面 `AutoRecru-Deployment-Result.json` 记录新地址及结果。以下不带 `-Parallel` 的 4000 替换流程仅保留作历史维护说明。
+
 Gitee 仓库预期为 `felixshe/auto-recru-company`，为 GitHub 对应私有仓库设置单向 Pull 自动镜像。镜像完成后核对 main 的完整 40 位提交一致。GitHub 镜像授权、模型密钥均通过对应服务的管理界面保存，不写进脚本。
 
 首次可从 GitHub 或 Gitee 下载该**完整提交**的 ZIP，先校验下载文件 SHA-256，再解压到服务器桌面的临时 `AutoRecru-Bootstrap` 文件夹。准备入口会自动在 `D:\App\SXF\Smart-Recruitment-Agent` 创建正式部署目录；临时源码包与正式运行目录分开，以便安装器校验目标目录和保留已有数据。
@@ -45,7 +47,7 @@ $commit = '<已核对的40位提交SHA>'
   -OpenFirewall -PrepareOnly
 ```
 
-`-PrepareOnly` 创建新项目自身任务、部署公钥、依赖与构建，保留旧服务运行。自动镜像部署任务保持禁用。脚本创建的新防火墙规则仅允许这些已确认公司网段到服务器 TCP 4000；若已有同名规则则停止，不覆盖。不同 Wi-Fi 可能属于不同 VLAN，Wi-Fi 名本身不能证明所处网段或路由权限。后端端口不向局域网发布。
+`-PrepareOnly` 创建新项目自身任务、部署公钥、依赖与构建，保留旧服务运行。自动镜像部署任务保持禁用。新安装器默认网关 4001；脚本创建的新防火墙规则仅允许这些已确认公司网段到服务器配置的网关端口；若已有同名规则则停止，不覆盖。不同 Wi-Fi 可能属于不同 VLAN，Wi-Fi 名本身不能证明所处网段或路由权限。后端端口不向局域网发布。
 
 把服务器 `delivery\gitee-readonly-ed25519.pub` 的**公钥**添加到 Gitee 仓库的只读部署公钥。私钥留在服务器，仅 SYSTEM 和管理员可读。
 
@@ -95,6 +97,6 @@ Get-Content 'D:\App\SXF\Smart-Recruitment-Agent\control\current-release.json'
 
 ## 验收与恢复
 
-先在服务器核对 `/healthz` 返回 200，后端只监听已配置的回环端口（当前 19501）；再分别从公司有线、`@Ruijie-s7661`、`Unionwell` 对应的实际办公网段访问 4000。确认页面、API、Socket.IO、招聘网站登录、一次授权的简历采集和保存，以及断开远程桌面后继续访问。代理/TUN 环境应让公司地址直连；仅本机健康成功不能代替跨网段验收。
+先在服务器核对新端口 `/healthz` 返回 200，后端只监听已配置的回环端口（当前 19501）；再分别从公司有线、`@Ruijie-s7661`、`Unionwell` 对应的实际办公网段访问新端口 4001。确认页面、API、Socket.IO、招聘网站登录、一次授权的简历采集和保存，以及断开远程桌面后继续访问。代理/TUN 环境应让公司地址直连；仅本机健康成功不能代替跨网段验收。
 
 每次升级的 `backups` 是单机业务数据切换恢复点，**浏览器 profile 不属于自动数据回退范围**。可见 Chrome 独立运行，不保证随 Node 停止；维护人员需要另外正常关闭这些 Chrome 窗口，再将完整 shared（含 browser-profiles）、backend.env、delivery 配置和所需 release 复制到公司受控备份位置，并验证恢复。不得在 Chrome 仍运行时覆盖 profile。脚本不会无限自动删除备份或旧 release。正常维护先禁用镜像任务，再使用 `Stop-CompanyRuntime`（dot-source `delivery\Common.ps1` 并读取配置）；恢复使用 `Start-CompanyRuntime`，随后验证 `/healthz`。新数据库的有意破坏性迁移应先独立验证恢复路径。

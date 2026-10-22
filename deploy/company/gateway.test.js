@@ -216,6 +216,8 @@ test('large static assets use negotiated compression without changing API or ide
   assert.equal(br.headers.vary, 'Accept-Encoding');
   assert.equal(zlib.brotliDecompressSync(br.raw).toString(), source);
   assert.ok(br.raw.length < Buffer.byteLength(source) / 2);
+  const brAgain = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'gzip, br' } });
+  assert.deepEqual(brAgain.raw, br.raw);
   const gzip = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'br;q=0, gzip' } });
   assert.equal(gzip.headers['content-encoding'], 'gzip');
   assert.equal(zlib.gunzipSync(gzip.raw).toString(), source);
@@ -225,6 +227,10 @@ test('large static assets use negotiated compression without changing API or ide
   const head = await request(app.port, '/static/large.js', { method: 'HEAD', headers: { 'accept-encoding': 'br' } });
   assert.equal(head.headers['content-encoding'], 'br');
   assert.equal(head.raw.length, 0);
+  const changed = source + 'window.updated = true;';
+  await fs.writeFile(path.join(app.build, 'static', 'large.js'), changed);
+  const updated = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'br' } });
+  assert.equal(zlib.brotliDecompressSync(updated.raw).toString(), changed);
 });
 
 test('static files cannot escape the build directory through a junction or symlink', async t => {

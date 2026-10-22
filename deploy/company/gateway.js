@@ -6,6 +6,12 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const { promisify } = require('node:util');
+
+const gzip = promisify(zlib.gzip);
+const brotliCompress = promisify(zlib.brotliCompress);
+const STATIC_CACHE_LIMIT = 32 * 1024 * 1024;
+const STATIC_FILE_LIMIT = 8 * 1024 * 1024;
 
 const LOOPBACK = new Set(['127.0.0.1', '::1']);
 const HOP_HEADERS = new Set([
@@ -303,6 +309,45 @@ function compressible(filename, size) {
 function createGateway(options = {}) {
   const config = readConfig(options);
   const checkBackend = options.backendHealthy || backendHealthy;
+  // Cache only public build assets, never proxied API responses or resumes.
+  // Coalesce simultaneous first requests and bound the resident bytes so
+  // repeated Brotli compression cannot slow capture or other browser users.
+  const staticCache = new Map();
+  const staticInFlight = new Map();
+  let staticCacheBytes = 0;
+  const cachedAsset = async (file, encoding) => {
+    if (file.metadata.size > STATIC_FILE_LIMIT ||
+        !new Set(['.html', '.js', '.css', '.svg']).has(path.extname(file.filename).toLowerCase())) {
+      return null;
+    }
+    const key = `${file.filename}|${file.metadata.mtimeMs}|${file.metadata.size}|${encoding || 'identity'}`;
+    const cached = staticCache.get(key);
+    if (cached) {
+      staticCache.delete(key);
+      staticCache.set(key, cached);
+      return cached;
+    }
+    if (staticInFlight.has(key)) return staticInFlight.get(key);
+    const pending = (async () => {
+      const raw = await fs.promises.readFile(file.filename);
+      const body = encoding === 'br'
+        ? await brotliCompress(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 } })
+        : encoding === 'gzip' ? await gzip(raw, { level: 6 }) : raw;
+      if (body.length <= STATIC_CACHE_LIMIT) {
+        staticCache.set(key, body);
+        staticCacheBytes += body.length;
+        while (staticCacheBytes > STATIC_CACHE_LIMIT) {
+          const oldest = staticCache.keys().next().value;
+          staticCacheBytes -= staticCache.get(oldest).length;
+          staticCache.delete(oldest);
+        }
+      }
+      return body;
+    })();
+    staticInFlight.set(key, pending);
+    try { return await pending; }
+    finally { staticInFlight.delete(key); }
+  };
   const handleRequest = async (req, res) => {
     let pathname;
     try { pathname = requestPath(req); }
@@ -335,6 +380,10 @@ function createGateway(options = {}) {
       'Cache-Control': path.basename(file.filename) === 'index.html' ? 'no-store' : 'public, max-age=3600'
     });
     if (req.method === 'HEAD') { res.end(); return; }
+    if (!req.headers.range) {
+      const body = await cachedAsset(file, encoding);
+      if (body) { res.end(body); return; }
+    }
     const stream = fs.createReadStream(file.filename);
     stream.on('error', () => res.destroy());
     res.on('close', () => stream.destroy());

@@ -1421,9 +1421,13 @@ class BossRawRecommendCollector {
         this.resumeCheckpoint=null;
       }
       const pausedAtPhase = safePhase(error.pausedAtPhase || this.status.phase);
+      const targetState = /^[a-z_]{1,40}$/.test(error.reason || '')
+        ? error.reason : /^[a-z_]{1,40}$/.test(error.targetState || '')
+          ? error.targetState : '';
       this.progress({state:'paused',phase:'paused',
         pausedAtPhase,
         pausedAtStage:error.stage ? safePhase(error.stage) : '',
+        lastTargetState:targetState,
         lastFailureCode:error.code || 'BOSS_UNEXPECTED_ERROR',
         lastError:error.message || 'BOSS 采集暂停',finishedAt:new Date().toISOString()});
       return this.getStatus();

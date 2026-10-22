@@ -495,7 +495,8 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     if ((await this.readModal()).active) throw fail('BOSS_RESUME_DIALOG_BLOCKED',
       'BOSS 当前有简历弹窗，未更改搜索关键词');
     await this.session.assertUsableRecruiterWindow({frameSelector:SEARCH_FRAME});
-    await this.session.clickUnique({selector:'input.search-input',frameSelector:SEARCH_FRAME});
+    await this.clickStableSearchControl('input.search-input',before.value,
+      before.frameOrigin);
     // Trusted keyboard input preserves the official site's search handlers.
     // A failed or uncertain edit stops before clicking the search icon.
     await this.session.send('Input.dispatchKeyEvent',{
@@ -523,8 +524,8 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       'BOSS 搜索框未准确写入当前岗位，未提交搜索');
     // The SPA can replace the focused input while applying the new value.
     // Its visible search icon submits without depending on that focus.
-    await this.session.clickUnique({selector:'.search-input-wrap .icon-search',
-      frameSelector:SEARCH_FRAME});
+    await this.clickStableSearchControl('.search-input-wrap .icon-search',title,
+      before.frameOrigin);
     for (let poll=0;poll<20;poll++) {
       await this.wait(500);
       await this.assertPage({allowMissingFrame:true});
@@ -537,6 +538,33 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     }
     throw fail('BOSS_SEARCH_RESULTS_UNAVAILABLE',
       'BOSS 官方岗位搜索未返回可确认的候选结果，未打开任何简历');
+  }
+
+  async clickStableSearchControl(selector,expectedValue,expectedFrameOrigin) {
+    const click=()=>this.session.clickUnique({selector,frameSelector:SEARCH_FRAME});
+    try { return await click(); }
+    catch (error) {
+      // The official search panel can shift while rendering. A pre-click
+      // recheck guarantees no mouse press was sent; allow one retry only when
+      // the same iframe, keyword and default filters remain visible.
+      const moved=error.code==='BOSS_CDP_TARGET_UNSTABLE' &&
+        error.stage==='pre_click_recheck' &&
+        (error.reason==='position_moved' ||
+          (error.reason==='target_not_ready' &&
+            ['obscured','out_of_view'].includes(error.targetState)));
+      if (!moved) throw error;
+      await this.wait(500);
+      await this.assertPage();
+      const state=await this.readOnlyExpression(SEARCH_STATE,
+        'recheck_search_control');
+      if (state?.state!=='ready' ||
+          state.frameOrigin!==expectedFrameOrigin ||
+          normalized(state.value)!==normalized(expectedValue) ||
+          !state.selectedFiltersReady || state.nonDefaultSelected>0 ||
+          state.checkedCount>0 || state.activeCustomSliderCount>0 ||
+          (await this.readModal()).active) throw error;
+      return click();
+    }
   }
 
   async readCandidateCards(title,id,path,signal) {

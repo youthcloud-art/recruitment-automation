@@ -901,6 +901,40 @@ test('assistant search submits the active job through the official input once',a
   assert.equal(state.value,TITLE);
 });
 
+test('assistant retries a moving search control only before any mouse press',async()=>{
+  const collector=new BossRawSearchCollector();
+  collector.wait=async()=>{};
+  collector.assertPage=async()=>({url:PAGE});
+  collector.readModal=async()=>({active:false});
+  collector.readOnlyExpression=async()=>({state:'ready',value:TITLE,
+    frameOrigin:7,selectedFiltersReady:true,nonDefaultSelected:0,
+    checkedCount:0,activeCustomSliderCount:0});
+  let clicks=0;
+  collector.session={clickUnique:async()=>{
+    clicks++;
+    if(clicks===1) throw Object.assign(new Error('control moved'),{
+      code:'BOSS_CDP_TARGET_UNSTABLE',stage:'pre_click_recheck',
+      reason:'position_moved'});
+  }};
+  await collector.clickStableSearchControl('input.search-input',TITLE,7);
+  assert.equal(clicks,2);
+});
+
+test('assistant does not retry a search control after iframe replacement',async()=>{
+  const collector=new BossRawSearchCollector();
+  let clicks=0;
+  collector.session={clickUnique:async()=>{
+    clicks++;
+    throw Object.assign(new Error('iframe changed'),{
+      code:'BOSS_CDP_TARGET_UNSTABLE',stage:'pre_click_recheck',
+      reason:'document_changed'});
+  }};
+  await assert.rejects(collector.clickStableSearchControl(
+    'input.search-input',TITLE,7),
+  error=>error.reason==='document_changed');
+  assert.equal(clicks,1);
+});
+
 test('assistant waits for newly opened official search controls before editing',async()=>{
   const collector=new BossRawSearchCollector();
   const states=[{state:'frame_unavailable'},{state:'input_unavailable'},

@@ -6,7 +6,7 @@
 
 ## 服务器目录
 
-默认根目录为 `D:\App\SXF\AutoRecru`。
+部署根目录固定采用 `D:\App\SXF\Smart-Recruitment-Agent`，安装、自动更新、代码版本、业务数据、日志和备份均放在该目录下。
 
 - `releases\时间-提交-随机值`：每次重新准备的代码、独立依赖及前端构建。
 - `shared\backend-storage`：通过 release 内的 `backend\storage` 目录 junction 访问。
@@ -28,17 +28,18 @@
 
 Gitee 仓库预期为 `felixshe/auto-recru-company`，为 GitHub 对应私有仓库设置单向 Pull 自动镜像。镜像完成后核对 main 的完整 40 位提交一致。GitHub 镜像授权、模型密钥均通过对应服务的管理界面保存，不写进脚本。
 
-首次可从 GitHub 或 Gitee 下载该**完整提交**的 ZIP，先校验下载文件 SHA-256，再解压并确认项目文件位于选定源码根目录。
+首次可从 GitHub 或 Gitee 下载该**完整提交**的 ZIP，先校验下载文件 SHA-256，再解压到服务器桌面的临时 `AutoRecru-Bootstrap` 文件夹。准备入口会自动在 `D:\App\SXF\Smart-Recruitment-Agent` 创建正式部署目录；临时源码包与正式运行目录分开，以便安装器校验目标目录和保留已有数据。
 
 首次准备可直接在服务器管理员 PowerShell 运行 `deploy\company\Prepare-CompanyServer.ps1 -Commit <完整提交SHA>`。它先把只读检查结果保存为当前用户桌面的 `AutoRecru-Server-Check.json`；缺少 Node.js 24+、npm 或 Git 时停止，不改旧服务。环境齐全时调用下方安装器的 `-PrepareOnly`，准备依赖、前端和只读部署公钥，最后显示 `.pub` 公钥。将检查结果及公钥提供给部署维护者，核实旧服务路径、任务和 Gitee 只读权限后再进行切换。该入口不会停止旧服务，也不会启用自动部署任务。
 
 需要自定义参数时，下面的源码路径、提交及 Windows 账户按实际值替换：
 
 ```powershell
-$source = 'D:\App\SXF\AutoRecru-Bootstrap\auto-recru-company'
+$source = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AutoRecru-Bootstrap'
 $commit = '<已核对的40位提交SHA>'
 & "$source\deploy\company\Install-Company.ps1" `
   -InitialRepositoryRoot $source -Commit $commit `
+  -InstallRoot 'D:\App\SXF\Smart-Recruitment-Agent' `
   -RunAs '<服务器上已登录的固定Windows账户>' `
   -AllowedNetworks @('192.168.1.0/24','192.168.11.0/24') `
   -OpenFirewall -PrepareOnly
@@ -51,7 +52,7 @@ $commit = '<已核对的40位提交SHA>'
 确认准备完成后，把实测旧任务名和旧目录明确传给切换脚本。示例中的值必须替换；旧监控和备份任务也应按实际配置列入，防止旧服务被重新启动：
 
 ```powershell
-$root = 'D:\App\SXF\AutoRecru'
+$root = 'D:\App\SXF\Smart-Recruitment-Agent'
 $prepared = Get-Content "$root\delivery\prepared-release.json" -Raw | ConvertFrom-Json
 & "$root\delivery\Switch-Release.ps1" -InstallRoot $root `
   -ReleaseRoot $prepared.root `
@@ -81,9 +82,9 @@ Start-ScheduledTask -TaskName 'AutoRecru-Company-MirrorDeploy'
 
 ```powershell
 Get-ScheduledTask -TaskName 'AutoRecru-Company-*' | Select-Object TaskName,State
-Get-Content 'D:\App\SXF\AutoRecru\delivery\last-sync.json'
-Get-Content 'D:\App\SXF\AutoRecru\delivery\last-deployment.json'
-Get-Content 'D:\App\SXF\AutoRecru\control\current-release.json'
+Get-Content 'D:\App\SXF\Smart-Recruitment-Agent\delivery\last-sync.json'
+Get-Content 'D:\App\SXF\Smart-Recruitment-Agent\delivery\last-deployment.json'
+Get-Content 'D:\App\SXF\Smart-Recruitment-Agent\control\current-release.json'
 ```
 
 首次准备的依赖安装若失败，修正原因后重跑原 `Install-Company.ps1` 命令并增加 `-Resume`。它要求原提交、账户、网段、仓库及运行路径全部一致，验证已有任务与防火墙规则；保留 shared、backend.env 和部署私钥。已有当前版本指针的正式安装不能使用 Resume。也可单独运行 `delivery\Prepare-Release.ps1 -InstallRoot ... -SourceRoot ... -Commit ...`，然后按上文切换。不要删 shared 或重新覆盖真实环境配置来修复安装。

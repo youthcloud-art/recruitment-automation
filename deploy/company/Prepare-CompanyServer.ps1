@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{40}$')][string]$Commit,
-    [string]$InstallRoot = 'D:\App\SXF\AutoRecru'
+    [string]$InstallRoot = 'D:\App\SXF\Smart-Recruitment-Agent'
 )
 $ErrorActionPreference = 'Stop'
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())

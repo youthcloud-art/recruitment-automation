@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$InstallRoot = 'D:\App\SXF\AutoRecru')
+param([string]$InstallRoot = 'D:\App\SXF\Smart-Recruitment-Agent')
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $config = Read-CompanyConfig $InstallRoot
 $lock = $null

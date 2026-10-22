@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$InitialRepositoryRoot,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{40}$')][string]$Commit,
-    [string]$InstallRoot = 'D:\App\SXF\AutoRecru',
+    [string]$InstallRoot = 'D:\App\SXF\Smart-Recruitment-Agent',
     [string]$RunAs = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
     [string]$RepositoryUrl = 'git@gitee.com:felixshe/auto-recru-company.git',
     [string]$CompanyHost = '192.168.1.24',

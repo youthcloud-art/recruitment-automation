@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-22T02:06:45.140Z",
+  "generatedAt": "2026-10-22T02:52:00.516Z",
   "source": "Auto-Recru current working tree; fresh history required",
   "files": [
     {
@@ -824,6 +824,12 @@
       "transformations": []
     },
     {
+      "path": "backend/test/companyDataSync.test.js",
+      "sha256": "eb2a25f59144a17e5601c2b9ece6d48fa9749f8cf93588cc43164a5a00aa7c92",
+      "sourceSha256": "eb2a25f59144a17e5601c2b9ece6d48fa9749f8cf93588cc43164a5a00aa7c92",
+      "transformations": []
+    },
+    {
       "path": "backend/test/documentChunking.test.js",
       "sha256": "3636c7eaab651b98e34cbe93bc478af6bb99432e0bc1eeb5c6ae32b6703c1537",
       "sourceSha256": "3636c7eaab651b98e34cbe93bc478af6bb99432e0bc1eeb5c6ae32b6703c1537",
@@ -1076,6 +1082,12 @@
       "transformations": []
     },
     {
+      "path": "deploy/company/Export-CompanyData.ps1",
+      "sha256": "3957406278aba7f601775b2bb23eebe4dbcc310dc31814391608c38175a937fe",
+      "sourceSha256": "3957406278aba7f601775b2bb23eebe4dbcc310dc31814391608c38175a937fe",
+      "transformations": []
+    },
+    {
       "path": "deploy/company/gateway.js",
       "sha256": "03772d95f2fa2c9128c373285e2eaa63ab4c1038c27d2ce4c79628bca745a7ea",
       "sourceSha256": "03772d95f2fa2c9128c373285e2eaa63ab4c1038c27d2ce4c79628bca745a7ea",
@@ -1125,8 +1137,8 @@
     },
     {
       "path": "deploy/company/README.md",
-      "sha256": "85567d500f3426ee5b1dd49f86813fbdccc1df4714bd1965a883a41ef363842d",
-      "sourceSha256": "85567d500f3426ee5b1dd49f86813fbdccc1df4714bd1965a883a41ef363842d",
+      "sha256": "19272c278d6306e94d88d626d783b733f6cd7f132c51798b00fd4734b971823b",
+      "sourceSha256": "19272c278d6306e94d88d626d783b733f6cd7f132c51798b00fd4734b971823b",
       "transformations": []
     },
     {
@@ -1809,6 +1821,12 @@
       "transformations": []
     },
     {
+      "path": "scripts/company-data-sync.js",
+      "sha256": "d3d0d55bd1bd488cd3a628261fda8686c538fea37fb173f3fac05fd1125a8ffa",
+      "sourceSha256": "d3d0d55bd1bd488cd3a628261fda8686c538fea37fb173f3fac05fd1125a8ffa",
+      "transformations": []
+    },
+    {
       "path": "scripts/export-resumes-json.js",
       "sha256": "46d53ab56e87336922406d64e4945d50a78b89be87a98584e545890645b2927f",
       "sourceSha256": "46d53ab56e87336922406d64e4945d50a78b89be87a98584e545890645b2927f",
@@ -1821,6 +1839,12 @@
       "transformations": []
     },
     {
+      "path": "scripts/import-company-data.ps1",
+      "sha256": "a39ba33e4f090abeb5f3e783783c79a339fae992ff176b9adb724758d616c1b1",
+      "sourceSha256": "a39ba33e4f090abeb5f3e783783c79a339fae992ff176b9adb724758d616c1b1",
+      "transformations": []
+    },
+    {
       "path": "scripts/local-data.js",
       "sha256": "aa5971f2a8c35b6cf871e581903806b2cb3abd58cbefd8df3e82a6f25ae7401b",
       "sourceSha256": "aa5971f2a8c35b6cf871e581903806b2cb3abd58cbefd8df3e82a6f25ae7401b",
@@ -1828,14 +1852,14 @@
     },
     {
       "path": "scripts/prepare-company-release.js",
-      "sha256": "94ce194fadea9683fb96ced3fd31a829abba0b19e278b7a73b38d592ac115b16",
-      "sourceSha256": "94ce194fadea9683fb96ced3fd31a829abba0b19e278b7a73b38d592ac115b16",
+      "sha256": "c57289b9cdc8cdc94375162e5974ddab7c12180c117199bc954134b34db88d46",
+      "sourceSha256": "c57289b9cdc8cdc94375162e5974ddab7c12180c117199bc954134b34db88d46",
       "transformations": []
     },
     {
       "path": "scripts/start-local.ps1",
-      "sha256": "cc02ac09bd0e8b9086e316843523ae66e91d3243a62b9b6ac94210c531fa5a6e",
-      "sourceSha256": "cc02ac09bd0e8b9086e316843523ae66e91d3243a62b9b6ac94210c531fa5a6e",
+      "sha256": "2eda29f3965dc1f1e66351b5bf193ed42db9182f21630fca6557eb5feedd6abf",
+      "sourceSha256": "2eda29f3965dc1f1e66351b5bf193ed42db9182f21630fca6557eb5feedd6abf",
       "transformations": []
     },
     {

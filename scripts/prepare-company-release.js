@@ -18,6 +18,7 @@ const FILE_ALLOWLIST = [
   'frontend/package.json', 'frontend/package-lock.json', 'frontend/.npmrc', 'frontend/.env.example',
   'scripts/audit-release.js', 'scripts/prepare-company-release.js', 'scripts/local-data.js',
   'scripts/export-resumes-json.js', 'scripts/start-local.ps1', 'scripts/stop-local.ps1', 'scripts/feature-smoke.cjs',
+  'scripts/company-data-sync.js', 'scripts/import-company-data.ps1',
   'start-local.cmd', 'stop-local.cmd'
 ];
 const GENERATED = ['README.md', '.gitignore'];

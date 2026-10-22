@@ -97,6 +97,14 @@ Get-Content 'D:\App\SXF\Smart-Recruitment-Agent\control\current-release.json'
 
 ## 验收与恢复
 
+### 一次性将服务器业务数据同步到本地
+
+此功能由操作人员按需运行，不创建定时数据同步，也不通过 GitHub/Gitee 传输业务文件。使用专用工具包中的 `Export-Server-Data.cmd`，以管理员身份在公司服务器执行。它先拒绝正在进行的采集，取得部署锁并暂时禁用镜像更新任务，短暂停止新助手，把固定白名单中的业务数据复制到 `backups/data-export-.../snapshot`；对副本中的 SQLite WAL 完成检查点和完整性检查后恢复服务，再生成 ZIP 与 SHA-256。原服务及镜像任务状态在正常或异常退出时都会尝试恢复。浏览器 profile 保留原位，导出不关闭 Chrome；若应用之外还有进程直接写业务目录，须先停止该写入者。
+
+同步范围为简历库、简历附件、知识库数据库与上传文件、任务、当前岗位及发信回执/报告更正记录。模型密钥、`backend.env`、邮箱密码、部署私钥、浏览器登录状态、采集检查点、日志和代码不在导出范围内。导出 ZIP 和校验文件都保存在服务器部署根目录的 `backups`，桌面 `AutoRecru-Data-Export-Result.json` 只记录结果和路径。
+
+把 ZIP 及其 `.zip.sha256` 文件通过远程桌面复制到本地项目之外的 Downloads。停止本地助手后运行 `scripts/import-company-data.ps1 -Archive <ZIP路径>`。工具先校验整个压缩包、每个业务文件以及两边后端源码指纹，再在本地暂存并验证 SQLite，然后把原业务目录原样移入用户目录的 `Auto-Recru-Data-Sync/backups`，用服务器副本替换对应业务数据。它不合并两个数据库；本地模型、邮箱与浏览器配置保留。普通导入错误会逆序恢复已移动的原数据；硬断电或无法回滚时保留锁与 transaction.json，启动器会阻止带有未完成导入锁的本地实例启动，应先按备份事务修复，不要删除原数据库或导入锁。
+
 先在服务器核对新端口 `/healthz` 返回 200，后端只监听已配置的回环端口（当前 19501）；再分别从公司有线、`@Ruijie-s7661`、`Unionwell` 对应的实际办公网段访问新端口 4001。确认页面、API、Socket.IO、招聘网站登录、一次授权的简历采集和保存，以及断开远程桌面后继续访问。代理/TUN 环境应让公司地址直连；仅本机健康成功不能代替跨网段验收。
 
 每次升级的 `backups` 是单机业务数据切换恢复点，**浏览器 profile 不属于自动数据回退范围**。可见 Chrome 独立运行，不保证随 Node 停止；维护人员需要另外正常关闭这些 Chrome 窗口，再将完整 shared（含 browser-profiles）、backend.env、delivery 配置和所需 release 复制到公司受控备份位置，并验证恢复。不得在 Chrome 仍运行时覆盖 profile。脚本不会无限自动删除备份或旧 release。正常维护先禁用镜像任务，再使用 `Stop-CompanyRuntime`（dot-source `delivery\Common.ps1` 并读取配置）；恢复使用 `Start-CompanyRuntime`，随后验证 `/healthz`。新数据库的有意破坏性迁移应先独立验证恢复路径。

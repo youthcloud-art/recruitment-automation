@@ -122,6 +122,7 @@ try {
         if (-not (Test-Path -LiteralPath $requiredPath)) { throw "Required file or dependency is missing: $requiredPath" }
     }
     New-Item -ItemType Directory -Path $localDirectory -Force | Out-Null
+    if (Test-Path -LiteralPath (Join-Path $localDirectory 'company-data-import.lock')) { throw 'A business-data import is incomplete. Inspect its backup transaction before starting the local app.' }
     try {
         $operationLock = [IO.File]::Open((Join-Path $localDirectory 'control.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     } catch {

@@ -17,6 +17,7 @@ if ([IO.Path]::GetFullPath([string]$pointer.root).TrimEnd('\') -ine $releaseRoot
     throw 'Run this script from the active release, after the Gitee deployment completes.'
 }
 $syncLock = $null
+$syncTaskDisabled = $false
 $watchName = [string]$config.watchdogTask
 $watchPath = Join-Path $InstallRoot 'delivery\Watch-Company.ps1'
 $backup = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('backups\delivery-reliability-' +
@@ -26,10 +27,24 @@ $copied = $false
 $runtimeStopped = $false
 $watchCreated = $false
 try {
-    # The mirror job holds this same exclusive lock through its whole build
-    # and switch. A new scheduled run will skip while this update owns it.
-    try { $syncLock = [IO.File]::Open((Join-Path $InstallRoot 'control\sync.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
-    catch { throw 'A mirror deployment is running; retry after it completes.' }
+    # Prevent the next scheduled mirror run, then wait for any current build
+    # to release its exclusive lock. This makes one invocation sufficient.
+    $syncTask = Get-ScheduledTask -TaskName $config.syncTask -ErrorAction Stop
+    if ($syncTask.State -ne 'Disabled') {
+        Disable-ScheduledTask -TaskName $config.syncTask -ErrorAction Stop | Out-Null
+        $syncTaskDisabled = $true
+    }
+    $deadline = [datetime]::UtcNow.AddMinutes(20)
+    do {
+        try { $syncLock = [IO.File]::Open((Join-Path $InstallRoot 'control\sync.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+        catch { Start-Sleep -Seconds 10 }
+    } while (-not $syncLock -and [datetime]::UtcNow -lt $deadline)
+    if (-not $syncLock) { throw 'The current mirror deployment did not release its lock within 20 minutes.' }
+    $pointer = Get-Content -LiteralPath (Join-Path $InstallRoot 'control\current-release.json') -Raw | ConvertFrom-Json
+    if ([IO.Path]::GetFullPath([string]$pointer.root).TrimEnd('\') -ine $releaseRoot.TrimEnd('\') -or
+        [string]$pointer.commit -ine [string]$manifest.commit) {
+        throw 'A newer release became active while waiting; run the updater from that active release.'
+    }
     New-Item -ItemType Directory -Path $backup | Out-Null
     foreach ($name in $files) {
         $source = Assert-ChildPath $releaseRoot (Join-Path $PSScriptRoot $name)
@@ -101,4 +116,5 @@ try {
     throw $failure
 } finally {
     if ($syncLock) { $syncLock.Dispose() }
+    if ($syncTaskDisabled) { Enable-ScheduledTask -TaskName $config.syncTask -ErrorAction Stop | Out-Null }
 }

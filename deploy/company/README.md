@@ -94,7 +94,7 @@ $current = Get-Content "$root\control\current-release.json" -Raw | ConvertFrom-J
 & (Join-Path $current.root 'deploy\company\Apply-CompanyReliability.ps1') -InstallRoot $root
 ```
 
-脚本核对服务器 IP、当前版本与部署锁，备份旧维护脚本，更新固定 `delivery` 脚本，仅重启本项目后端和网关并校验 `/healthz`，再安装每 2 分钟检查一次的 `AutoRecru-Company-Watchdog`。招聘平台的独立 Chrome 窗口及浏览器资料不会被脚本关闭。若运行任务仍显示 Running 但健康检查失败，监测任务只记录异常，不杀进程；任务已停止且端口空闲时才尝试恢复。更新失败会恢复旧脚本并尝试启动旧运行任务。成功时显示 `RELIABILITY_UPDATE_OK`，详情写入 `delivery\last-reliability-update.json`。
+脚本核对服务器 IP 和当前版本，暂时禁用后续镜像任务并最多等待 20 分钟让当前部署释放锁；随后备份旧维护脚本，更新固定 `delivery` 脚本，仅重启本项目后端和网关并校验 `/healthz`，再安装每 2 分钟检查一次的 `AutoRecru-Company-Watchdog`。脚本结束时恢复镜像任务原有的启用状态。招聘平台的独立 Chrome 窗口及浏览器资料不会被脚本关闭。若运行任务仍显示 Running 但健康检查失败，监测任务只记录异常，不杀进程；任务已停止且端口空闲时才尝试恢复。更新失败会恢复旧脚本并尝试启动旧运行任务。成功时显示 `RELIABILITY_UPDATE_OK`，详情写入 `delivery\last-reliability-update.json`。
 
 故障诊断依次查看 `control\runtime-failure.json`、`delivery\last-watchdog.json`、`logs\backend.stderr.log` 和 `logs\gateway.stderr.log`。每次重启会把非空的旧日志存成同目录带时间戳的文件，各流保留最近 10 份，便于定位重启前的异常。`node` 的 `ExperimentalWarning` 本身不能说明服务为何退出；应结合运行任务状态与故障记录判断。计划任务以交互账户启动浏览器相关进程，服务器重启或该账户注销后仍需先登录该 Windows 账户。
 

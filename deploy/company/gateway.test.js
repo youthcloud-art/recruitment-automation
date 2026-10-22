@@ -6,6 +6,7 @@ const http = require('node:http');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { createGateway, readConfig, boundaryError } = require('./gateway');
 
 const PUBLIC_ORIGIN = 'http://192.168.1.24:4000';
@@ -82,7 +83,10 @@ function request(port, url = '/', options = {}) {
     }, res => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks);
+        resolve({ status: res.statusCode, headers: res.headers, body: raw.toString(), raw });
+      });
       res.on('error', reject);
     });
     req.on('error', reject);
@@ -200,6 +204,27 @@ test('SPA navigation works while missing assets, traversal and hidden files stay
   assert.equal((await request(app.port, '/.env')).status, 403);
   assert.equal((await request(app.port, '/%invalid')).status, 400);
   assert.equal((await request(app.port, '/', { method: 'HEAD' })).body, '');
+});
+
+test('large static assets use negotiated compression without changing API or identity responses', async t => {
+  const app = await fixture(t);
+  const source = 'window.fixture = "' + 'a'.repeat(20000) + '";';
+  await fs.writeFile(path.join(app.build, 'static', 'large.js'), source);
+  const br = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'gzip, br' } });
+  assert.equal(br.status, 200);
+  assert.equal(br.headers['content-encoding'], 'br');
+  assert.equal(br.headers.vary, 'Accept-Encoding');
+  assert.equal(zlib.brotliDecompressSync(br.raw).toString(), source);
+  assert.ok(br.raw.length < Buffer.byteLength(source) / 2);
+  const gzip = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'br;q=0, gzip' } });
+  assert.equal(gzip.headers['content-encoding'], 'gzip');
+  assert.equal(zlib.gunzipSync(gzip.raw).toString(), source);
+  const identity = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'br;q=0, gzip;q=0' } });
+  assert.equal(identity.headers['content-encoding'], undefined);
+  assert.equal(identity.body, source);
+  const head = await request(app.port, '/static/large.js', { method: 'HEAD', headers: { 'accept-encoding': 'br' } });
+  assert.equal(head.headers['content-encoding'], 'br');
+  assert.equal(head.raw.length, 0);
 });
 
 test('static files cannot escape the build directory through a junction or symlink', async t => {

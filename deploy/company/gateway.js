@@ -5,6 +5,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
 const LOOPBACK = new Set(['127.0.0.1', '::1']);
 const HOP_HEADERS = new Set([
@@ -278,6 +279,26 @@ function isProxyPath(pathname) {
   return ['/api', '/socket.io'].some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
+function acceptedEncoding(header) {
+  const accepted = new Map();
+  for (const entry of String(header || '').split(',')) {
+    const [name, ...parameters] = entry.trim().toLowerCase().split(';');
+    const quality = parameters.find(parameter => parameter.trim().startsWith('q='));
+    const q = quality ? Number(quality.trim().slice(2)) : 1;
+    if ((name === 'br' || name === 'gzip') && Number.isFinite(q) && q > 0 && q <= 1) {
+      accepted.set(name, q);
+    }
+  }
+  if ((accepted.get('br') || 0) >= (accepted.get('gzip') || 0) && accepted.has('br')) return 'br';
+  if (accepted.has('gzip')) return 'gzip';
+  return null;
+}
+
+function compressible(filename, size) {
+  return size >= 1024 && new Set(['.html', '.js', '.css', '.json', '.map', '.svg', '.txt'])
+    .has(path.extname(filename).toLowerCase());
+}
+
 function createGateway(options = {}) {
   const config = readConfig(options);
   const server = http.createServer(async (req, res) => {
@@ -301,9 +322,13 @@ function createGateway(options = {}) {
     if (!['GET', 'HEAD'].includes(req.method)) { json(res, 405, { message: '方法不允许' }); return; }
     const file = await staticFile(config, pathname);
     if (!file.filename) { json(res, file.status, { message: '页面或资源不可用' }); return; }
+    const encoding = !req.headers.range && compressible(file.filename, file.metadata.size)
+      ? acceptedEncoding(req.headers['accept-encoding']) : null;
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[path.extname(file.filename).toLowerCase()] || 'application/octet-stream',
-      'Content-Length': file.metadata.size, 'X-Content-Type-Options': 'nosniff',
+      ...(encoding ? { 'Content-Encoding': encoding, Vary: 'Accept-Encoding' }
+        : { 'Content-Length': file.metadata.size }),
+      'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'SAMEORIGIN',
       'Cache-Control': path.basename(file.filename) === 'index.html' ? 'no-store' : 'public, max-age=3600'
     });
@@ -311,7 +336,14 @@ function createGateway(options = {}) {
     const stream = fs.createReadStream(file.filename);
     stream.on('error', () => res.destroy());
     res.on('close', () => stream.destroy());
-    stream.pipe(res);
+    if (encoding) {
+      const compressor = encoding === 'br'
+        ? zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 } })
+        : zlib.createGzip({ level: 6 });
+      compressor.on('error', () => res.destroy());
+      res.on('close', () => compressor.destroy());
+      stream.pipe(compressor).pipe(res);
+    } else stream.pipe(res);
   });
   server.on('upgrade', (req, socket, head) => {
     let pathname;

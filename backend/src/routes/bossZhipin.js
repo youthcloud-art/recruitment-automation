@@ -40,6 +40,7 @@ function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo =
     lastCardIndex: Number.isInteger(status?.lastCardIndex)
       ? status.lastCardIndex : -1,
     lastTargetState: status?.lastTargetState || '',
+    lastTargetReason: status?.lastTargetReason || '',
     scrollRounds: status?.scrollRounds || 0,
     windowRestoreCount: status?.windowRestoreCount || 0,
     targetCount: status?.targetCount || 0,

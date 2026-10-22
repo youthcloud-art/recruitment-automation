@@ -145,6 +145,7 @@ function upstreamHeaders(req, config, upgrade = false) {
 }
 
 function json(res, status, value) {
+  if (res.destroyed || res.writableEnded) return;
   const data = Buffer.from(JSON.stringify(value));
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8', 'Content-Length': data.length,
@@ -301,7 +302,8 @@ function compressible(filename, size) {
 
 function createGateway(options = {}) {
   const config = readConfig(options);
-  const server = http.createServer(async (req, res) => {
+  const checkBackend = options.backendHealthy || backendHealthy;
+  const handleRequest = async (req, res) => {
     let pathname;
     try { pathname = requestPath(req); }
     catch { json(res, 400, { message: '无效请求路径' }); return; }
@@ -310,7 +312,7 @@ function createGateway(options = {}) {
     if (pathname === '/healthz') {
       if (!['GET', 'HEAD'].includes(req.method)) { json(res, 405, { message: '方法不允许' }); return; }
       const [frontend, backend] = await Promise.all([
-        staticFile(config, '/index.html').then(file => Boolean(file.filename)), backendHealthy(config)
+        staticFile(config, '/index.html').then(file => Boolean(file.filename)), checkBackend(config)
       ]);
       json(res, frontend && backend ? 200 : 503, {
         status: frontend && backend ? 'ok' : 'unavailable',
@@ -344,6 +346,20 @@ function createGateway(options = {}) {
       res.on('close', () => compressor.destroy());
       stream.pipe(compressor).pipe(res);
     } else stream.pipe(res);
+  };
+  const server = http.createServer((req, res) => {
+    // An employee can close or refresh a tab while a health check, file read
+    // or upstream request is pending. Do not let a rejected async handler or
+    // a closed response stream terminate the company gateway process.
+    res.on('error', () => res.destroy());
+    Promise.resolve(handleRequest(req, res)).catch(error => {
+      console.error(`公司网关请求失败: ${error.code || error.message}`);
+      if (res.destroyed || res.writableEnded) return;
+      try {
+        if (res.headersSent) res.destroy();
+        else json(res, 500, { message: '请求暂不可用' });
+      } catch { res.destroy(); }
+    });
   });
   server.on('upgrade', (req, socket, head) => {
     let pathname;

@@ -542,28 +542,33 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
 
   async clickStableSearchControl(selector,expectedValue,expectedFrameOrigin) {
     const click=()=>this.session.clickUnique({selector,frameSelector:SEARCH_FRAME});
-    try { return await click(); }
-    catch (error) {
-      // The official search panel can shift while rendering. A pre-click
-      // recheck guarantees no mouse press was sent; allow one retry only when
-      // the same iframe, keyword and default filters remain visible.
-      const moved=error.code==='BOSS_CDP_TARGET_UNSTABLE' &&
-        error.stage==='pre_click_recheck' &&
-        (error.reason==='position_moved' ||
-          (error.reason==='target_not_ready' &&
-            ['obscured','out_of_view'].includes(error.targetState)));
-      if (!moved) throw error;
-      await this.wait(500);
-      await this.assertPage();
-      const state=await this.readOnlyExpression(SEARCH_STATE,
-        'recheck_search_control');
-      if (state?.state!=='ready' ||
-          state.frameOrigin!==expectedFrameOrigin ||
-          normalized(state.value)!==normalized(expectedValue) ||
-          !state.selectedFiltersReady || state.nonDefaultSelected>0 ||
-          state.checkedCount>0 || state.activeCustomSliderCount>0 ||
-          (await this.readModal()).active) throw error;
-      return click();
+    for (let attempt=0;attempt<3;attempt++) {
+      try { return await click(); }
+      catch (error) {
+        // A pre-click probe/recheck has sent no mouse press. The official
+        // search panel may briefly hide, move or replace a control while
+        // rendering. Never retry an uncertain click or a changed document.
+        const transient=['missing','hidden','obscured','out_of_view'];
+        const safe=error.code==='BOSS_CDP_TARGET_UNSTABLE' &&
+          error.stage==='pre_click_recheck' &&
+          (error.reason==='position_moved' ||
+            (error.reason==='target_not_ready' &&
+              transient.includes(error.targetState))) ||
+          error.code==='BOSS_CDP_TARGET_UNAVAILABLE' &&
+          error.stage==='pre_click_probe' &&
+          transient.includes(error.targetState);
+        if (!safe || attempt===2) throw error;
+        await this.wait(500+attempt*250);
+        await this.assertPage();
+        const state=await this.readOnlyExpression(SEARCH_STATE,
+          'recheck_search_control');
+        if (state?.state!=='ready' ||
+            state.frameOrigin!==expectedFrameOrigin ||
+            normalized(state.value)!==normalized(expectedValue) ||
+            !state.selectedFiltersReady || state.nonDefaultSelected>0 ||
+            state.checkedCount>0 || state.activeCustomSliderCount>0 ||
+            (await this.readModal()).active) throw error;
+      }
     }
   }
 

@@ -920,6 +920,45 @@ test('assistant retries a moving search control only before any mouse press',asy
   assert.equal(clicks,2);
 });
 
+test('assistant waits through transient hidden search control with unchanged iframe',async()=>{
+  const collector=new BossRawSearchCollector();
+  collector.wait=async()=>{};
+  collector.assertPage=async()=>({url:PAGE});
+  collector.readModal=async()=>({active:false});
+  collector.readOnlyExpression=async()=>({state:'ready',value:TITLE,
+    frameOrigin:7,selectedFiltersReady:true,nonDefaultSelected:0,
+    checkedCount:0,activeCustomSliderCount:0});
+  let clicks=0;
+  collector.session={clickUnique:async()=>{
+    clicks++;
+    if(clicks<3) throw Object.assign(new Error('rendering'),{
+      code:'BOSS_CDP_TARGET_UNSTABLE',stage:'pre_click_recheck',
+      reason:'target_not_ready',targetState:'hidden'});
+  }};
+  await collector.clickStableSearchControl('input.search-input',TITLE,7);
+  assert.equal(clicks,3);
+});
+
+test('assistant stops retrying when the official search iframe changes',async()=>{
+  const collector=new BossRawSearchCollector();
+  collector.wait=async()=>{};
+  collector.assertPage=async()=>({url:PAGE});
+  collector.readModal=async()=>({active:false});
+  collector.readOnlyExpression=async()=>({state:'ready',value:TITLE,
+    frameOrigin:8,selectedFiltersReady:true,nonDefaultSelected:0,
+    checkedCount:0,activeCustomSliderCount:0});
+  let clicks=0;
+  collector.session={clickUnique:async()=>{
+    clicks++;
+    throw Object.assign(new Error('control moved'),{
+      code:'BOSS_CDP_TARGET_UNSTABLE',stage:'pre_click_recheck',
+      reason:'target_not_ready',targetState:'hidden'});
+  }};
+  await assert.rejects(collector.clickStableSearchControl(
+    'input.search-input',TITLE,7),error=>error.reason==='target_not_ready');
+  assert.equal(clicks,1);
+});
+
 test('assistant does not retry a search control after iframe replacement',async()=>{
   const collector=new BossRawSearchCollector();
   let clicks=0;

@@ -261,6 +261,14 @@ test('health never treats an HTTP-200 backend error payload as ready', async t =
   assert.equal((await request(app.port, '/healthz')).status, 503);
 });
 
+test('a rejected async health probe returns an error without killing the gateway', async t => {
+  const app = await fixture(t, { gatewayOptions: {
+    backendHealthy: async () => { throw new Error('simulated probe failure'); }
+  } });
+  assert.equal((await request(app.port, '/healthz')).status, 500);
+  assert.equal((await request(app.port, '/')).status, 200);
+});
+
 test('WebSocket upgrade shares the HTTP boundary and tunnels both directions', async t => {
   const app = await fixture(t);
   for (const headers of [

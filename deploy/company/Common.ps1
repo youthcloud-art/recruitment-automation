@@ -24,6 +24,7 @@ function Read-CompanyConfig([string]$InstallRoot) {
     # Compatibility with the first bootstrap, which used a fixed port 5001.
     if (-not $config.PSObject.Properties['backendPort']) { $config | Add-Member -NotePropertyName backendPort -NotePropertyValue 5001 }
     if (-not $config.PSObject.Properties['gatewayPort']) { $config | Add-Member -NotePropertyName gatewayPort -NotePropertyValue 4000 }
+    if (-not $config.PSObject.Properties['watchdogTask']) { $config | Add-Member -NotePropertyName watchdogTask -NotePropertyValue 'AutoRecru-Company-Watchdog' }
     $gateway = 0
     if (-not [int]::TryParse([string]$config.gatewayPort, [ref]$gateway) -or $gateway -lt 1024 -or $gateway -gt 65535) { throw 'The configured gateway port is invalid.' }
     $port = 0
@@ -100,6 +101,20 @@ function Get-CompanyRuntimeDefinitions($Config, [string]$ReleaseRoot, [string]$G
 function Start-CompanyChild($Config, $Definition, [string]$LogPrefix = '') {
     $previous = @{}
     $process = $null
+    $logRoot = Assert-ChildPath $Config.installRoot (Join-Path $Config.installRoot 'logs')
+    $logStem = $LogPrefix + $Definition.name
+    foreach ($stream in @('stdout','stderr')) {
+        $activeLog = Assert-ChildPath $logRoot (Join-Path $logRoot ($logStem + '.' + $stream + '.log'))
+        if ((Test-Path -LiteralPath $activeLog -PathType Leaf) -and
+            (Get-Item -LiteralPath $activeLog).Length -gt 0) {
+            $archive = Assert-ChildPath $logRoot (Join-Path $logRoot ($logStem + '.' + $stream + '.' +
+                (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,6) + '.log'))
+            Move-Item -LiteralPath $activeLog -Destination $archive -ErrorAction Stop
+        }
+        $old = @(Get-ChildItem -LiteralPath $logRoot -Filter ($logStem + '.' + $stream + '.*.log') -File |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -Skip 10)
+        foreach ($file in $old) { Remove-Item -LiteralPath $file.FullName -Force }
+    }
     try {
         foreach ($name in $Definition.env.Keys) {
             $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')

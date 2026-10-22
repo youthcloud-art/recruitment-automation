@@ -84,6 +84,20 @@ Start-ScheduledTask -TaskName 'AutoRecru-Company-MirrorDeploy'
 
 服务器的 `AutoRecru-Company-MirrorDeploy` 以 SYSTEM 身份准备新版本，再启动交互运行任务；构建失败时现有服务继续运行。固定 delivery 脚本不会随 Git 拉取自动覆盖，修改部署机制后应单独审阅并更新服务器 `delivery` 内脚本。
 
+### 已安装服务器的一次性运行可靠性更新
+
+当 `control\current-release.json` 指向包含 `Apply-CompanyReliability.ps1` 的新版本后，在**服务器本机管理员 PowerShell** 运行一次：
+
+```powershell
+$root = 'D:\App\SXF\Smart-Recruitment-Agent'
+$current = Get-Content "$root\control\current-release.json" -Raw | ConvertFrom-Json
+& (Join-Path $current.root 'deploy\company\Apply-CompanyReliability.ps1') -InstallRoot $root
+```
+
+脚本核对服务器 IP、当前版本与部署锁，备份旧维护脚本，更新固定 `delivery` 脚本，仅重启本项目后端和网关并校验 `/healthz`，再安装每 2 分钟检查一次的 `AutoRecru-Company-Watchdog`。招聘平台的独立 Chrome 窗口及浏览器资料不会被脚本关闭。若运行任务仍显示 Running 但健康检查失败，监测任务只记录异常，不杀进程；任务已停止且端口空闲时才尝试恢复。更新失败会恢复旧脚本并尝试启动旧运行任务。成功时显示 `RELIABILITY_UPDATE_OK`，详情写入 `delivery\last-reliability-update.json`。
+
+故障诊断依次查看 `control\runtime-failure.json`、`delivery\last-watchdog.json`、`logs\backend.stderr.log` 和 `logs\gateway.stderr.log`。每次重启会把非空的旧日志存成同目录带时间戳的文件，各流保留最近 10 份，便于定位重启前的异常。`node` 的 `ExperimentalWarning` 本身不能说明服务为何退出；应结合运行任务状态与故障记录判断。计划任务以交互账户启动浏览器相关进程，服务器重启或该账户注销后仍需先登录该 Windows 账户。
+
 服务器查看状态：
 
 ```powershell

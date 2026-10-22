@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-22T00:34:03.493Z",
+  "generatedAt": "2026-10-22T00:47:29.114Z",
   "source": "Auto-Recru current working tree; fresh history required",
   "files": [
     {
@@ -1088,6 +1088,12 @@
       "transformations": []
     },
     {
+      "path": "deploy/company/Prepare-CompanyServer.ps1",
+      "sha256": "445a9b6d6b66ad2378955a90595b845d2585f92aca71c06c356e118e8451c533",
+      "sourceSha256": "445a9b6d6b66ad2378955a90595b845d2585f92aca71c06c356e118e8451c533",
+      "transformations": []
+    },
+    {
       "path": "deploy/company/Prepare-Release.ps1",
       "sha256": "955b17b33085f761d224d9bd017fbdabd58e29efca52034e4a2fb5d3f5a03c7f",
       "sourceSha256": "955b17b33085f761d224d9bd017fbdabd58e29efca52034e4a2fb5d3f5a03c7f",
@@ -1101,8 +1107,8 @@
     },
     {
       "path": "deploy/company/README.md",
-      "sha256": "b7122c0a6d65785d69e05aae50b8e42f5b108a9d61deb9fb955b58b9a10518b4",
-      "sourceSha256": "b7122c0a6d65785d69e05aae50b8e42f5b108a9d61deb9fb955b58b9a10518b4",
+      "sha256": "9c80c7adf299d0ee1ca45f4b62cfb2b9f04d2e1b5957bd3a845970b34369b752",
+      "sourceSha256": "9c80c7adf299d0ee1ca45f4b62cfb2b9f04d2e1b5957bd3a845970b34369b752",
       "transformations": []
     },
     {
@@ -1772,7 +1778,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "9179cea6c4e5f189bcdbb36cdd9befadb64c2a895e5ef9c964a4df65f98964a4",
+      "sha256": "78da723ebff71798cc716515d2fb7771daf1943f280dfa7a807d604f55124ed4",
       "sourceSha256": null,
       "transformations": [
         "generated-company-file"
@@ -1804,8 +1810,8 @@
     },
     {
       "path": "scripts/prepare-company-release.js",
-      "sha256": "a7a985c07e906746c9929db38a16fbd17f3e4a8df4c467f624ec5bb1761d80fd",
-      "sourceSha256": "a7a985c07e906746c9929db38a16fbd17f3e4a8df4c467f624ec5bb1761d80fd",
+      "sha256": "0650947cb4d8eee0a3bb63e1a93abbf9eef5facc485e6aebd2bb9b120d0976c3",
+      "sourceSha256": "0650947cb4d8eee0a3bb63e1a93abbf9eef5facc485e6aebd2bb9b120d0976c3",
       "transformations": []
     },
     {

@@ -28,7 +28,11 @@
 
 Gitee 仓库预期为 `felixshe/auto-recru-company`，为 GitHub 对应私有仓库设置单向 Pull 自动镜像。镜像完成后核对 main 的完整 40 位提交一致。GitHub 镜像授权、模型密钥均通过对应服务的管理界面保存，不写进脚本。
 
-首次可从 GitHub 或 Gitee 下载该**完整提交**的 ZIP，先校验下载文件 SHA-256，再解压并确认项目文件位于选定源码根目录。下面的源码路径、提交及 Windows 账户按实际值替换：
+首次可从 GitHub 或 Gitee 下载该**完整提交**的 ZIP，先校验下载文件 SHA-256，再解压并确认项目文件位于选定源码根目录。
+
+首次准备可直接在服务器管理员 PowerShell 运行 `deploy\company\Prepare-CompanyServer.ps1 -Commit <完整提交SHA>`。它先把只读检查结果保存为当前用户桌面的 `AutoRecru-Server-Check.json`；缺少 Node.js 24+、npm 或 Git 时停止，不改旧服务。环境齐全时调用下方安装器的 `-PrepareOnly`，准备依赖、前端和只读部署公钥，最后显示 `.pub` 公钥。将检查结果及公钥提供给部署维护者，核实旧服务路径、任务和 Gitee 只读权限后再进行切换。该入口不会停止旧服务，也不会启用自动部署任务。
+
+需要自定义参数时，下面的源码路径、提交及 Windows 账户按实际值替换：
 
 ```powershell
 $source = 'D:\App\SXF\AutoRecru-Bootstrap\auto-recru-company'

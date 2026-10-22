@@ -195,6 +195,10 @@ class SqliteResumeStore {
       ON candidate_resumes(source, source_card_fingerprint)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS candidate_boss_name
       ON candidate_resumes(source, boss_name_key)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS candidate_evaluation_job
+      ON candidate_resumes(json_extract(payload, '$.matchEvaluation.jobRequirements'))`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS candidate_capture_job
+      ON candidate_resumes(json_extract(payload, '$.captureJobRequirements'))`);
     const backfilled = this.db.prepare(`SELECT value FROM library_metadata
       WHERE key = 'boss_candidate_id_backfilled'`).get();
     if (!backfilled) {
@@ -398,8 +402,8 @@ class SqliteResumeStore {
     const params = [];
     if (source) { filters.push('source = ?'); params.push(source); }
     if (jobRequirements !== null) {
-      filters.push("json_extract(payload, '$.matchEvaluation.jobRequirements') = ?");
-      params.push(jobRequirements);
+      filters.push("(json_extract(payload, '$.matchEvaluation.jobRequirements') = ? OR json_extract(payload, '$.captureJobRequirements') = ?)");
+      params.push(jobRequirements, jobRequirements);
     }
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     let count = 0;

@@ -842,7 +842,7 @@ class WuyouService {
     return { text: completeResumeText(best.text), url: best.url, title: await page.title() };
   }
 
-  async collectPage(page) {
+  async collectPage(page, jobRequirements = '') {
     const resume = await this.captureVisibleResume(page);
     const normalizedText = resume.text.replace(/\s+/g, ' ').trim().toLowerCase();
     const fingerprint = crypto.createHash('sha256').update(normalizedText).digest('hex');
@@ -886,6 +886,7 @@ class WuyouService {
       sourceFingerprint: fingerprint,
       sourceTitle: resume.title,
       originalText: resume.text,
+      captureJobRequirements: String(jobRequirements || '').trim() || null,
       parseMethod: 'local',
       parseStatus: 'completed'
     }, { returnStatus: true });
@@ -1027,7 +1028,7 @@ class WuyouService {
                 tab = null;
                 break;
               }
-              const result = await this.collectPage(tab);
+              const result = await this.collectPage(tab, jobRequirements);
               if (result.saved) this.batch.saved++;
               else {
                 this.batch.skipped++;
@@ -1174,7 +1175,7 @@ class WuyouService {
               this.page = detailPage;
               break;
             }
-            const result = await this.collectPage(detailPage);
+            const result = await this.collectPage(detailPage, jobRequirements);
             if (result.saved) {
               this.batch.saved++;
               await this.evaluateCaptured(result.resume, jobRequirements);

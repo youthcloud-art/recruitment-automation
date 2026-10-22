@@ -288,7 +288,8 @@ class ResumeModel {
     let count = 0;
     for (const item of this.getResumes(null, source)) {
       if (jobRequirements !== null &&
-          item.matchEvaluation?.jobRequirements !== jobRequirements) continue;
+          item.matchEvaluation?.jobRequirements !== jobRequirements &&
+          item.captureJobRequirements !== jobRequirements) continue;
       visitor(item);
       count++;
     }

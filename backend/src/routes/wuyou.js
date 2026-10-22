@@ -3,6 +3,7 @@ const { WuyouService } = require('../services/wuyouService');
 
 const router = express.Router();
 const service = new WuyouService();
+let batchStarting = false;
 const MAX_TARGET_COUNT = 30;
 const MAX_KEYWORDS = 10;
 
@@ -116,11 +117,13 @@ router.post('/collect-batch', async (req, res) => {
   if (targetCount === null) {
     return res.status(400).json({ success: false, message: `目标简历数量需为 1～${MAX_TARGET_COUNT} 份` });
   }
+  if (batchStarting) return res.status(409).json({ success: false, message: '前程无忧采集正在启动' });
+  batchStarting = true;
   try {
     res.json({ success: true, data: await service.startBatch({ targetCount }) });
   } catch (error) {
     handleError(res, error);
-  }
+  } finally { batchStarting = false; }
 });
 
 router.post('/keyword-batch', async (req, res) => {
@@ -140,13 +143,15 @@ router.post('/keyword-batch', async (req, res) => {
       !['不限', '大专及以上', '本科及以上', '硕士及以上'].includes(req.body.education)) {
     return res.status(400).json({ success: false, message: '前程无忧学历筛选值无效' });
   }
+  if (batchStarting) return res.status(409).json({ success: false, message: '前程无忧采集正在启动' });
+  batchStarting = true;
   try {
     res.json({ success: true, data: await service.startKeywordBatch({ keywords, targetCount,
       ...(req.body.jobRequirements === undefined ? {} : { jobRequirements: req.body.jobRequirements }),
       ...(req.body.education === undefined ? {} : { education: req.body.education }) }) });
   } catch (error) {
     handleError(res, error);
-  }
+  } finally { batchStarting = false; }
 });
 
 router.post('/stop-batch', async (_req, res) => {

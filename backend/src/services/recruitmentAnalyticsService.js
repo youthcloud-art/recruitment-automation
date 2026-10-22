@@ -1,6 +1,7 @@
 const resumeModel = require('../models/resumeModel');
 const { ActiveJobService } = require('./activeJobService');
 const { isVettedEvaluation } = require('./resumeRecommendationService');
+const { candidateName, candidatePosition } = require('../utils/candidateDisplay');
 
 const SOURCE_LABELS = Object.freeze({ boss: 'BOSS直聘', zlzp: '智联招聘', qcwy: '前程无忧' });
 const STATUS_LABELS = Object.freeze({
@@ -54,10 +55,11 @@ class RecruitmentAnalyticsService {
     const activeJob = this.activeJobService.current();
     const requirements = String(activeJob?.jobRequirements || '').trim();
     const configured = requirements.length >= 5;
-    // There is no durable capture-to-job key on older records. The exact saved
-    // requirements on an evaluation are the only reliable current-job link.
+    // New captures retain their exact job criteria even when evaluation is
+    // deferred. Older records can still be linked by a completed evaluation.
     const bySource = Object.entries(SOURCE_LABELS).map(([source, label]) => ({
-      source, label, total: 0, evaluated: 0, passed: 0, withOriginalText: 0
+      source, label, total: 0, evaluated: 0, passed: 0, withOriginalText: 0,
+      nameNeedsReview: 0, positionNeedsReview: 0, parseNeedsReview: 0
     }));
     const sourceMap = Object.fromEntries(bySource.map(row => [row.source, row]));
     const byStatus = Object.entries(STATUS_LABELS).map(([status, label]) => ({ status, label, count: 0 }));
@@ -74,10 +76,14 @@ class RecruitmentAnalyticsService {
 
     const countRecord = item => {
       if (!Object.hasOwn(SOURCE_LABELS, item.source) ||
-          (scope === 'active' && item.matchEvaluation?.jobRequirements !== requirements)) return;
+          (scope === 'active' && item.matchEvaluation?.jobRequirements !== requirements &&
+            item.captureJobRequirements !== requirements)) return;
       metrics.total++;
       const source = sourceMap[item.source];
       source.total++;
+      if (/^(?:未识别姓名|匿名候选人)/.test(candidateName(item))) source.nameNeedsReview++;
+      if (!candidatePosition(item) || /待核实/.test(candidatePosition(item))) source.positionNeedsReview++;
+      if (item.parseStatus === 'needs_review') source.parseNeedsReview++;
       const status = statusMap[item.workflowStatus] || statusMap.new;
       status.count++;
       if (String(item.originalText || item.content || '').trim()) {
@@ -90,7 +96,8 @@ class RecruitmentAnalyticsService {
       // evaluation gate as recommendation and the candidate report so such a
       // record never inflates evaluated or above-threshold analytics.
       const score = item.matchScore;
-      const evaluated = isVettedEvaluation(item) &&
+      const evaluated = (scope !== 'active' || item.matchEvaluation?.jobRequirements === requirements) &&
+        isVettedEvaluation(item) &&
         Number.isFinite(score) && score >= 0 && score <= 100;
       if (!evaluated) return;
       source.evaluated++;
@@ -116,10 +123,10 @@ class RecruitmentAnalyticsService {
     metrics.scoreAverage = metrics.evaluated
       ? Math.round((metrics.scoreSum / metrics.evaluated) * 10) / 10 : null;
     delete metrics.scoreSum;
-    metrics.evaluationRate = scope === 'active' ? null : percentage(metrics.evaluated, metrics.total);
+    metrics.evaluationRate = percentage(metrics.evaluated, metrics.total);
     metrics.passRate = percentage(metrics.passed, metrics.evaluated);
     metrics.originalTextRate = percentage(metrics.withOriginalText, metrics.total);
-    metrics.unevaluated = scope === 'active' ? null : metrics.total - metrics.evaluated;
+    metrics.unevaluated = metrics.total - metrics.evaluated;
     return {
       scope, threshold,
       generatedAt: now.toISOString(),
@@ -127,7 +134,7 @@ class RecruitmentAnalyticsService {
         updatedAt: activeJob?.updatedAt || null, configured },
       metrics, bySource, byStatus, scoreBands, trend,
       scopeNote: scope === 'active'
-        ? '当前岗位仅关联按这版岗位要求评估的简历；已评估数须通过初筛报告同一套有效性检查，失败或进行中的重评不计入。尚未评估的记录无法可靠归入当前岗位，因此已关联数可能低于实际采集数。'
+        ? '当前岗位包含按这版条件采集或评估的简历；旧版未记录采集岗位且未评估的简历无法可靠归属。评分失败或进行中的记录计入待评估，不会误算为已评分。'
         : '全部历史简历包含不同岗位；已评估数采用初筛报告的有效性检查，失败或进行中的重评不计入。各岗位匹配分仅作参考，不宜直接横向比较。'
     };
   }

@@ -1014,6 +1014,7 @@ class BossRawRecommendCollector {
         positionSource:cardPosition ? `boss_${this.pageSegment}_card`
           : ocrPosition ? 'ocr' : 'unverified',
         originalText:captured.text,
+        captureJobRequirements:String(job?.jobRequirements || '').trim() || null,
         qualityScore:parsed.qualityScore,parseMethod:captured.method,
         parseStatus:'completed'
       }, {returnStatus:true});

@@ -25,10 +25,11 @@ function parseStructuredReply(reply) {
 
 class ZhilianResumeCollector {
   constructor({ llmService = null, resumeStore = resumeModel,
-    evaluationQueue = postCaptureEvaluationQueue } = {}) {
+    evaluationQueue = postCaptureEvaluationQueue, parseTimeoutMs = 45000 } = {}) {
     this.llmService = llmService;
     this.resumeStore = resumeStore;
     this.evaluationQueue = evaluationQueue;
+    this.parseTimeoutMs = parseTimeoutMs;
   }
 
   findExisting(candidate) {
@@ -37,6 +38,17 @@ class ZhilianResumeCollector {
     }
     return this.resumeStore.getResumes().find(item =>
       isSameZhilianResume(item, candidate)) || null;
+  }
+
+  async enrichExisting(existing, candidate) {
+    if (existing?.parseStatus !== 'needs_review' || candidate.parseMethod !== 'llm' ||
+        existing.sourceFingerprint !== candidate.sourceFingerprint ||
+        typeof this.resumeStore.updateCandidateMetadata !== 'function') return existing;
+    const fields = ['name', 'age', 'workYears', 'education', 'currentStatus', 'phone',
+      'email', 'selfIntroduction', 'expectedPosition', 'position', 'workExperience',
+      'educationExperience', 'skills', 'certificates', 'parseMethod', 'parseStatus'];
+    return await this.resumeStore.updateCandidateMetadata(existing.id,
+      Object.fromEntries(fields.map(key => [key, candidate[key]]))) || existing;
   }
 
   async captureVisibleResume(page) {
@@ -61,15 +73,32 @@ class ZhilianResumeCollector {
   async save(captured, activeJob = null) {
     const fingerprint = crypto.createHash('sha256').update(captured.text).digest('hex');
     const duplicate = this.findExisting({ source: 'zlzp', sourceFingerprint: fingerprint });
-    if (duplicate) return { saved: false, duplicate: true, resume: duplicate };
-    if (!this.llmService && !process.env.LLM_API_KEY) {
-      throw new Error('请先配置 DeepSeek API 密钥');
+    if (duplicate?.parseStatus !== 'needs_review') {
+      if (duplicate) return { saved: false, duplicate: true, resume: duplicate };
     }
-    const reply = await (this.llmService || new LLMService()).chatWithLLM([
-      { role: 'system', content: '你是招聘简历信息提取助手。仅返回 JSON，缺失字段使用 null 或空数组，不要编造。提取 name、age、workYears、education、currentStatus、phone、email、selfIntroduction、expectedPosition、workExperience、educationExperience、skills、certificates。workExperience 与 educationExperience 是对象数组，skills 与 certificates 是字符串数组。' },
-      { role: 'user', content: '请从以下智联招聘简历详情提取候选人信息，忽略页面导航和按钮文字。\n\n' + captured.text }
-    ]);
-    const parsed = parseStructuredReply(reply);
+    let parsed = {};
+    let parseMethod = 'raw_fallback';
+    let timeout;
+    const controller = new AbortController();
+    try {
+      if (!this.llmService && !process.env.LLM_API_KEY) throw new Error('DeepSeek API 未配置');
+      const reply = await Promise.race([(this.llmService || new LLMService()).chatWithLLM([
+        { role: 'system', content: '你是招聘简历信息提取助手。仅返回 JSON，缺失字段使用 null 或空数组，不要编造。提取 name、age、workYears、education、currentStatus、phone、email、selfIntroduction、expectedPosition、workExperience、educationExperience、skills、certificates。workExperience 与 educationExperience 是对象数组，skills 与 certificates 是字符串数组。' },
+        { role: 'user', content: '请从以下智联招聘简历详情提取候选人信息，忽略页面导航和按钮文字。\n\n' + captured.text }
+      ], null, null, { signal: controller.signal, timeout: this.parseTimeoutMs }),
+      new Promise((_, reject) => { timeout = setTimeout(() => {
+        controller.abort();
+        reject(new Error('智联简历 AI 解析超时'));
+      }, this.parseTimeoutMs); })]);
+      parsed = parseStructuredReply(reply);
+      parseMethod = 'llm';
+    } catch (_) {
+      // The complete platform text is already validated above. Persist it
+      // even during an AI outage; never invent a name from navigation text.
+      logger.warn('智联简历结构化解析暂不可用，已保存完整原文供后续补评');
+    } finally {
+      clearTimeout(timeout);
+    }
     const textFields = ['name', 'age', 'workYears', 'education', 'currentStatus', 'phone', 'email', 'selfIntroduction'];
     const record = Object.fromEntries(textFields.map(field => [field,
       typeof parsed[field] === 'string' || typeof parsed[field] === 'number' ? parsed[field] : null]));
@@ -95,14 +124,17 @@ class ZhilianResumeCollector {
       sourceTitle: captured.title,
       sourceFingerprint: fingerprint,
       originalText: captured.text,
-      parseMethod: 'llm',
-      parseStatus: 'completed'
+      captureJobRequirements: String(activeJob?.jobRequirements || '').trim() || null,
+      parseMethod,
+      parseStatus: parseMethod === 'llm' ? 'completed' : 'needs_review'
     };
     const nearDuplicate = this.findExisting(candidate);
-    if (nearDuplicate) return { saved: false, duplicate: true, resume: nearDuplicate };
+    if (nearDuplicate) return { saved: false, duplicate: true,
+      resume: await this.enrichExisting(nearDuplicate, candidate) };
     const result = await this.resumeStore.addResume(candidate, { returnStatus: true });
     const saved = result.resume || result;
-    if (result.created === false) return { saved: false, duplicate: true, resume: saved };
+    if (result.created === false) return { saved: false, duplicate: true,
+      resume: await this.enrichExisting(saved, candidate) };
     try {
       this.evaluationQueue.enqueue(saved, activeJob);
     } catch (_) {

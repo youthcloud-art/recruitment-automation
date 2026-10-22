@@ -7,6 +7,7 @@ const router = express.Router();
 // 全局服务实例
 let zhilianService = null;
 let zhilianInitPromise = null;
+let browsingStarting = false;
 
 /**
  * 初始化智联招聘服务
@@ -68,7 +69,7 @@ router.post('/start', async (req, res) => {
     
     // 检查是否已有任务在运行
     const currentStatus = service.getCurrentStatus();
-    if (currentStatus.browsing.isActive) {
+    if (browsingStarting || currentStatus.browsing.isActive) {
       return res.status(409).json({
         success: false,
         message: '智联招聘智能寻聘任务正在运行中，请等待完成或先停止当前任务'
@@ -76,6 +77,7 @@ router.post('/start', async (req, res) => {
     }
     
     // 异步执行浏览任务
+    browsingStarting = true;
     service.startBrowsing(mode, filters, targetCount)
       .then(() => {
         logger.info('智联招聘智能寻聘任务完成');
@@ -97,7 +99,7 @@ router.post('/start', async (req, res) => {
             status: service.getCurrentStatus()
           });
         }
-      });
+      }).finally(() => { browsingStarting = false; });
     
     // 立即返回启动成功响应
     res.json({
@@ -169,7 +171,7 @@ router.post('/start-browsing', async (req, res) => {
     
     // 检查是否已有任务在运行
     const browsingStatus = zhilianService.getBrowsingStatus();
-    if (browsingStatus.isActive) {
+    if (browsingStarting || browsingStatus.isActive) {
       return res.status(409).json({
         success: false,
         message: '候选人浏览任务正在运行中，请等待完成或先停止当前任务'
@@ -177,13 +179,14 @@ router.post('/start-browsing', async (req, res) => {
     }
     
     // 异步执行浏览任务
+    browsingStarting = true;
     zhilianService.startBrowsing(mode, filters, targetCount)
       .then(() => {
         logger.info('智联招聘候选人浏览任务完成');
       })
       .catch((error) => {
         logger.error('智联招聘候选人浏览任务失败:', error);
-      });
+      }).finally(() => { browsingStarting = false; });
     
     res.json({
       success: true,

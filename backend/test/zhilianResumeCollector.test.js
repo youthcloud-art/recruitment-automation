@@ -70,6 +70,67 @@ test('智联再次采集同一候选人的页面动态文字变动不会新增�
   assert.equal(llmCalls, 2);
 });
 
+test('智联 AI 临时不可用时保存原文，恢复后可补齐结构化字段', async () => {
+  const saved = [];
+  let available = false;
+  const collector = new ZhilianResumeCollector({
+    llmService: { chatWithLLM: async () => {
+      if (!available) throw new Error('temporary API failure');
+      return '{"name":"测试候选人","expectedPosition":"项目经理主管"}';
+    } },
+    resumeStore: {
+      getResumes: () => saved,
+      addResume: async record => {
+        const resume = { id: 'candidate-1', ...record };
+        saved.push(resume);
+        return { created: true, resume };
+      },
+      updateCandidateMetadata: (id, changes) => {
+        Object.assign(saved.find(item => item.id === id), changes);
+        return saved.find(item => item.id === id);
+      }
+    },
+    evaluationQueue: { enqueue: () => ({ queued: true }) }
+  });
+  const captured = { text: '个人信息和完整工作经历、教育经历、项目经历。'.repeat(10),
+    url: 'https://rd.zhaopin.com/search', title: '智联招聘' };
+  const first = await collector.save(captured,
+    { jobRequirements: '项目经理主管：五年以上项目管理经验' });
+  assert.equal(first.saved, true);
+  assert.equal(first.resume.parseStatus, 'needs_review');
+  assert.equal(first.resume.captureJobRequirements, '项目经理主管：五年以上项目管理经验');
+  assert.equal(first.resume.name, '未识别姓名');
+  assert.equal(first.resume.originalText, captured.text);
+  available = true;
+  const second = await collector.save(captured);
+  assert.equal(second.saved, false);
+  assert.equal(second.duplicate, true);
+  assert.equal(second.resume.name, '测试候选人');
+  assert.equal(second.resume.parseStatus, 'completed');
+  assert.equal(saved.length, 1);
+});
+
+test('智联 AI 解析超时有上限，完整原文仍入库', async () => {
+  const saved = [];
+  const collector = new ZhilianResumeCollector({
+    llmService: { chatWithLLM: () => new Promise(() => {}) },
+    parseTimeoutMs: 10,
+    resumeStore: {
+      getResumes: () => saved,
+      addResume: async record => {
+        const resume = { id: 'timeout-record', ...record };
+        saved.push(resume);
+        return { created: true, resume };
+      }
+    }, evaluationQueue: { enqueue: () => ({ queued: true }) }
+  });
+  const record = await collector.save({ text: '完整工作经历和教育经历。'.repeat(10),
+    url: 'https://rd.zhaopin.com/search', title: '简历详情' });
+  assert.equal(record.saved, true);
+  assert.equal(record.resume.parseStatus, 'needs_review');
+  assert.equal(saved.length, 1);
+});
+
 test('智联候选人卡片打开简历后保存并关闭弹窗', async () => {
   const browser = await chromium.launch({ headless: true, executablePath: chromium.executablePath() });
   try {

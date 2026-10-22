@@ -402,6 +402,24 @@ test('recommendation and analytics stream a 6,000-record SQLite library without 
   assert.equal(all.metrics.passed, 50);
 });
 
+test('SQLite active-job iteration includes captured resumes awaiting AI evaluation', t => {
+  const requirements = '岗位名称：项目经理主管\n项目管理经验五年以上';
+  const { libraryDir, cleanup } = fixture(t, { resumes: [
+    { id: 'pending', source: 'zlzp', captureJobRequirements: requirements,
+      matchEvaluationStatus: 'pending', originalText: '完整简历正文' },
+    { id: 'other', source: 'zlzp', captureJobRequirements: '其他岗位条件',
+      originalText: '其他岗位简历' }
+  ], positions: [], categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  const found = [];
+  model.forEachResume(item => found.push(item.id), { jobRequirements: requirements });
+  assert.deepEqual(found, ['pending']);
+  const analytics = new RecruitmentAnalyticsService({ store: model,
+    activeJobService: { current: () => ({ title: '项目经理主管', jobRequirements: requirements }) } });
+  assert.equal(analytics.snapshot().metrics.unevaluated, 1);
+});
+
 test('SQLite resume iteration uses a read snapshot while another connection writes', t => {
   const requirements = 'IT网络运维：服务器和网络维护';
   const { libraryDir, cleanup } = fixture(t, { resumes: [

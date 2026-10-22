@@ -261,6 +261,37 @@ class BossRawCdpSession {
       'BOSS 专用 Chrome 窗口恢复结果无法确认，已暂停采集；请手动恢复窗口');
   }
 
+  async restoreInitialMinimizedOwnedWindow({expectedUrl}={}) {
+    // At task start there has not yet been a visible-window preflight, so the
+    // usual restore path has no recorded window ID. Only an owned CDP target
+    // with the exact recruiter URL may establish that ID while minimized.
+    if (!this.owned || this.verifiedWindowId != null ||
+        !safeRecruiterUrl(expectedUrl) ||
+        await this.assertRecruiterReady() !== expectedUrl) {
+      throw cdpError('BOSS_CDP_WINDOW_RESTORE_UNAVAILABLE',
+        'BOSS 初始窗口身份无法确认，已暂停采集');
+    }
+    const before = await this.send('Browser.getWindowForTarget', {}, { timeoutMs: 8000 });
+    if (!Number.isSafeInteger(before?.windowId) || before.windowId <= 0 ||
+        before?.bounds?.windowState !== 'minimized') {
+      throw cdpError('BOSS_CDP_WINDOW_RESTORE_UNAVAILABLE',
+        'BOSS 初始窗口状态已变化，已暂停采集');
+    }
+    this.verifiedWindowId = before.windowId;
+    return this.restoreMinimizedOwnedWindow({expectedUrl});
+  }
+
+  async assertOrRestoreInitialRecruiterWindow({frameSelector}={}) {
+    try {
+      return await this.assertUsableRecruiterWindow({frameSelector});
+    } catch (error) {
+      if (error.code !== 'BOSS_CDP_WINDOW_MINIMIZED') throw error;
+      const expectedUrl = await this.assertRecruiterReady();
+      await this.restoreInitialMinimizedOwnedWindow({expectedUrl});
+      return this.assertUsableRecruiterWindow({frameSelector});
+    }
+  }
+
   targetExpression({ selector, frameSelector, identityAttribute, identityValue, scroll = false }) {
     if (typeof selector !== 'string' || !selector.trim() || selector.length > 500 ||
         (frameSelector != null && (typeof frameSelector !== 'string' || !frameSelector.trim() || frameSelector.length > 500)) ||

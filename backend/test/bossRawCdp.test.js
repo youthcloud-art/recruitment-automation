@@ -154,6 +154,51 @@ test('owned BOSS window restores once and observes the same window after an unce
   assert.equal(setCalls,1,'uncertain ACK must not replay setWindowBounds');
 });
 
+test('initial minimized owned BOSS window is restored before the first candidate action', async () => {
+  const session = Object.create(BossRawCdpSession.prototype);
+  session.owned = true;
+  session.verifiedWindowId = null;
+  let state = 'minimized';
+  let restoreCalls = 0;
+  session.assertRecruiterReady = async () => RECRUITER_URL;
+  session.evaluate = async () => ({state:'ready',viewportWidth:1824,
+    viewportHeight:905,frameWidth:1656,visibleWidth:1656,
+    visibleHeight:865,frameFullyVisible:true});
+  session.send = async (method, args) => {
+    if (method === 'Browser.getWindowForTarget') {
+      return {windowId:73,bounds:{windowState:state}};
+    }
+    assert.equal(method,'Browser.setWindowBounds');
+    assert.deepEqual(args,{windowId:73,bounds:{windowState:'normal'}});
+    restoreCalls++;
+    state = 'normal';
+  };
+  assert.equal(await session.assertOrRestoreInitialRecruiterWindow(),true);
+  assert.equal(session.verifiedWindowId,73);
+  assert.equal(restoreCalls,1);
+});
+
+test('initial BOSS restore rejects an unowned or changed window without mutation', async () => {
+  const session = Object.create(BossRawCdpSession.prototype);
+  let setCalls = 0;
+  session.assertRecruiterReady = async () => RECRUITER_URL;
+  session.send = async method => {
+    if (method === 'Browser.getWindowForTarget') {
+      return {windowId:74,bounds:{windowState:'minimized'}};
+    }
+    setCalls++;
+  };
+  session.owned = false;
+  session.verifiedWindowId = null;
+  await assert.rejects(session.restoreInitialMinimizedOwnedWindow({expectedUrl:RECRUITER_URL}),
+    error => error.code === 'BOSS_CDP_WINDOW_RESTORE_UNAVAILABLE');
+  session.owned = true;
+  session.assertRecruiterReady = async () => 'https://www.zhipin.com/web/chat/search';
+  await assert.rejects(session.restoreInitialMinimizedOwnedWindow({expectedUrl:RECRUITER_URL}),
+    error => error.code === 'BOSS_CDP_WINDOW_RESTORE_UNAVAILABLE');
+  assert.equal(setCalls,0);
+});
+
 test('window restoration refuses unowned or changed BOSS window before any mutation', async () => {
   const session = Object.create(BossRawCdpSession.prototype);
   let setCalls=0;

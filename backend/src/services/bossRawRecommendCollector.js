@@ -1133,7 +1133,11 @@ class BossRawRecommendCollector {
     let candidateErrorStreak = 0;
     try {
       this.session = await this.connect();
-      await this.session.assertUsableRecruiterWindow({frameSelector:this.frameSelector});
+      if (typeof this.session.assertOrRestoreInitialRecruiterWindow === 'function') {
+        await this.session.assertOrRestoreInitialRecruiterWindow({frameSelector:this.frameSelector});
+      } else {
+        await this.session.assertUsableRecruiterWindow({frameSelector:this.frameSelector});
+      }
       await this.ensureVisibleRecruiterPage();
       const pageBeforeSelection=await this.assertPage();
       const expectedPagePath = new URL(pageBeforeSelection.url).pathname;

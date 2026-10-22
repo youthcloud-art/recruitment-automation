@@ -30,7 +30,11 @@ async function ensureOfficialSearchPage({ connect = connectOwnedBossPage,
       'BOSS 当前不在推荐页或搜索页；请在招聘后台打开“搜索”后重试');
     // The official menu is in the outer recruiter document. Check that the
     // existing authenticated window is visible, then click this menu once.
-    await session.assertUsableRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
+    if (typeof session.assertOrRestoreInitialRecruiterWindow === 'function') {
+      await session.assertOrRestoreInitialRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
+    } else {
+      await session.assertUsableRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
+    }
     await session.clickUnique({ selector: 'a[ka="menu-geek-search"]' });
     for (let attempt = 0; attempt < 20; attempt++) {
       await wait(500);

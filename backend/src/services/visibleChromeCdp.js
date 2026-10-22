@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const { setTimeout: sleep } = require('node:timers/promises');
 const { chromium } = require('playwright');
 
@@ -35,31 +35,58 @@ async function cdpIdentity(port) {
   }
 }
 
-function startChrome({ chromePath, profileDir, initialUrl, port }) {
-  if (process.platform === 'win32') {
+async function startChrome({ chromePath, profileDir, initialUrl, port },
+  { platform = process.platform, spawnProcess = spawn, timeoutMs = 30000 } = {}) {
+  if (platform === 'win32') {
     // A directly spawned Chrome inherits the backend's listening socket on
     // Windows. Killing Node then leaves port 5001 owned by a dead PID until
     // every Chrome process exits. Start-Process creates Chrome independently;
     // the short-lived PowerShell launcher releases any inherited handles.
     const launcher = path.join(__dirname, 'launchVisibleChrome.ps1');
-    const result = spawnSync('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-File', launcher,
-      '-ChromePath', chromePath,
-      '-ProfileDir', profileDir,
-      '-Port', String(port),
-      '-InitialUrl', initialUrl
-    ], {
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 15000,
-      maxBuffer: 4096
+    return new Promise((resolve, reject) => {
+      const child = spawnProcess('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-File', launcher,
+        '-ChromePath', chromePath,
+        '-ProfileDir', profileDir,
+        '-Port', String(port),
+        '-InitialUrl', initialUrl
+      ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const finish = (error, pid) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) reject(error);
+        else {
+          // Chrome may retain a launcher pipe after PowerShell has printed its
+          // PID. Do not wait for pipe EOF or block the HTTP event loop.
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          child.unref?.();
+          resolve({ pid });
+        }
+      };
+      const timer = setTimeout(() => {
+        child.kill();
+        finish(new Error('Chrome 启动超时；请检查服务器交互会话'));
+      }, timeoutMs);
+      child.stdout?.on('data', chunk => {
+        stdout = (stdout + chunk.toString()).slice(-4096);
+        const match = /^\s*(\d+)\s*$/m.exec(stdout);
+        const pid = match && Number(match[1]);
+        if (Number.isSafeInteger(pid) && pid > 0) finish(null, pid);
+      });
+      child.stderr?.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-4096); });
+      child.on('error', error => finish(new Error(`Chrome 启动失败: ${error.message}`)));
+      child.on('exit', code => {
+        if (settled) return;
+        const pid = Number.parseInt(stdout.trim(), 10);
+        if (code === 0 && Number.isSafeInteger(pid) && pid > 0) finish(null, pid);
+        else finish(new Error(`Chrome 启动失败: ${stderr.trim() || `PowerShell exit ${code}`}`));
+      });
     });
-    if (result.error || result.status !== 0) {
-      throw new Error(`Chrome 启动失败: ${(result.stderr || result.error?.message || '未知错误').trim()}`);
-    }
-    const pid = Number.parseInt(result.stdout.trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 0) throw new Error('Chrome 启动后未返回进程编号');
-    return { pid };
   }
 
   const child = spawn(chromePath, [
@@ -96,7 +123,7 @@ async function openVisibleChromeCdp({ profileName, initialUrl, port }) {
     }
   } else {
     const chromePath = installedChromePath();
-    processHandle = startChrome({ chromePath, profileDir, initialUrl, port });
+    processHandle = await startChrome({ chromePath, profileDir, initialUrl, port });
     launched = true;
     for (let attempt = 0; attempt < 40; attempt++) {
       identity = await cdpIdentity(port);
@@ -175,4 +202,4 @@ async function attachExistingVisibleChromeCdp(options,
 }
 
 module.exports = { openVisibleChromeCdp, launchVisibleChromeCdp,
-  attachExistingVisibleChromeCdp, getCdpTabs, installedChromePath };
+  attachExistingVisibleChromeCdp, getCdpTabs, installedChromePath, startChrome };

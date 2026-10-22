@@ -1,0 +1,116 @@
+const crypto = require('crypto');
+const LLMService = require('./llmService');
+const resumeModel = require('../models/resumeModel');
+const logger = require('../utils/logger');
+const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
+const { postCaptureEvaluationQueue } = require('./postCaptureEvaluationQueue');
+
+const DETAIL_SELECTORS = [
+  '.new-shortcut-resume__modal .new-resume-detail--inner',
+  '.new-shortcut-resume__modal .resume-section-new',
+  '.new-shortcut-resume__modal',
+  '.new-resume-detail--inner'
+];
+const RESUME_MARKERS = ['工作经历', '工作经验', '教育经历', '教育背景', '求职意向', '项目经历', '技能特长'];
+
+function parseStructuredReply(reply) {
+  const fenced = reply.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const value = fenced ? fenced[1] : reply.slice(reply.indexOf('{'), reply.lastIndexOf('}') + 1);
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('AI 返回的简历结构无效');
+  }
+  return parsed;
+}
+
+class ZhilianResumeCollector {
+  constructor({ llmService = null, resumeStore = resumeModel,
+    evaluationQueue = postCaptureEvaluationQueue } = {}) {
+    this.llmService = llmService;
+    this.resumeStore = resumeStore;
+    this.evaluationQueue = evaluationQueue;
+  }
+
+  findExisting(candidate) {
+    if (typeof this.resumeStore.findDuplicateResume === 'function') {
+      return this.resumeStore.findDuplicateResume(candidate);
+    }
+    return this.resumeStore.getResumes().find(item =>
+      isSameZhilianResume(item, candidate)) || null;
+  }
+
+  async captureVisibleResume(page) {
+    const hostname = new URL(page.url()).hostname;
+    if (hostname !== 'zhaopin.com' && !hostname.endsWith('.zhaopin.com')) {
+      throw new Error('当前页面不是智联招聘');
+    }
+    await page.locator('.new-shortcut-resume__modal .new-resume-detail--inner, .new-resume-detail--inner')
+      .first().waitFor({ state: 'visible', timeout: 12000 });
+    for (const selector of DETAIL_SELECTORS) {
+      const locator = page.locator(selector).first();
+      if (!await locator.isVisible().catch(() => false)) continue;
+      const text = (await locator.innerText({ timeout: 8000 })).trim();
+      const markerCount = RESUME_MARKERS.filter(marker => text.includes(marker)).length;
+      if (text.length >= 80 && markerCount >= 2) {
+        return { text: text.slice(0, 16000), url: page.url(), title: await page.title() };
+      }
+    }
+    throw new Error('未识别到完整简历详情，请确认候选人简历弹窗已打开');
+  }
+
+  async save(captured, activeJob = null) {
+    const fingerprint = crypto.createHash('sha256').update(captured.text).digest('hex');
+    const duplicate = this.findExisting({ source: 'zlzp', sourceFingerprint: fingerprint });
+    if (duplicate) return { saved: false, duplicate: true, resume: duplicate };
+    if (!this.llmService && !process.env.LLM_API_KEY) {
+      throw new Error('请先配置 DeepSeek API 密钥');
+    }
+    const reply = await (this.llmService || new LLMService()).chatWithLLM([
+      { role: 'system', content: '你是招聘简历信息提取助手。仅返回 JSON，缺失字段使用 null 或空数组，不要编造。提取 name、age、workYears、education、currentStatus、phone、email、selfIntroduction、expectedPosition、workExperience、educationExperience、skills、certificates。workExperience 与 educationExperience 是对象数组，skills 与 certificates 是字符串数组。' },
+      { role: 'user', content: '请从以下智联招聘简历详情提取候选人信息，忽略页面导航和按钮文字。\n\n' + captured.text }
+    ]);
+    const parsed = parseStructuredReply(reply);
+    const textFields = ['name', 'age', 'workYears', 'education', 'currentStatus', 'phone', 'email', 'selfIntroduction'];
+    const record = Object.fromEntries(textFields.map(field => [field,
+      typeof parsed[field] === 'string' || typeof parsed[field] === 'number' ? parsed[field] : null]));
+    record.expectedPosition = typeof parsed.expectedPosition === 'string' ||
+      (parsed.expectedPosition && typeof parsed.expectedPosition.position === 'string')
+      ? parsed.expectedPosition : null;
+    record.position = typeof record.expectedPosition === 'string'
+      ? record.expectedPosition : record.expectedPosition?.position || '';
+    for (const field of ['workExperience', 'educationExperience']) {
+      record[field] = Array.isArray(parsed[field])
+        ? parsed[field].filter(item => item && typeof item === 'object' && !Array.isArray(item)) : [];
+    }
+    for (const field of ['skills', 'certificates']) {
+      record[field] = Array.isArray(parsed[field])
+        ? parsed[field].filter(item => typeof item === 'string') : [];
+    }
+    const candidate = {
+      ...record,
+      name: record.name || '未识别姓名',
+      source: 'zlzp',
+      platform: '智联招聘',
+      sourceUrl: captured.url,
+      sourceTitle: captured.title,
+      sourceFingerprint: fingerprint,
+      originalText: captured.text,
+      parseMethod: 'llm',
+      parseStatus: 'completed'
+    };
+    const nearDuplicate = this.findExisting(candidate);
+    if (nearDuplicate) return { saved: false, duplicate: true, resume: nearDuplicate };
+    const result = await this.resumeStore.addResume(candidate, { returnStatus: true });
+    const saved = result.resume || result;
+    if (result.created === false) return { saved: false, duplicate: true, resume: saved };
+    try {
+      this.evaluationQueue.enqueue(saved, activeJob);
+    } catch (_) {
+      // Matching is optional background work; a saved resume must remain saved.
+      logger.warn('智联简历已保存，但自动评估队列未能接收');
+    }
+    return { saved: true, duplicate: false, resume: saved };
+  }
+}
+
+module.exports = { ZhilianResumeCollector, parseStructuredReply };

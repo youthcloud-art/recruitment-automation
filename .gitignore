@@ -1,0 +1,42 @@
+# Runtime dependencies and generated output
+node_modules/
+**/node_modules/
+build/
+dist/
+coverage/
+.local/
+.netlify/
+.vercel/
+# Server-only configuration, credentials and collected personal data
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+.jwt_secret*
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.backup
+*.bak
+backups/
+backend/storage/
+backend/uploads/
+backend/downloads/
+backend/temp/
+backend/test_storage/
+downloads/
+logs/
+*.log
+# Local editor and operating-system state
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -10,26 +10,11 @@ try {
     if (Test-Path -LiteralPath (Join-Path $control 'stop.request')) { exit 0 }
     $pointer = Get-Content -LiteralPath (Join-Path $control 'current-release.json') -Raw | ConvertFrom-Json
     $release = Assert-ChildPath (Join-Path $InstallRoot 'releases') ([string]$pointer.root)
-    Assert-CompanyPortsFree
-    $definitions = @(
-        @{name='backend'; script=(Join-Path $release 'backend\src\index.js'); cwd=(Join-Path $release 'backend'); env=@{HOST='127.0.0.1';PORT='5001';NODE_ENV='production';COMPANY_DEPLOYMENT='true';RECRUITMENT_ENV_FILE=(Join-Path $InstallRoot 'shared\backend.env')}},
-        @{name='gateway'; script=(Join-Path $release 'deploy\company\gateway.js'); cwd=$release; env=@{COMPANY_HOST=[string]$config.companyHost;COMPANY_PORT='4000';BACKEND_PORT='5001';LAN_ALLOW_CIDRS=([string[]]$config.allowedNetworks -join ',');NODE_ENV='production'}}
-    )
+    Assert-CompanyPortsFree -BackendPort $config.backendPort
+    $definitions = @(Get-CompanyRuntimeDefinitions $config $release)
     foreach ($definition in $definitions) {
-        $previous = @{}
-        try {
-            foreach ($name in $definition.env.Keys) {
-                $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
-                [Environment]::SetEnvironmentVariable($name, $definition.env[$name], 'Process')
-            }
-            $process = Start-Process -FilePath $config.nodePath -ArgumentList @('"' + $definition.script + '"') -WorkingDirectory $definition.cwd -WindowStyle Hidden -RedirectStandardOutput (Join-Path $InstallRoot ('logs\' + $definition.name + '.stdout.log')) -RedirectStandardError (Join-Path $InstallRoot ('logs\' + $definition.name + '.stderr.log')) -PassThru
-            $information = Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)"
-            if (-not $information) { throw "$($definition.name) exited during startup." }
-            $children += @{pid=$process.Id; executable=[string]$config.nodePath; script=$definition.script; createdAtUtc=$information.CreationDate.ToUniversalTime().ToString('o')}
-            Write-JsonFile (Join-Path $control 'processes.json') @{release=$release; children=$children}
-        } finally {
-            foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
-        }
+        $children += Start-CompanyChild $config $definition
+        Write-JsonFile (Join-Path $control 'processes.json') @{release=$release; children=$children}
     }
     while (-not (Test-Path -LiteralPath (Join-Path $control 'stop.request'))) {
         foreach ($record in $children) {

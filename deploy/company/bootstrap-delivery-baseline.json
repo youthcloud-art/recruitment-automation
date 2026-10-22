@@ -1,0 +1,14 @@
+{
+  "commit": "4e01e84bd8e29ea57f94834877c808d12fd0d4cd",
+  "files": {
+    "Common.ps1": "a905dee85fa72c50c5b610f2bcd3e5a914f9844fd9f37bd6a9c7ea79bec6bc28",
+    "Inspect-Company.ps1": "d4912b9523baa9c9956971553b227d056df7827c6dd469f2c7ea638a3527f635",
+    "Install-Company.ps1": "26bf4e972bf5b1092f119950f3e007955312d0c3ab874de021fefeb626e334dd",
+    "Prepare-CompanyServer.ps1": "84c9ed3902abeddde3e0930ad41e1be9907bec589c7edd9cd9f6bb69d3ace022",
+    "Prepare-Release.ps1": "955b17b33085f761d224d9bd017fbdabd58e29efca52034e4a2fb5d3f5a03c7f",
+    "Publish-Company.ps1": "de8bf2368a30d508f311fce8f3df69e7c0908a8475f779292c2664fd6989b173",
+    "Run-Company.ps1": "6d0dc0de72509db5514758e4f29aa6ce0a80de3ea721a7a61b16a0ff1303035f",
+    "Switch-Release.ps1": "bf64b0cbcf3513e03b976b5bd85ee0e3565175a30c1c0fb3207f8a26537558e9",
+    "Sync-Company.ps1": "463599ad3a81d96ff2b04552e52e046755176f46ae965ae23ef380f7d647d206"
+  }
+}

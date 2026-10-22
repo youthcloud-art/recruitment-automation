@@ -6,6 +6,7 @@ param(
     [string]$RunAs = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
     [string]$RepositoryUrl = 'git@gitee.com:felixshe/auto-recru-company.git',
     [string]$CompanyHost = '192.168.1.24',
+    [ValidateRange(1024,65535)][int]$BackendPort = 19501,
     [string[]]$AllowedNetworks = @('192.168.1.0/24','192.168.11.0/24'),
     [string[]]$LegacyTaskName = @(),
     [string]$LegacyInstallRoot,
@@ -14,6 +15,7 @@ param(
     [switch]$Resume
 )
 . (Join-Path $PSScriptRoot 'Common.ps1')
+if ($BackendPort -eq 4000) { throw 'The backend port cannot be the public gateway port.' }
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run Windows PowerShell as Administrator on the company server.' }
 if ($CompanyHost -ne '192.168.1.24') { throw 'This installation is prepared for the reviewed company server 192.168.1.24.' }
@@ -38,7 +40,7 @@ if (Test-Path -LiteralPath $configPath) {
     if (-not $Resume) { throw 'This installation is already initialized. Resume an incomplete first installation with -Resume; use Sync-Company.ps1 for later upgrades.' }
     if (Test-Path -LiteralPath (Join-Path $InstallRoot 'control\current-release.json')) { throw 'Resume is only for an incomplete first installation, never an active deployment.' }
     $savedConfig = Read-CompanyConfig $InstallRoot
-    if ($savedConfig.bootstrapCommit -ine $Commit -or $savedConfig.runAs -ine $RunAs -or
+    if ($savedConfig.bootstrapCommit -ine $Commit -or $savedConfig.runAs -ine $RunAs -or [int]$savedConfig.backendPort -ne $BackendPort -or
         $savedConfig.repositoryUrl -cne $RepositoryUrl -or $savedConfig.companyHost -cne $CompanyHost -or
         (([string[]]$savedConfig.allowedNetworks | Sort-Object) -join ',') -cne (($AllowedNetworks | Sort-Object) -join ',') -or
         $savedConfig.nodePath -ine $nodePath -or $savedConfig.npmPath -ine $npmPath -or $savedConfig.gitPath -ine $gitPath) {
@@ -79,7 +81,7 @@ if (-not (Test-Path -LiteralPath $keyPath)) {
 }
 Invoke-Checked 'icacls.exe' @($keyPath, '/inheritance:r', '/grant:r', '*S-1-5-18:(R)', '*S-1-5-32-544:(F)')
 $config = @{
-    installRoot=$InstallRoot; companyHost=$CompanyHost; allowedNetworks=$AllowedNetworks;
+    installRoot=$InstallRoot; companyHost=$CompanyHost; backendPort=$BackendPort; allowedNetworks=$AllowedNetworks;
     repositoryUrl=$RepositoryUrl; branch='main'; nodePath=$nodePath; npmPath=$npmPath; gitPath=$gitPath;
     sshPath=$sshPath; deployKeyPath=$keyPath; runAs=$RunAs; bootstrapCommit=$Commit;
     runtimeTask='AutoRecru-Company-Runtime'; syncTask='AutoRecru-Company-MirrorDeploy'

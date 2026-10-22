@@ -7065,7 +7065,7 @@ class ZhilianService {
         
         // 调用后端API，根据尝试次数调整超时时间
         const timeout = Math.min(300000 + (attempt - 1) * 15000, 300000); // 300s到300s，优化简历解析超时
-        const response = await axios.post('http://localhost:5001/api/resume-library/upload', formData, {
+        const response = await axios.post(`http://127.0.0.1:${process.env.PORT || 5001}/api/resume-library/upload`, formData, {
           headers: {
             ...formData.getHeaders(),
             'Content-Length': formData.getLengthSync()

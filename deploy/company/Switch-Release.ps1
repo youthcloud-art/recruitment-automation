@@ -41,7 +41,7 @@ try {
         Disable-ScheduledTask -TaskName $old.name | Out-Null
         if ($old.running) { Stop-ScheduledTask -TaskName $old.name }
     }
-    Assert-CompanyPortsFree
+    Assert-CompanyPortsFree -BackendPort $config.backendPort
     New-Item -ItemType Directory -Path $snapshot | Out-Null
     Copy-DirectoryChecked (Join-Path $InstallRoot 'shared') (Join-Path $snapshot 'shared')
     $snapshotComplete = $true
@@ -58,7 +58,7 @@ try {
     if ($changed) {
         try { Stop-CompanyRuntime $config } catch { Write-Warning $_.Exception.Message }
         # Refuse to restore a database while any known application port is live.
-        Assert-CompanyPortsFree
+        Assert-CompanyPortsFree -BackendPort $config.backendPort
         if ($snapshotComplete) { Copy-DirectoryChecked (Join-Path $snapshot 'shared') (Join-Path $InstallRoot 'shared') -Mirror }
         if ($previous) { Write-JsonFile $pointerPath $previous } else { Remove-Item -LiteralPath $pointerPath -Force -ErrorAction SilentlyContinue }
     }

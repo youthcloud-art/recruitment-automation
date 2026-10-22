@@ -21,6 +21,12 @@ function Read-CompanyConfig([string]$InstallRoot) {
     if ([IO.Path]::GetFullPath([string]$config.installRoot).TrimEnd('\') -ine [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')) {
         throw 'The deployment configuration belongs to another installation.'
     }
+    # Compatibility with the first bootstrap, which used a fixed port 5001.
+    if (-not $config.PSObject.Properties['backendPort']) { $config | Add-Member -NotePropertyName backendPort -NotePropertyValue 5001 }
+    $port = 0
+    if (-not [int]::TryParse([string]$config.backendPort, [ref]$port) -or $port -lt 1024 -or $port -gt 65535 -or $port -eq 4000) {
+        throw 'The configured backend port is invalid or conflicts with the public gateway.'
+    }
     return $config
 }
 
@@ -50,6 +56,18 @@ function Test-CompanyHealth([string]$Url) {
     } catch { return $false }
 }
 
+function Get-CompanyResponseText([string]$Url) {
+    $request = [Net.HttpWebRequest]::Create($Url)
+    $request.Proxy = $null
+    $request.Timeout = 5000
+    $response = $request.GetResponse()
+    try {
+        if ([int]$response.StatusCode -ne 200) { throw "Unexpected HTTP status for $Url" }
+        $reader = [IO.StreamReader]::new($response.GetResponseStream())
+        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } finally { $response.Close() }
+}
+
 function Wait-CompanyHealth([string]$Url, [int]$TimeoutSeconds = 90) {
     $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
@@ -59,11 +77,40 @@ function Wait-CompanyHealth([string]$Url, [int]$TimeoutSeconds = 90) {
     throw "Health verification failed: $Url"
 }
 
-function Assert-CompanyPortsFree {
-    $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in @(4000, 5001) })
+function Assert-CompanyPortsFree([int]$BackendPort = 5001, [int]$GatewayPort = 4000) {
+    $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in @($GatewayPort, $BackendPort) })
     if ($listeners.Count -gt 0) {
         $summary = ($listeners | ForEach-Object { "port=$($_.LocalPort),pid=$($_.OwningProcess)" }) -join '; '
         throw "A required port is still occupied ($summary). No unrelated process was killed."
+    }
+}
+
+function Get-CompanyRuntimeDefinitions($Config, [string]$ReleaseRoot, [string]$GatewayHost, [int]$GatewayPort = 4000) {
+    if (-not $GatewayHost) { $GatewayHost = [string]$Config.companyHost }
+    @(
+        @{name='backend'; script=(Join-Path $ReleaseRoot 'backend\src\index.js'); cwd=(Join-Path $ReleaseRoot 'backend'); env=@{HOST='127.0.0.1';PORT=[string]$Config.backendPort;NODE_ENV='production';COMPANY_DEPLOYMENT='true';RECRUITMENT_ENV_FILE=(Join-Path $Config.installRoot 'shared\backend.env')}},
+        @{name='gateway'; script=(Join-Path $ReleaseRoot 'deploy\company\gateway.js'); cwd=$ReleaseRoot; env=@{COMPANY_HOST=$GatewayHost;COMPANY_PORT=[string]$GatewayPort;BACKEND_PORT=[string]$Config.backendPort;LAN_ALLOW_CIDRS=([string[]]$Config.allowedNetworks -join ',');NODE_ENV='production';PUBLIC_ORIGIN=('http://' + $GatewayHost + ':' + $GatewayPort)}}
+    )
+}
+
+function Start-CompanyChild($Config, $Definition, [string]$LogPrefix = '') {
+    $previous = @{}
+    $process = $null
+    try {
+        foreach ($name in $Definition.env.Keys) {
+            $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            [Environment]::SetEnvironmentVariable($name, [string]$Definition.env[$name], 'Process')
+        }
+        $process = Start-Process -FilePath $Config.nodePath -ArgumentList @('"' + $Definition.script + '"') -WorkingDirectory $Definition.cwd -WindowStyle Hidden -RedirectStandardOutput (Join-Path $Config.installRoot ('logs\' + $LogPrefix + $Definition.name + '.stdout.log')) -RedirectStandardError (Join-Path $Config.installRoot ('logs\' + $LogPrefix + $Definition.name + '.stderr.log')) -PassThru
+        $information = Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)"
+        if (-not $information) { throw "$($Definition.name) exited during startup." }
+        return @{pid=$process.Id; executable=[string]$Config.nodePath; script=$Definition.script; createdAtUtc=$information.CreationDate.ToUniversalTime().ToString('o')}
+    } catch {
+        # The direct Process handle identifies only the child just created here.
+        if ($process -and -not $process.HasExited) { $process.Kill() }
+        throw
+    } finally {
+        foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
     }
 }
 

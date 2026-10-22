@@ -34,7 +34,11 @@ $parameters = @{
     InstallRoot=$InstallRoot
     PrepareOnly=$true
 }
-if (Test-Path -LiteralPath (Join-Path $InstallRoot 'delivery\config.json')) { $parameters.Resume = $true }
+if (Test-Path -LiteralPath (Join-Path $InstallRoot 'delivery\config.json')) {
+    $parameters.Resume = $true
+    $saved = Get-Content -LiteralPath (Join-Path $InstallRoot 'delivery\config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $parameters.BackendPort = if ($saved.PSObject.Properties['backendPort']) {[int]$saved.backendPort} else {5001}
+}
 & (Join-Path $PSScriptRoot 'Install-Company.ps1') @parameters
 
 $publicKey = Join-Path $InstallRoot 'delivery\gitee-readonly-ed25519.pub'

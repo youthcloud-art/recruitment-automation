@@ -1,7 +1,7 @@
 'use strict';
 
 // Single public port for the built React app, HTTP API and Socket.IO. The
-// recruitment backend keeps its original loopback-only boundary on port 5001.
+// recruitment backend keeps its loopback-only boundary on BACKEND_PORT.
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');

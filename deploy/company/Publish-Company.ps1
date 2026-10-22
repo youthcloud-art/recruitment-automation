@@ -1,11 +1,12 @@
 [CmdletBinding()]
 param(
-    [string]$RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$RepositoryRoot,
     [string]$Branch = 'main',
     [switch]$RequireNativeMirror,
     [ValidateRange(0,1800)][int]$MirrorWaitSeconds = 600
 )
 . (Join-Path $PSScriptRoot 'Common.ps1')
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) { $RepositoryRoot = Join-Path $PSScriptRoot '..\..' }
 $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 $git = (Get-Command git.exe -ErrorAction Stop).Source
 $node = (Get-Command node.exe -ErrorAction Stop).Source

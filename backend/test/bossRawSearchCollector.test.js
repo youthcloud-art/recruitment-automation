@@ -901,6 +901,23 @@ test('assistant search submits the active job through the official input once',a
   assert.equal(state.value,TITLE);
 });
 
+test('assistant waits for newly opened official search controls before editing',async()=>{
+  const collector=new BossRawSearchCollector();
+  const states=[{state:'frame_unavailable'},{state:'input_unavailable'},
+    {state:'ready',value:'',selectedFiltersReady:false},
+    {state:'ready',value:TITLE,cardCount:2,safeCardCount:2,
+      frameOrigin:7,matchingSearchRequests:1,selectedFiltersReady:true,
+      nonDefaultSelected:0,checkedCount:0,activeCustomSliderCount:0}];
+  let reads=0,waits=0,mutations=0;
+  collector.readOnlyExpression=async()=>states[Math.min(reads++,states.length-1)];
+  collector.assertPage=async()=>({url:PAGE});
+  collector.wait=async()=>{waits++;};
+  collector.session={clickUnique:async()=>{mutations++;}};
+  assert.match((await collector.selectJob(TITLE)).value,/^search-[a-f0-9]{32}$/);
+  assert.equal(waits,3);
+  assert.equal(mutations,0);
+});
+
 test('assistant search refuses non-default platform filters before editing',async()=>{
   const collector=new BossRawSearchCollector();
   collector.readOnlyExpression=async()=>({state:'ready',value:'旧岗位',

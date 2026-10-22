@@ -154,6 +154,23 @@ test('owned BOSS window restores once and observes the same window after an unce
   assert.equal(setCalls,1,'uncertain ACK must not replay setWindowBounds');
 });
 
+test('restored BOSS window may be maximized by Windows', async () => {
+  const session = Object.create(BossRawCdpSession.prototype);
+  session.owned = true;
+  session.verifiedWindowId = 73;
+  let state = 'minimized';
+  session.assertRecruiterReady = async () => RECRUITER_URL;
+  session.send = async method => {
+    if (method === 'Browser.getWindowForTarget') {
+      return {windowId:73,bounds:{windowState:state}};
+    }
+    assert.equal(method,'Browser.setWindowBounds');
+    state = 'maximized';
+  };
+  assert.deepEqual(await session.restoreMinimizedOwnedWindow({expectedUrl:RECRUITER_URL}),
+    {attempted:true,ackUncertain:false});
+});
+
 test('initial minimized owned BOSS window is restored before the first candidate action', async () => {
   const session = Object.create(BossRawCdpSession.prototype);
   session.owned = true;

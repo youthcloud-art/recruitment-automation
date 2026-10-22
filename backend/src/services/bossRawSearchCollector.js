@@ -464,10 +464,19 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     // the existing official-request and result checks before opening resumes.
     // An interrupted verification resume must never submit a new search.
     if (this.status.phase!=='validating_resume') {
-      const state=await this.readOnlyExpression(SEARCH_STATE,'prepare_search_keyword');
-      if (state?.state==='ready' &&
-          (normalized(state.value)!==normalized(title) ||
-           state.matchingSearchRequests<1)) {
+      let state;
+      for (let poll=0;poll<20;poll++) {
+        state=await this.readOnlyExpression(SEARCH_STATE,'prepare_search_keyword');
+        if (state?.state==='ready' && state.selectedFiltersReady) break;
+        if (!['frame_unavailable','input_unavailable','ready'].includes(state?.state)) break;
+        await this.assertPage({allowMissingFrame:true});
+        await this.wait(500);
+      }
+      if (state?.state!=='ready' || !state.selectedFiltersReady) throw fail(
+        'BOSS_SEARCH_PAGE_UNAVAILABLE',
+        'BOSS 官方搜索控件未加载完成，未提交岗位搜索；请在平台页面确认后重试');
+      if (normalized(state.value)!==normalized(title) ||
+          state.matchingSearchRequests<1) {
         await this.submitOfficialSearch(title,state);
       }
     }

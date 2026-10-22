@@ -242,6 +242,7 @@ class BossRawCdpSession {
       windowId:this.verifiedWindowId,bounds:{windowState:'normal'}
     },{timeoutMs:8000}); }
     catch (error) {ackError=error;}
+    let lastWindowState='unknown';
     for (let poll=0;poll<8;poll++) {
       await new Promise(resolve=>setTimeout(resolve,250));
       let after;
@@ -250,15 +251,18 @@ class BossRawCdpSession {
       if (after?.windowId!==this.verifiedWindowId) throw cdpError(
         'BOSS_CDP_WINDOW_RESTORE_UNCERTAIN',
         'BOSS 窗口恢复时标签页移到其他窗口，已暂停采集');
-      if (after?.bounds?.windowState==='normal') {
+      lastWindowState=after?.bounds?.windowState || 'unknown';
+      if (['normal','maximized','fullscreen'].includes(lastWindowState)) {
         if (await this.assertRecruiterReady()!==expectedUrl) throw cdpError(
           'BOSS_PAGE_UNAVAILABLE','BOSS 窗口恢复后页面地址已变化，已暂停采集');
         return {attempted:true,ackUncertain:!!ackError};
       }
-      if (after?.bounds?.windowState!=='minimized') break;
+      if (lastWindowState!=='minimized') break;
     }
     throw cdpError('BOSS_CDP_WINDOW_RESTORE_UNCERTAIN',
-      'BOSS 专用 Chrome 窗口恢复结果无法确认，已暂停采集；请手动恢复窗口');
+      lastWindowState==='minimized'
+        ? 'BOSS 专用 Chrome 窗口仍处于最小化，已暂停采集；请在服务器桌面手动恢复窗口'
+        : 'BOSS 专用 Chrome 窗口恢复结果无法确认，已暂停采集；请手动恢复窗口');
   }
 
   async restoreInitialMinimizedOwnedWindow({expectedUrl}={}) {

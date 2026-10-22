@@ -119,26 +119,38 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   }, [source, status, minScore, topN, jobRequirements, emailReportFormat]);
   useEffect(() => {
     let previousRunning = false;
+    let active = false;
+    let polling = false;
     const poll = async () => {
+      if (polling || document.hidden) return;
+      polling = true;
       try {
         const result = await apiGet('/recruitment-pipeline/evaluate-batch/status');
         setBatch(result.data);
         if (previousRunning && !result.data.running) refresh();
         previousRunning = result.data.running;
+        active = Boolean(result.data.running);
       } catch (_) { /* 手动刷新仍可用 */ }
       try {
         const result = await apiGet('/recruitment-pipeline/evaluation-queue/status');
         setEvaluationQueue(result.data);
+        active = active || Boolean(result.data?.running || result.data?.queued);
         const queueChange = ['completed', 'failed', 'deferred', 'overflowed']
           .map(field => result.data?.[field] || 0).join(':');
         if (lastEvaluationQueueChange.current !== null &&
             lastEvaluationQueueChange.current !== queueChange) refresh();
         lastEvaluationQueueChange.current = queueChange;
       } catch (_) { /* 旧版服务端仍可显示批量评估进度 */ }
+      finally { polling = false; }
     };
     poll();
-    const timer = setInterval(poll, 2000);
-    return () => clearInterval(timer);
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks++;
+      if (active || ticks % 5 === 0) poll();
+    }, 2000);
+    window.addEventListener('focus', poll);
+    return () => { clearInterval(timer); window.removeEventListener('focus', poll); };
   }, [refresh]);
 
   const update = async changes => {

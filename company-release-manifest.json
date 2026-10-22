@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-22T00:47:29.114Z",
+  "generatedAt": "2026-10-22T01:01:19.320Z",
   "source": "Auto-Recru current working tree; fresh history required",
   "files": [
     {
@@ -1101,14 +1101,14 @@
     },
     {
       "path": "deploy/company/Publish-Company.ps1",
-      "sha256": "fbc3dd0c48b28780a50201547e0e7ec4714fdeb086712bc471d5c461bd5b81e9",
-      "sourceSha256": "fbc3dd0c48b28780a50201547e0e7ec4714fdeb086712bc471d5c461bd5b81e9",
+      "sha256": "8d3c84ca3500d2bade4669af495f6f2b11e7fa83e527d7bd95a48318b8b9ad21",
+      "sourceSha256": "8d3c84ca3500d2bade4669af495f6f2b11e7fa83e527d7bd95a48318b8b9ad21",
       "transformations": []
     },
     {
       "path": "deploy/company/README.md",
-      "sha256": "9c80c7adf299d0ee1ca45f4b62cfb2b9f04d2e1b5957bd3a845970b34369b752",
-      "sourceSha256": "9c80c7adf299d0ee1ca45f4b62cfb2b9f04d2e1b5957bd3a845970b34369b752",
+      "sha256": "5929f7e70ff2d1d828449d06b11faaf1f7b01d5b447f9176394b03b2fe74cfbb",
+      "sourceSha256": "5929f7e70ff2d1d828449d06b11faaf1f7b01d5b447f9176394b03b2fe74cfbb",
       "transformations": []
     },
     {

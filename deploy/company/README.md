@@ -71,7 +71,11 @@ Start-ScheduledTask -TaskName 'AutoRecru-Company-MirrorDeploy'
 & '.\deploy\company\Publish-Company.ps1'
 ```
 
-该脚本只推送已提交的代码到 GitHub，然后等待 Gitee main 出现相同提交，不自动加入文件或手工覆盖 Gitee。服务器的 `AutoRecru-Company-MirrorDeploy` 以 SYSTEM 身份准备新版本，再启动交互运行任务；构建失败时现有服务继续运行。固定 delivery 脚本不会随 Git 拉取自动覆盖，修改部署机制后应单独审阅并更新服务器 `delivery` 内脚本。
+该脚本先审计已提交的文件，推送 GitHub 并读取远端完整提交；只有 GitHub 确认收到同一提交后才检查 Gitee。若原生镜像尚未同步，脚本用开发机现有 Git 凭据将同一提交同步到 Gitee，再读取远端核验；不会强制推送，也不会把账号密码或新令牌放到服务器。Gitee 与 GitHub 存在分叉时停止，保留 GitHub 提交。日常发布应使用此脚本，单独执行 `git push origin` 仍依赖原生 Webhook 的可用性。
+
+截至 2026-10-22，当前私有仓库的 Gitee 原生回调对 GitHub 的 ping 与实际 push 均返回 403，手动 Pull 可以完成；上述同步兜底用于保证既定的 GitHub → Gitee → 公司服务器链路。需要只验证原生镜像、不允许开发机同步时，可使用 `Publish-Company.ps1 -RequireNativeMirror`，默认最多等待 600 秒。
+
+服务器的 `AutoRecru-Company-MirrorDeploy` 以 SYSTEM 身份准备新版本，再启动交互运行任务；构建失败时现有服务继续运行。固定 delivery 脚本不会随 Git 拉取自动覆盖，修改部署机制后应单独审阅并更新服务器 `delivery` 内脚本。
 
 服务器查看状态：
 

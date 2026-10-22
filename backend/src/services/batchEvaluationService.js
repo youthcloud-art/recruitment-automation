@@ -38,20 +38,41 @@ class BatchEvaluationService {
 
   start({ source = '', status = '', jobRequirements, limit = 100, pendingOnly = true } = {}) {
     if (this.state.running) throw new Error('批量评估正在进行中');
+    if (source && !['boss', 'zlzp', 'qcwy'].includes(source)) throw new Error('不支持的招聘平台');
+    if (status && !['new', 'shortlisted', 'viewed', 'contacted', 'rejected'].includes(status)) {
+      throw new Error('不支持的跟进状态');
+    }
     const requirements = String(jobRequirements || '').trim();
     const count = Number(limit);
     if (requirements.length < 5 || requirements.length > 5000) throw new Error('岗位要求需为 5～5000 字');
     if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('批量评估份数需为 1～100');
     if (typeof pendingOnly !== 'boolean') throw new Error('待补评筛选参数无效');
-    const withContent = this.pipeline.list({ source, status, limit: 10000 })
-      .filter(item => item.originalText || item.content);
-    const pending = withContent.filter(item => pendingOnly
-      ? !item.matchEvaluation && !Number.isFinite(item.matchScore)
-      : !hasCurrentEvaluation(item, requirements));
-    const candidates = pending.slice(0, count);
+    // Stream the whole library and retain only this batch. The old list()
+    // path loaded every resume (including long original text) into memory and
+    // silently ignored pending candidates beyond its 10,000-item cap.
+    let withContentCount = 0;
+    let pendingCount = 0;
+    const candidates = [];
+    const consider = item => {
+      if (!item.originalText && !item.content) return;
+      withContentCount++;
+      const pending = pendingOnly
+        ? !item.matchEvaluation && !Number.isFinite(item.matchScore)
+        : !hasCurrentEvaluation(item, requirements);
+      if (!pending) return;
+      pendingCount++;
+      if (candidates.length < count) candidates.push(item);
+    };
+    if (typeof this.pipeline.store?.forEachResume === 'function') {
+      this.pipeline.store.forEachResume(consider, {
+        source: source || null, status: status || null
+      });
+    } else {
+      this.pipeline.list({ source, status, limit: 10000 }).forEach(consider);
+    }
     this.stopRequested = false;
     this.state = { ...this.emptyState(), running: candidates.length > 0, pendingOnly,
-      total: candidates.length, skipped: withContent.length - pending.length,
+      total: candidates.length, skipped: withContentCount - pendingCount,
       startedAt: new Date().toISOString(),
       finishedAt: candidates.length ? null : new Date().toISOString() };
     if (!candidates.length) return this.status();

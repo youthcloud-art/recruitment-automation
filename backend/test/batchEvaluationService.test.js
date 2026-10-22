@@ -191,3 +191,28 @@ test('默认只补评未评分简历：154 份旧岗位评分在前，也不会�
   assert.equal(records.at(-1).matchScore, 70);
   assert.equal(service.start({ jobRequirements: requirements, limit: 100 }).total, 0);
 });
+
+test('大简历库按流迭代，能补评超过旧版一万条截断位置的候选人', async () => {
+  const requirements = '项目经理主管需要至少五年项目管理经验';
+  const evaluated = [];
+  const pipeline = {
+    store: { forEachResume: (visitor, options) => {
+      assert.deepEqual(options, { source: 'boss', status: null });
+      for (let index = 0; index < 10005; index++) visitor({
+        id: `done-${index}`, source: 'boss', originalText: '完整简历', matchScore: 80,
+        matchEvaluation: { method: 'llm', evaluationVersion: 1, jobRequirements: requirements }
+      });
+      visitor({ id: 'pending-after-10000', source: 'boss', originalText: '完整简历' });
+    } },
+    list: () => { throw new Error('不应加载整库'); },
+    evaluate: async id => { evaluated.push(id); }
+  };
+  const service = new BatchEvaluationService({ pipeline, delay: async () => {} });
+  const started = service.start({ source: 'boss', jobRequirements: requirements, limit: 1 });
+  assert.equal(started.total, 1);
+  assert.equal(started.skipped, 10005);
+  for (let attempt = 0; service.status().running && attempt < 20; attempt++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.deepEqual(evaluated, ['pending-after-10000']);
+});

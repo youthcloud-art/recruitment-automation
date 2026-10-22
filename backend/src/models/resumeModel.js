@@ -280,13 +280,14 @@ class ResumeModel {
     return resumes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
-  forEachResume(visitor, { source = null, jobRequirements = null } = {}) {
+  forEachResume(visitor, { source = null, status = null, jobRequirements = null } = {}) {
     if (typeof visitor !== 'function') throw new TypeError('简历读取回调无效');
     if (this.sqliteStore) {
-      return this.sqliteStore.forEachResume(visitor, { source, jobRequirements });
+      return this.sqliteStore.forEachResume(visitor, { source, status, jobRequirements });
     }
     let count = 0;
     for (const item of this.getResumes(null, source)) {
+      if (status !== null && (item.workflowStatus || 'new') !== status) continue;
       if (jobRequirements !== null &&
           item.matchEvaluation?.jobRequirements !== jobRequirements &&
           item.captureJobRequirements !== jobRequirements) continue;

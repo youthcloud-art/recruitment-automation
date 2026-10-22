@@ -18,33 +18,34 @@ import {
 import io from 'socket.io-client';
 import styled from 'styled-components';
 import COTReasoning from './components/COTReasoning';
-import ResumeLibrary from './components/ResumeLibrary';
-import KnowledgeBase from './components/KnowledgeBase';
 import { WEBSOCKET_CONFIG, API_ENDPOINTS } from './config/api';
 import { apiGet, apiPost } from './utils/apiClient';
 // import DocumentUpload from './components/DocumentUpload'; // 暂时未使用
-import ResumeRecommendationModal from './components/ResumeRecommendationModal';
 import CapabilityCards from './components/CapabilityCards';
 import TaskManagement from './components/TaskManagement';
-import ModelConfig from './components/ModelConfig';
 import ServerBrowserConsole from './components/ServerBrowserConsole';
 import KnowledgeSearchResult from './components/KnowledgeSearchResult';
-import JDDetailDrawer from './components/JDDetailModal';
-import Browser from './components/Browser';
-import SmartRecruitmentEntry from './components/SmartRecruitmentEntry';
-import BossZhipinControl from './components/BossZhipinControl';
-import ZhilianControl from './components/ZhilianControl';
-import WuyouControl from './components/WuyouControl';
-import RecruitmentPipeline from './components/RecruitmentPipeline';
-import RecruitmentAnalytics from './components/RecruitmentAnalytics';
-import PositionCreationModal from './components/PositionCreationModal';
 // 公司搜索组件已删除
-import PositionManagement from './components/PositionManagement';
 
 
 import { createCOTResponse } from './utils/cotUtils';
 import { classifyPositionOrAnalyticsIntent } from './utils/localMessageIntent';
 import './App.css';
+
+const ResumeLibrary = React.lazy(() => import('./components/ResumeLibrary'));
+const KnowledgeBase = React.lazy(() => import('./components/KnowledgeBase'));
+const ResumeRecommendationModal = React.lazy(() => import('./components/ResumeRecommendationModal'));
+const ModelConfig = React.lazy(() => import('./components/ModelConfig'));
+const JDDetailDrawer = React.lazy(() => import('./components/JDDetailModal'));
+const Browser = React.lazy(() => import('./components/Browser'));
+const SmartRecruitmentEntry = React.lazy(() => import('./components/SmartRecruitmentEntry'));
+const BossZhipinControl = React.lazy(() => import('./components/BossZhipinControl'));
+const ZhilianControl = React.lazy(() => import('./components/ZhilianControl'));
+const WuyouControl = React.lazy(() => import('./components/WuyouControl'));
+const RecruitmentPipeline = React.lazy(() => import('./components/RecruitmentPipeline'));
+const RecruitmentAnalytics = React.lazy(() => import('./components/RecruitmentAnalytics'));
+const PositionCreationModal = React.lazy(() => import('./components/PositionCreationModal'));
+const PositionManagement = React.lazy(() => import('./components/PositionManagement'));
 
 const { Header, Content, Sider } = Layout;
 const { Title } = Typography;
@@ -1479,6 +1480,7 @@ function App() {
           <div style={{ marginLeft: 'auto', position: 'relative', zIndex: 2 }}><ServerBrowserConsole /></div>
         </StyledHeader>
         <StyledContent hasModal={hasAnyModal}>
+          <React.Suspense fallback={<div style={{ padding: 24 }}>页面加载中…</div>}>
           {selectedMenuKey === '1' ? (
             <TaskManagement
               onOpenPipeline={source => {
@@ -1579,27 +1581,29 @@ function App() {
               </div>
             </div>
           )}
+          </React.Suspense>
         </StyledContent>
       </Layout>
       
       {/* 简历推荐弹窗 */}
-      <ResumeRecommendationModal
+      <React.Suspense fallback={null}>
+      {recommendationVisible && <ResumeRecommendationModal
         visible={recommendationVisible}
         onClose={() => setRecommendationVisible(false)}
         onViewPipeline={() => {
           setRecommendationVisible(false);
           setSelectedMenuKey('4');
         }}
-      />
+      />}
       
       {/* JD详情抽屉 */}
-      <JDDetailDrawer
+      {jdDetailVisible && <JDDetailDrawer
         visible={jdDetailVisible}
         onClose={() => setJdDetailVisible(false)}
         positionData={currentPositionData}
-      />
+      />}
 
-      <PositionCreationModal
+      {positionCreationVisible && <PositionCreationModal
         visible={positionCreationVisible}
         initialText={positionCreationInitialText}
         onClose={() => {
@@ -1607,16 +1611,16 @@ function App() {
           setPositionCreationInitialText('');
         }}
         onCreated={() => fetchPositions()}
-      />
+      />}
       
       {/* 公司搜索相关弹窗已删除 */}
       
       {/* 职位管理弹窗 */}
-      <PositionManagement
+      {positionManagementVisible && <PositionManagement
         visible={positionManagementVisible}
         onClose={() => setPositionManagementVisible(false)}
         companyInfo={currentCompanyInfo}
-      />
+      />}
       
       {/* 智能寻聘入口弹窗 */}
       <Modal
@@ -1628,7 +1632,7 @@ function App() {
         style={{ top: 20 }}
         destroyOnHidden
       >
-        <SmartRecruitmentEntry 
+        {showSmartRecruitment && <SmartRecruitmentEntry
           onStartRecruitment={handleStartNewRecruitment}
           onOpenBossZhipinControl={() => {
             setShowSmartRecruitment(false);
@@ -1642,7 +1646,7 @@ function App() {
             setShowSmartRecruitment(false);
             setShowWuyouControl(true);
           }}
-        />
+        />}
       </Modal>
       
       {/* Boss 直聘控制弹窗 */}
@@ -1655,11 +1659,11 @@ function App() {
         style={{ top: 20 }}
         destroyOnHidden
       >
-        <BossZhipinControl onOpenPipeline={() => {
+        {showBossZhipinControl && <BossZhipinControl onOpenPipeline={() => {
           setPipelineSourceRequest({ source: 'boss' });
           setShowBossZhipinControl(false);
           setSelectedMenuKey('4');
-        }} />
+        }} />}
       </Modal>
 
       {/* 智联招聘控制弹窗 */}
@@ -1672,7 +1676,7 @@ function App() {
         style={{ top: 20 }}
         destroyOnHidden
       >
-        <ZhilianControl />
+        {showZhilianControl && <ZhilianControl />}
       </Modal>
 
       <Modal
@@ -1684,8 +1688,9 @@ function App() {
         style={{ top: 20 }}
         destroyOnHidden
       >
-        <WuyouControl />
+        {showWuyouControl && <WuyouControl />}
       </Modal>
+      </React.Suspense>
     </StyledLayout>
   );
 }

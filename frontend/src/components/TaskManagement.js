@@ -63,6 +63,7 @@ const TaskManagement = ({ onOpenPipeline = () => {}, onOpenControl = () => {} })
   });
   const fetchTasksRef = useRef(null);
   const fetchStatsRef = useRef(null);
+  const activeTasksRef = useRef(false);
 
   // 获取任务列表
   const fetchTasks = async (params = {}) => {
@@ -111,6 +112,7 @@ const TaskManagement = ({ onOpenPipeline = () => {}, onOpenControl = () => {} })
 
       if (result.success) {
         setStats(result.data);
+        activeTasksRef.current = Number(result.data?.inProgress || 0) > 0;
       }
     } catch (error) {
       console.error('获取任务统计失败:', error);
@@ -390,11 +392,20 @@ const TaskManagement = ({ onOpenPipeline = () => {}, onOpenControl = () => {} })
   useEffect(() => {
     fetchTasksRef.current?.();
     fetchStatsRef.current?.();
+    let ticks = 0;
     const timer = setInterval(() => {
+      if (document.hidden) return;
+      ticks++;
+      if (!activeTasksRef.current && ticks % 3 !== 0) return;
       fetchTasksRef.current?.({ silent: true });
       fetchStatsRef.current?.();
     }, 5000);
-    return () => clearInterval(timer);
+    const onFocus = () => {
+      fetchTasksRef.current?.({ silent: true });
+      fetchStatsRef.current?.();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); };
   }, []);
   fetchTasksRef.current = fetchTasks;
   fetchStatsRef.current = fetchStats;

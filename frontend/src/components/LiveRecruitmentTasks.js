@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Col, Progress, Row, Space, Statistic, Tag, Typography, message } from 'antd';
 import { apiGet, apiPost } from '../utils/apiClient';
 
@@ -23,23 +23,35 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
   const [snapshot, setSnapshot] = useState(null);
   const [failed, setFailed] = useState(false);
   const [recovering, setRecovering] = useState(null);
+  const refreshing = useRef(false);
+  const collecting = useRef(false);
 
   const refresh = useCallback(async () => {
-    const urls = [
-      '/recruitment-pipeline/active-job',
-      '/recruitment-pipeline/analytics?scope=active',
-      '/recruitment-pipeline/evaluation-queue/status',
-      ...SOURCES.map(source => source.statusUrl)
-    ];
-    const results = await Promise.allSettled(urls.map(url => apiGet(url)));
-    const data = results.map(result => result.status === 'fulfilled' && result.value?.success ? result.value.data : null);
-    setFailed(data.some(value => value === null));
-    setSnapshot({ job: data[0], analytics: data[1], queue: data[2], statuses: data.slice(3), synchronizedAt: new Date() });
+    if (refreshing.current) return;
+    refreshing.current = true;
+    try {
+      const urls = [
+        '/recruitment-pipeline/active-job',
+        '/recruitment-pipeline/analytics?scope=active',
+        '/recruitment-pipeline/evaluation-queue/status',
+        ...SOURCES.map(source => source.statusUrl)
+      ];
+      const results = await Promise.allSettled(urls.map(url => apiGet(url)));
+      const data = results.map(result => result.status === 'fulfilled' && result.value?.success ? result.value.data : null);
+      setFailed(data.some(value => value === null));
+      setSnapshot({ job: data[0], analytics: data[1], queue: data[2], statuses: data.slice(3), synchronizedAt: new Date() });
+      collecting.current = data.slice(3).some(status => status?.isActive || status?.batch?.running);
+    } finally { refreshing.current = false; }
   }, []);
 
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 5000);
+    let ticks = 0;
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      ticks++;
+      if (collecting.current || ticks % 3 === 0) refresh();
+    }, 5000);
     const onFocus = () => refresh();
     window.addEventListener('focus', onFocus);
     return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); };
@@ -144,7 +156,7 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
     }
   };
 
-  return <Card title="当前岗位 · 实时执行进度" style={{ marginBottom: 20 }} extra={<Space><Text type="secondary">{snapshot ? `更新于 ${snapshot.synchronizedAt.toLocaleTimeString()} · 每 5 秒同步` : '同步中…'}</Text><Button size="small" onClick={refresh}>立即刷新</Button></Space>}>
+  return <Card title="当前岗位 · 实时执行进度" style={{ marginBottom: 20 }} extra={<Space><Text type="secondary">{snapshot ? `更新于 ${snapshot.synchronizedAt.toLocaleTimeString()} · 采集中每 5 秒、空闲时每 15 秒同步` : '同步中…'}</Text><Button size="small" onClick={refresh}>立即刷新</Button></Space>}>
     {failed && <Alert type="warning" showIcon message="部分平台状态暂时不可用；其他数据仍会自动同步。" style={{ marginBottom: 14 }} />}
     {!job?.title ? <Alert type="info" showIcon message="尚未设置当前岗位，请先在三平台候选人中导入或填写岗位条件。" /> : <>
       <Space style={{ marginBottom: 14 }} wrap>

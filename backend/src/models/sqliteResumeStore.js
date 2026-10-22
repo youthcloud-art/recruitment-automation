@@ -396,11 +396,12 @@ class SqliteResumeStore {
   // Read one payload at a time for aggregate views. The legacy getResumes()
   // API must still return an array, but recommendation/analytics should not
   // materialize every historical candidate just to count the current job.
-  forEachResume(visitor, { source = null, jobRequirements = null } = {}) {
+  forEachResume(visitor, { source = null, status = null, jobRequirements = null } = {}) {
     if (typeof visitor !== 'function') throw new TypeError('简历读取回调无效');
     const filters = [];
     const params = [];
     if (source) { filters.push('source = ?'); params.push(source); }
+    if (status) { filters.push('workflow_status = ?'); params.push(status); }
     if (jobRequirements !== null) {
       filters.push("(json_extract(payload, '$.matchEvaluation.jobRequirements') = ? OR json_extract(payload, '$.captureJobRequirements') = ?)");
       params.push(jobRequirements, jobRequirements);

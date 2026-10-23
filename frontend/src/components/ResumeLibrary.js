@@ -30,6 +30,8 @@ const ResumeLibrary = () => {
   const requestSequence = useRef(0);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedResume, setSelectedResume] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const detailRequest = useRef(0);
   
   // 获取简历列表
   const fetchResumes = useCallback(async () => {
@@ -89,15 +91,30 @@ const ResumeLibrary = () => {
   };
 
   // 处理查看详情
-  const handleViewDetail = (resume) => {
-    setSelectedResume(resume);
+  const handleViewDetail = async (resume) => {
+    const request = ++detailRequest.current;
+    setSelectedResume(null);
     setDetailModalVisible(true);
+    setDetailLoading(true);
+    try {
+      const result = await apiGet(`/resume/${encodeURIComponent(resume.id)}`);
+      if (request === detailRequest.current) setSelectedResume(result.data);
+    } catch (error) {
+      if (request === detailRequest.current) {
+        setDetailModalVisible(false);
+        message.error('读取完整简历失败：' + error.message);
+      }
+    } finally {
+      if (request === detailRequest.current) setDetailLoading(false);
+    }
   };
 
   // 关闭详情弹窗
   const handleCloseDetail = () => {
+    detailRequest.current++;
     setDetailModalVisible(false);
     setSelectedResume(null);
+    setDetailLoading(false);
   };
 
   // 处理上传成功
@@ -543,6 +560,9 @@ const ResumeLibrary = () => {
                     </div>
                   </div>
 
+                  <div style={{ textAlign: 'center', marginBottom: 8 }}>
+                    <Text type="secondary">招聘岗位：{item.hiringJobTitle || '待核实'}</Text>
+                  </div>
                   {/* 求职岗位 */}
                   <div style={{ textAlign: 'center', marginBottom: '12px' }}>
                     <Tag color="blue" style={{ fontSize: '13px', padding: '4px 8px', borderRadius: '12px' }}>
@@ -664,6 +684,7 @@ const ResumeLibrary = () => {
       />
       
       {/* 简历详情弹窗 */}
+      {detailLoading && <Spin tip="读取完整简历中" fullscreen />}
       <ResumeDetailModal
         visible={detailModalVisible}
         onClose={handleCloseDetail}

@@ -360,6 +360,8 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const columns = [
     { title: '平台', dataIndex: 'source', width: 115, render: sourceLabel },
     { title: '候选人', dataIndex: 'name', width: 130, render: value => value || '未识别姓名' },
+    { title: '招聘岗位', dataIndex: 'hiringJobTitle', width: 175,
+      render: value => value || '招聘岗位待核实' },
     { title: '求职岗位', width: 180, render: (_, row) => row.position || row.expectedPosition?.position ||
       (typeof row.expectedPosition === 'string' ? row.expectedPosition : '未填写') },
     { title: '岗位匹配分（当前页排序）', dataIndex: 'matchScore', width: 160,
@@ -415,7 +417,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
           setJobRequirements(job.jobRequirements || '');
         }}
         disabled={Boolean(batch?.running || emailBatch?.sentCount)} />
-      <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 950 }}
+      <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 1125 }}
         pagination={{ current: page, pageSize, total: candidateTotal, showSizeChanger: true,
           pageSizeOptions: [10, 20, 50], showTotal: count => `共 ${count} 位候选人`,
           onChange: (nextPage, nextSize) => {
@@ -538,6 +540,8 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       <Modal title={`${selected?.name || '候选人'} · ${sourceLabel(selected?.source)}`} open={Boolean(selected)}
         onCancel={() => setSelected(null)} footer={null} width={720} destroyOnClose>
         {selected && <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div><Text>招聘岗位：{selected.hiringJobTitle || '招聘岗位待核实'}</Text>
+            {selected.name === '姓名待核实' && <Text type="warning"> · 平台未提供可核实姓名，请在原始页面确认</Text>}</div>
           <div><Text>跟进状态：</Text><Select value={selected.workflowStatus || 'new'} style={{ width: 180 }}
             options={STATUSES} onChange={value => update({ status: value })} /></div>
           <div><Text>人工备注：</Text><Input.TextArea rows={3} maxLength={3000} value={notes}

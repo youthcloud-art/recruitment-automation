@@ -27,7 +27,8 @@ test('detail loads one ID through indexed store method without reading full libr
   assert.equal(response.headers.get('cache-control'), 'private, no-store');
   const body = await response.json();
   assert.deepEqual(body, { success: true, data: { id: 'boss-1', source: 'boss',
-    name: '候选人甲', originalText: '仅甲的完整简历' } });
+    name: '候选人甲', originalText: '仅甲的完整简历',
+    hiringJobTitle: '招聘岗位待核实' } });
   assert.deepEqual(calls, ['boss-1']);
   assert.doesNotMatch(JSON.stringify(body), /候选人乙/);
 });
@@ -39,7 +40,7 @@ test('detail retains 51job anonymous display projection without changing stored 
   const response = await fetch(`${base}/api/resume/qcwy-1`);
   assert.equal(response.status, 200);
   const body = (await response.json()).data;
-  assert.equal(body.name, '匿名候选人（前程无忧记录 ID：eeeeeeeeeeeeeeee）');
+  assert.equal(body.name, '姓名待核实');
   assert.equal(body.position, '求职岗位待核实');
   assert.equal(body.originalText, record.originalText);
   assert.equal(record.name, '通知');

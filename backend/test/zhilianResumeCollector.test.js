@@ -92,7 +92,7 @@ test('智联 AI 临时不可用时保存原文，恢复后可补齐结构化字�
     },
     evaluationQueue: { enqueue: () => ({ queued: true }) }
   });
-  const captured = { text: '个人信息和完整工作经历、教育经历、项目经历。'.repeat(10),
+  const captured = { text: '测试候选人\n' + '个人信息和完整工作经历、教育经历、项目经历。'.repeat(10),
     url: 'https://rd.zhaopin.com/search', title: '智联招聘' };
   const first = await collector.save(captured,
     { jobRequirements: '项目经理主管：五年以上项目管理经验' });
@@ -106,8 +106,25 @@ test('智联 AI 临时不可用时保存原文，恢复后可补齐结构化字�
   assert.equal(second.saved, false);
   assert.equal(second.duplicate, true);
   assert.equal(second.resume.name, '测试候选人');
+  assert.equal(second.resume.nameSource, 'zhilian_ai_visible_text');
   assert.equal(second.resume.parseStatus, 'completed');
   assert.equal(saved.length, 1);
+});
+
+test('智联 AI 返回页面中不存在的名字或编号时不写成候选人姓名', async () => {
+  const saved = [];
+  const collector = new ZhilianResumeCollector({
+    llmService: { chatWithLLM: async () => '{"name":"12345678"}' },
+    resumeStore: { getResumes: () => saved, addResume: async value => {
+      saved.push(value);
+      return { created: true, resume: value };
+    } }, evaluationQueue: { enqueue: () => ({ queued: true }) }
+  });
+  const captured = { text: '工作经历：从事磁轴销售三年。\n教育经历：大专。'.repeat(10),
+    url: 'https://rd.zhaopin.com/search', title: '简历详情' };
+  const result = await collector.save(captured);
+  assert.equal(result.resume.name, '未识别姓名');
+  assert.equal(result.resume.nameSource, 'unverified');
 });
 
 test('智联 AI 解析超时有上限，完整原文仍入库', async () => {

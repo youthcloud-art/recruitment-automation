@@ -488,6 +488,13 @@ const ResumeDetailModal = ({ visible, onClose, resume, readOnly = false }) => {
       </BaseDrawerHeader>
       
       <BaseDrawerBody>
+        <BaseCard>
+          <div style={{ padding: '12px 20px' }}>
+            招聘岗位：{resume.hiringJobTitle || '招聘岗位待核实'}
+            {resume.nameSource === 'qcwy_card' &&
+              <div style={{ color: '#8c8c8c' }}>候选人称呼来自前程无忧搜索卡片，完整姓名请在平台核实。</div>}
+          </div>
+        </BaseCard>
 
 
 

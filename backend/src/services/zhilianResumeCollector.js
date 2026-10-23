@@ -23,6 +23,13 @@ function parseStructuredReply(reply) {
   return parsed;
 }
 
+function visibleCandidateName(value, resumeText) {
+  const name = String(value || '').trim();
+  if (!/^(?:[\u4e00-\u9fff·]{2,8}|[A-Za-z][A-Za-z .'-]{2,50})$/.test(name) ||
+      /^(?:姓名|个人信息|工作经历|教育经历|简历详情|求职意向|通知|匿名候选人|未识别姓名)$/.test(name)) return '';
+  return String(resumeText || '').slice(0, 700).includes(name) ? name : '';
+}
+
 class ZhilianResumeCollector {
   constructor({ llmService = null, resumeStore = resumeModel,
     evaluationQueue = postCaptureEvaluationQueue, parseTimeoutMs = 45000 } = {}) {
@@ -46,7 +53,7 @@ class ZhilianResumeCollector {
         typeof this.resumeStore.updateCandidateMetadata !== 'function') return existing;
     const fields = ['name', 'age', 'workYears', 'education', 'currentStatus', 'phone',
       'email', 'selfIntroduction', 'expectedPosition', 'position', 'workExperience',
-      'educationExperience', 'skills', 'certificates', 'parseMethod', 'parseStatus'];
+      'educationExperience', 'skills', 'certificates', 'parseMethod', 'parseStatus', 'nameSource'];
     return await this.resumeStore.updateCandidateMetadata(existing.id,
       Object.fromEntries(fields.map(key => [key, candidate[key]]))) || existing;
   }
@@ -117,7 +124,9 @@ class ZhilianResumeCollector {
     }
     const candidate = {
       ...record,
-      name: record.name || '未识别姓名',
+      name: visibleCandidateName(record.name, captured.text) || '未识别姓名',
+      nameSource: visibleCandidateName(record.name, captured.text)
+        ? 'zhilian_ai_visible_text' : 'unverified',
       source: 'zlzp',
       platform: '智联招聘',
       sourceUrl: captured.url,
@@ -125,6 +134,7 @@ class ZhilianResumeCollector {
       sourceFingerprint: fingerprint,
       originalText: captured.text,
       captureJobRequirements: String(activeJob?.jobRequirements || '').trim() || null,
+      captureJobTitle: String(activeJob?.title || '').trim() || null,
       parseMethod,
       parseStatus: parseMethod === 'llm' ? 'completed' : 'needs_review'
     };

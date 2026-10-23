@@ -48,7 +48,9 @@ function jobResumeSignature(job) {
 
 function verifiedCardName(value) {
   const name = String(value || '').normalize('NFKC').replace(/\s+/g,'').trim();
-  return /^[\u4e00-\u9fff]{2,4}$/.test(name) ? name : '';
+  if (!/^[\u4e00-\u9fff]{2,4}$/.test(name) ||
+      /^(?:姓名|候选人|求职者|未公开|未识别|匿名|保密|工作经历|个人信息|简历详情)$/.test(name)) return '';
+  return name;
 }
 
 function verifiedCardPosition(value) {
@@ -1015,6 +1017,7 @@ class BossRawRecommendCollector {
           : ocrPosition ? 'ocr' : 'unverified',
         originalText:captured.text,
         captureJobRequirements:String(job?.jobRequirements || '').trim() || null,
+        captureJobTitle:String(job?.title || '').trim() || null,
         qualityScore:parsed.qualityScore,parseMethod:captured.method,
         parseStatus:'completed'
       }, {returnStatus:true});

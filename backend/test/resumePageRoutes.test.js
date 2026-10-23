@@ -23,7 +23,8 @@ test('opt-in candidate page endpoint validates filters and retains separate lega
   const response = await fetch(`${base}/api/resume-library/page?source=zlzp&status=new&keyword=网络&sortBy=experience&limit=25&offset=50`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { success: true,
-    data: { items: [{ id: 'one' }], total: 1200, limit: 25, offset: 50 } });
+    data: { items: [{ id: 'one', hiringJobTitle: '招聘岗位待核实' }],
+      total: 1200, limit: 25, offset: 50 } });
   assert.deepEqual(calls[0], { source: 'zlzp', status: 'new', position: null,
     keyword: '网络', sortBy: 'experience', limit: 25, offset: 50 });
   assert.equal((await fetch(`${base}/api/resume-library/page?limit=-1`)).status, 400);
@@ -46,9 +47,10 @@ test('resume page API projects legacy 51job labels without mutating source recor
   await new Promise(resolve => server.once('listening', resolve));
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/resume-library/page`);
   const data = (await response.json()).data.items[0];
-  assert.equal(data.name, '匿名候选人（前程无忧记录 ID：eeeeeeeeeeeeeeee）');
+  assert.equal(data.name, '姓名待核实');
   assert.equal(data.position, '求职岗位待核实');
-  assert.equal(data.originalText, record.originalText);
+  assert.equal(data.platformRecordId, 'eeeeeeeeeeeeeeee');
+  assert.equal(data.originalText, undefined);
   assert.equal(record.name, '通知');
   assert.equal(record.position, '通知');
 });

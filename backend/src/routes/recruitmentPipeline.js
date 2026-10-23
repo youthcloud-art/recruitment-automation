@@ -11,7 +11,7 @@ const multer = require('multer');
 const { ActiveJobService, parseJobTemplate } = require('../services/activeJobService');
 const { RecruitmentAnalyticsService } = require('../services/recruitmentAnalyticsService');
 const { ResumeRecommendationService } = require('../services/resumeRecommendationService');
-const { publicCandidate } = require('../utils/candidateDisplay');
+const { publicCandidate, publicCandidateSummary } = require('../utils/candidateDisplay');
 
 const router = express.Router();
 const service = new RecruitmentPipelineService();
@@ -156,7 +156,7 @@ router.get('/candidates/page', (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
     const data = service.listPage(req.query);
-    res.json({ success: true, data: { ...data, items: data.items.map(publicCandidate) } });
+    res.json({ success: true, data: { ...data, items: data.items.map(publicCandidateSummary) } });
   } catch (error) { fail(res, error); }
 });
 

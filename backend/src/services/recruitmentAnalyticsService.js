@@ -81,7 +81,10 @@ class RecruitmentAnalyticsService {
       metrics.total++;
       const source = sourceMap[item.source];
       source.total++;
-      if (/^(?:未识别姓名|匿名候选人)/.test(candidateName(item))) source.nameNeedsReview++;
+      if (/^(?:未识别姓名|匿名候选人|姓名待核实)/.test(candidateName(item)) ||
+          (item.source === 'qcwy' && /(?:先生|女士|同学)$/.test(String(item.name || '')))) {
+        source.nameNeedsReview++;
+      }
       if (!candidatePosition(item) || /待核实/.test(candidatePosition(item))) source.positionNeedsReview++;
       if (item.parseStatus === 'needs_review') source.parseNeedsReview++;
       const status = statusMap[item.workflowStatus] || statusMap.new;

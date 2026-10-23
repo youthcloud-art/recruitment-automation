@@ -6,7 +6,7 @@ const resumeParserService = require('./resumeParserService');
 const { RecruitmentPipelineService } = require('./recruitmentPipelineService');
 const { loadBrowserSession, saveBrowserSession } = require('./browserSessionStore');
 const { launchVisibleChromeCdp } = require('./visibleChromeCdp');
-const { isQcwyPageLabel } = require('../utils/candidateDisplay');
+const { isQcwyPageLabel, jobTitleFromRequirements } = require('../utils/candidateDisplay');
 
 const HOME_URL = 'https://ehire.51job.com/';
 const TALENT_SEARCH_URL = 'https://ehire.51job.com/Revision/talent/search';
@@ -49,7 +49,7 @@ function parseLlmJson(value) {
 
 const NAME_LABELS = new Set(['姓名', '名字', '个人信息', '基本信息', '求职意向', '工作经历',
   '教育经历', '项目经历', '技能特长', '人才简历', '简历详情', '人才搜索', '保密',
-  '通知']);
+  '通知', '匿名', '未公开', '未识别', '待核实', '保密姓名']);
 
 function validName(value) {
   const name = String(value || '').trim();
@@ -688,6 +688,7 @@ class WuyouService {
         index,
         text: (card.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 800),
         populated: Boolean(card.querySelector('.el-card .name')),
+        displayName: (card.querySelector('.el-card .name')?.innerText || '').trim(),
         stableId: card.getAttribute('data-id') || card.getAttribute('data-key') ||
           card.getAttribute('data-resume-id') || card.querySelector('[data-id]')?.getAttribute('data-id') || '',
         virtualIndex: card.getAttribute('data-index') || card.getAttribute('aria-posinset') ||
@@ -842,7 +843,7 @@ class WuyouService {
     return { text: completeResumeText(best.text), url: best.url, title: await page.title() };
   }
 
-  async collectPage(page, jobRequirements = '') {
+  async collectPage(page, jobRequirements = '', cardNameHint = '') {
     const resume = await this.captureVisibleResume(page);
     const normalizedText = resume.text.replace(/\s+/g, ' ').trim().toLowerCase();
     const fingerprint = crypto.createHash('sha256').update(normalizedText).digest('hex');
@@ -864,7 +865,28 @@ class WuyouService {
           (hasStableId && item.sourceUrl === sourceUrl) ||
           item.sourceFingerprint === fingerprint ||
           item.originalText?.replace(/\s+/g, ' ').trim().toLowerCase() === normalizedText));
-    if (existing) return { saved: false, duplicate: true, resume: existing };
+    const detailName = validName(resume.nameHint) ? resume.nameHint.trim() :
+      nameFromResumeText(resume.text);
+    const cardName = validName(cardNameHint) ? cardNameHint.trim() : '';
+    const verifiedName = detailName || cardName || '';
+    const nameSource = detailName ? 'qcwy_detail' : cardName ? 'qcwy_card' : 'unverified';
+    if (existing) {
+      const needsName = !validName(existing.name);
+      const jobTitle = jobTitleFromRequirements(jobRequirements);
+      const changes = {};
+      if (needsName && verifiedName) {
+        changes.name = verifiedName;
+        changes.nameSource = nameSource;
+      }
+      if (!existing.captureJobTitle && jobTitle &&
+          existing.captureJobRequirements === String(jobRequirements || '').trim()) {
+        changes.captureJobTitle = jobTitle;
+      }
+      const enriched = Object.keys(changes).length &&
+        typeof this.resumeStore.updateCandidateMetadata === 'function'
+        ? await this.resumeStore.updateCandidateMetadata(existing.id, changes) : existing;
+      return { saved: false, duplicate: true, resume: enriched || existing };
+    }
     const { rawText: _rawText, ...parsed } = this.parser.parseResumeText(resume.text);
     // Do not persist navigation chrome as structured resume metadata. Keep
     // originalText unchanged for audit and later manual identity verification.
@@ -876,9 +898,8 @@ class WuyouService {
     }
     const result = await this.resumeStore.addResume({
       ...parsed,
-      name: (validName(resume.nameHint) ? resume.nameHint.trim() : null) ||
-        nameFromResumeText(resume.text) ||
-        '未识别姓名',
+      name: verifiedName || '未识别姓名',
+      nameSource,
       source: 'qcwy',
       platform: '前程无忧',
       sourceUrl,
@@ -887,6 +908,7 @@ class WuyouService {
       sourceTitle: resume.title,
       originalText: resume.text,
       captureJobRequirements: String(jobRequirements || '').trim() || null,
+      captureJobTitle: jobTitleFromRequirements(jobRequirements) || null,
       parseMethod: 'local',
       parseStatus: 'completed'
     }, { returnStatus: true });
@@ -1175,7 +1197,7 @@ class WuyouService {
               this.page = detailPage;
               break;
             }
-            const result = await this.collectPage(detailPage, jobRequirements);
+            const result = await this.collectPage(detailPage, jobRequirements, card.displayName);
             if (result.saved) {
               this.batch.saved++;
               await this.evaluateCaptured(result.resume, jobRequirements);

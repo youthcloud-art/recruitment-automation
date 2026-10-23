@@ -48,6 +48,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const [reportCount, setReportCount] = useState(null);
   const [reportPreview, setReportPreview] = useState(null);
   const [reportPreviewBusy, setReportPreviewBusy] = useState(false);
+  const [reportRevision, setReportRevision] = useState(0);
   const [selectedHistoryIds, setSelectedHistoryIds] = useState([]);
   const [status, setStatus] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -146,7 +147,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       });
     }, 250);
     return () => clearTimeout(timer);
-  }, [viewJobTitle, viewJobGroup, source, status, keyword, reportMinScore, candidateTotal]);
+  }, [viewJobTitle, viewJobGroup, source, status, keyword, reportMinScore, candidateTotal, reportRevision]);
   useEffect(() => {
     apiGet('/recruitment-pipeline/active-job')
       .then(result => {
@@ -194,7 +195,10 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         const queueChange = ['completed', 'failed', 'deferred', 'overflowed']
           .map(field => result.data?.[field] || 0).join(':');
         if (lastEvaluationQueueChange.current !== null &&
-            lastEvaluationQueueChange.current !== queueChange) refresh();
+            lastEvaluationQueueChange.current !== queueChange) {
+          refresh();
+          setReportRevision(value => value + 1);
+        }
         lastEvaluationQueueChange.current = queueChange;
       } catch (_) { /* 旧版服务端仍可显示批量评估进度 */ }
       finally { polling = false; }
@@ -221,6 +225,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         setEmailPreview(null);
       }
       await refresh();
+      if (changes.status) setReportRevision(value => value + 1);
       message.success('跟进记录已保存');
     } catch (error) { message.error(error.message); }
     finally { setBusy(''); }
@@ -237,7 +242,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       return;
     }
     if (!selected || !jobCriteria.updatedAt || jobRequirements !== jobCriteria.jobRequirements) {
-      message.warning('请先在上方保存并应用岗位条件');
+      message.warning('请先在列表下方保存并应用岗位条件');
       return;
     }
     setBusy('evaluate');
@@ -245,6 +250,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       const result = await apiPost(`/recruitment-pipeline/candidates/${encodeURIComponent(selected.id)}/evaluate`, { jobRequirements });
       setSelected(previous => ({ ...previous, matchScore: result.data.score, matchEvaluation: result.data }));
       await refresh();
+      setReportRevision(value => value + 1);
       message.success(`${evaluationMethodLabel(result.data)}已完成`);
     } catch (error) { message.error(error.message); }
     finally { setBusy(''); }
@@ -521,6 +527,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
           previewGeneration.current++;
           setEmailPreview(null);
           refresh();
+          setReportRevision(value => value + 1);
         }}>刷新</Button>
         <Button onClick={() => {
           setShowJobEditor(true);

@@ -4,6 +4,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {extractBossOcrWorkExperience}=require('../src/services/bossOcrWorkExperience');
 const {repairBossOcrWorkHistory}=require('../src/services/bossOcrWorkHistoryRepair');
+const {BossRawRecommendCollector}=require('../src/services/bossRawRecommendCollector');
 
 const history='工作经历 星海设备有限公司 | 销售工程师 2020.03 - 2023.08 '
   +'负责客户需求、项目协调和技术沟通。'.repeat(8)
@@ -51,4 +52,18 @@ test('backfill changes only completed BOSS OCR records with empty work history',
   assert.deepEqual(result,{scanned:3,updated:1});
   assert.equal(updates[0].id,'repair');
   assert.equal(updates[0].changes.workExperience[0].verificationStatus,'ocr_needs_review');
+});
+
+test('the BOSS collector persists evidence-backed OCR history with the resume',async()=>{
+  let saved;
+  const collector=new BossRawRecommendCollector({
+    store:{addResume:async record=>{saved=record;return {created:true,resume:{id:'one'}};}},
+    queue:{enqueue:()=>{}}
+  });
+  await collector.saveResume({text:history,method:'ocr',
+    url:new URL('https://www.zhipin.com/web/frame/c-resume/?uid=example')},
+  {title:'销售工程师',jobRequirements:'有客户服务经历'});
+  assert.equal(saved.source,'boss');
+  assert.equal(saved.workExperience[0].company,'星海设备有限公司');
+  assert.equal(saved.workExperience[0].verificationStatus,'ocr_needs_review');
 });

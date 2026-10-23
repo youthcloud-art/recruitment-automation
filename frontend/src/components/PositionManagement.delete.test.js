@@ -30,7 +30,7 @@ beforeAll(() => {
   });
 });
 
-test('非当前岗位使用稳定的确认框，确认后才调用删除 API', async () => {
+test('非当前岗位使用稳定的确认框，确认后才调用归档 API', async () => {
   apiGet.mockImplementation(endpoint => Promise.resolve(endpoint === '/positions'
     ? { success: true, data: [{ id: 'position-test', name: '测试岗位',
       title: '测试岗位', jobCriteria: otherJob }] }
@@ -39,7 +39,7 @@ test('非当前岗位使用稳定的确认框，确认后才调用删除 API', a
   const confirm = jest.spyOn(Modal, 'confirm').mockImplementation(() => ({ destroy() {} }));
   try {
     render(<PositionManagement visible onClose={() => {}} />);
-    const buttons = await screen.findAllByRole('button', { name: /删除/ });
+    const buttons = await screen.findAllByRole('button', { name: /归档/ });
     const enabled = buttons.find(button => !button.disabled);
     expect(enabled).toBeTruthy();
     fireEvent.click(enabled);

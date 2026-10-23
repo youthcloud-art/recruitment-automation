@@ -67,13 +67,17 @@ class RecruitmentPipelineService {
   }
 
   list({ source = '', status = '', keyword = '', limit = 200,
-    jobGroup = '' } = {}) {
+    jobGroup = '', jobTitle = '' } = {}) {
     if (source && !SOURCES.includes(source)) throw new Error('不支持的招聘平台');
     if (status && !STATUSES.includes(status)) throw new Error('不支持的跟进状态');
     const term = String(keyword).trim().toLowerCase();
+    const title = String(jobTitle).trim();
+    if (title.length > 120) throw new Error('岗位名称过长');
     const max = Math.min(Math.max(Number(limit) || 200, 1), 10000);
     const matches = item => SOURCES.includes(item.source) &&
       (!source || item.source === source) &&
+      (!title || hiringJobTitle(item) === title) &&
+      (!jobGroup || !item.jobGroup || item.jobGroup === jobGroup) &&
       (!status || (item.workflowStatus || 'new') === status) &&
       (!term || [item.name, item.position, item.expectedPosition?.position,
         typeof item.expectedPosition === 'string' ? item.expectedPosition : '',
@@ -83,7 +87,8 @@ class RecruitmentPipelineService {
       const records = [];
       this.store.forEachResume(item => {
         if (records.length <= max && matches(item)) records.push(item);
-      }, { source: source || null, status: status || null, jobGroup: jobGroup || null });
+      }, { source: source || null, status: status || null, jobGroup: jobGroup || null,
+        hiringJobTitle: title || null });
       return records.slice(0, max);
     }
     return this.store.getResumes().filter(matches).slice(0, max);
@@ -222,7 +227,103 @@ class RecruitmentPipelineService {
     return evaluation;
   }
 
-  report({ source = '', status = '', minScore = 70, topN = 20, jobRequirements = '' } = {}) {
+  selectedJobReportData({ source = '', status = '', keyword = '', jobTitle = '',
+    jobGroup = '', minScore = 0, topN } = {}) {
+    const title = String(jobTitle).trim();
+    if (!title || title.length > 120 || !['current', 'historical'].includes(jobGroup)) {
+      throw new Error('请先选择一个明确的在用或历史岗位');
+    }
+    const minimum = Number(minScore);
+    if (!Number.isInteger(minimum) || minimum < 0 || minimum > 100) {
+      throw new Error('最低匹配分需为 0～100');
+    }
+    const records = this.list({ source, status, keyword, jobGroup, jobTitle: title, limit: 10000 });
+    if (records.length >= 10000) {
+      throw new Error('单次报告最多检查 10000 份简历，请按平台或关键词缩小范围');
+    }
+    const byVersion = new Map();
+    const selectedZhilian = [];
+    for (const item of records) {
+      const requirements = String(item.matchEvaluation?.jobRequirements || '').trim();
+      if (!requirements ||
+          (item.captureJobRequirements && item.captureJobRequirements !== requirements) ||
+          (status === '' && (item.workflowStatus || 'new') === 'rejected') ||
+          !isVettedEvaluation(item) || !Number.isFinite(item.matchScore) ||
+          item.matchScore < minimum || item.matchScore > 100 ||
+          !String(item.originalText || item.content || '').trim()) continue;
+      if (item.source === 'zlzp') {
+        if (selectedZhilian.some(existing => isSameZhilianResume(existing, item))) continue;
+        selectedZhilian.push(item);
+      }
+      if (!byVersion.has(requirements)) byVersion.set(requirements, []);
+      byVersion.get(requirements).push(item);
+    }
+    for (const group of byVersion.values()) group.sort((a, b) =>
+      b.matchScore - a.matchScore || String(a.id).localeCompare(String(b.id)));
+    // Scores are only ordered within the same exact job requirements. Never
+    // rank two historical criteria versions against each other.
+    const eligible = [...byVersion.values()].flat();
+    const desired = topN === undefined || topN === '' ? Math.min(eligible.length, 500) : Number(topN);
+    if (!Number.isInteger(desired) || desired < 0 || desired > 500 ||
+        (topN !== undefined && topN !== '' && desired < 1)) {
+      throw new Error('报告候选人份数需为 1～500');
+    }
+    const candidates = eligible.slice(0, desired);
+    return { title, jobGroup, source, status, keyword, minimum, total: records.length,
+      eligibleCount: eligible.length, candidates, versions: [...byVersion.keys()] };
+  }
+
+  reportPreview(options = {}) {
+    const selection = this.selectedJobReportData(options);
+    return { jobTitle: selection.title, jobGroup: selection.jobGroup,
+      source: selection.source, status: selection.status, keyword: selection.keyword,
+      total: selection.total, eligibleCount: selection.eligibleCount,
+      selectedCount: selection.candidates.length, maxCount: 500,
+      requirementsVersions: selection.versions.length };
+  }
+
+  selectedJobReport(options = {}) {
+    const data = this.selectedJobReportData(options);
+    const lines = [
+      '# 候选人初筛报告', '',
+      `生成时间：${new Date().toLocaleString('zh-CN')}`,
+      `招聘岗位：${line(data.title)}`,
+      `岗位归属：${data.jobGroup === 'current' ? '在用岗位' : '历史/已删除岗位'}`,
+      `平台：${data.source ? LABELS[data.source] : 'BOSS直聘、智联招聘、前程无忧'}`,
+      `最低岗位匹配分：${data.minimum}/100`,
+      `当前筛选结果：${data.total} 份；有效评估且达到分数线：${data.eligibleCount} 份；本报告展示：${data.candidates.length} 份`,
+      '',
+      '仅包含本岗位、本次平台及跟进状态筛选下有原文且完成有效评估的简历；人工排除者默认不纳入。', ''
+    ];
+    if (!data.candidates.length) lines.push('当前条件下暂无可纳入初筛报告的候选人。', '');
+    data.versions.forEach((requirements, index) => {
+      const group = data.candidates.filter(item => item.matchEvaluation.jobRequirements === requirements);
+      if (!group.length) return;
+      lines.push(`## 岗位条件版本 ${index + 1}（${group.length} 份）`, '',
+        '### 该版本岗位要求', '', requirements, '',
+        '| 平台 | 候选人 | 求职岗位 | 岗位匹配分 | 跟进状态 | 评估摘要 | 备注 |',
+        '| --- | --- | --- | ---: | --- | --- | --- |');
+      for (const item of group) lines.push(`| ${LABELS[item.source]} | ${line(candidateName(item))} | ${line(candidatePosition(item))} | ${item.matchScore} | ${line(item.workflowStatus || 'new')} | ${line(item.matchEvaluation?.summary)} | ${line(item.candidateNotes)} |`);
+      lines.push('', '### 候选人详情', '');
+      group.forEach((item, candidateIndex) => lines.push(
+        `#### ${candidateIndex + 1}. ${line(candidateName(item))}`, '',
+        `- 平台：${LABELS[item.source]}`,
+        `- 求职岗位：${line(candidatePosition(item))}`,
+        `- 匹配分：${item.matchScore}/100`,
+        `- 跟进状态：${line(item.workflowStatus || 'new')}`,
+        `- 评估结论：${line(item.matchEvaluation?.summary) || '待复核'}`,
+        `- 相关优势：${line(item.matchEvaluation?.strengths?.join('；')) || '暂无'}`,
+        `- 待核实：${line(item.matchEvaluation?.gaps?.join('；')) || '暂无'}`,
+        `- 备注：${line(item.candidateNotes) || '暂无'}`,
+        item.sourceUrl ? `- 来源页面：${line(item.sourceUrl)}` : '', ''));
+    });
+    lines.push('> 不同岗位条件版本的匹配分不能直接横向比较；最终判断需人工复核。', '');
+    return lines.join('\n');
+  }
+
+  report(options = {}) {
+    if (options.jobTitle || options.jobGroup) return this.selectedJobReport(options);
+    const { source = '', status = '', minScore = 70, topN = 20, jobRequirements = '' } = options;
     const minimum = Number(minScore);
     const count = Number(topN);
     if (!Number.isInteger(minimum) || minimum < 0 || minimum > 100) {

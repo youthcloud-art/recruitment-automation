@@ -11,7 +11,8 @@ export const EMPTY_JOB = {
 };
 
 export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disabled = false,
-  persistImport = true, showSave = true, title = '岗位条件（采集前设置）' }) {
+  persistImport = true, showSave = true, showHelp = true,
+  title = '岗位条件（采集前设置）' }) {
   const [busy, setBusy] = useState('');
   const fileInput = useRef(null);
   const job = { ...EMPTY_JOB, ...(value || {}) };
@@ -132,11 +133,12 @@ export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disable
           disabled={disabled} placeholder="填写必需技能、经验、职责及加分条件；导入模板后可继续编辑"
           onChange={event => setField('jobRequirements', event.target.value)} />
       </div>
+      {(showHelp || (job.recommendationTargetCount && !job.targetCount)) &&
       <Alert type={job.recommendationTargetCount && !job.targetCount ? 'warning' : 'info'}
         showIcon style={{ marginTop: 12 }}
         message={job.recommendationTargetCount && !job.targetCount
           ? `推荐名单目标为 ${job.recommendationTargetCount} 人，单次采集目标尚未设置；请填写上方采集份数，或在平台页面确认本次目标。`
-          : '岗位名称和关键词用于平台检索；详细条件用于采后评估。推荐人数与单次采集目标分别设置；每次任务按本次新入库份数停止。'} />
+          : '岗位名称和关键词用于平台检索；详细条件用于采后评估。推荐人数与单次采集目标分别设置；每次任务按本次新入库份数停止。'} />}
     </Card>
   );
 }

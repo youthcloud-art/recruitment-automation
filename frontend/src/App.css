@@ -1,30 +1,28 @@
 /* Ant Design 组件样式重写 - 未来科技感 */
 .ant-layout { 
-  background: linear-gradient(135deg, #F2F2F7 0%, #E5E5EA 50%, #D1D1D6 100%) !important;
-  background-attachment: fixed !important;
+  background: #f3f6fb !important;
 }
 
 .ant-card { 
-  background: var(--glass-bg-light) !important;
-  backdrop-filter: var(--blur-lg) !important;
-  -webkit-backdrop-filter: var(--blur-lg) !important;
-  border: 1px solid var(--glass-border) !important;
+  background: #fff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid #e2e9f3 !important;
   border-radius: var(--radius-xl) !important;
-  box-shadow: var(--shadow-lg) !important;
-  transition: all var(--duration-normal) cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: 0 3px 12px rgba(34, 68, 111, 0.08) !important;
+  transition: border-color 160ms ease, box-shadow 160ms ease !important;
 }
 
 .ant-card:hover {
-  transform: translateY(-4px) !important;
-  box-shadow: var(--shadow-xl) !important;
-  border-color: var(--primary-blue) !important;
+  transform: none !important;
+  box-shadow: 0 5px 16px rgba(34, 68, 111, 0.10) !important;
 }
 
 .ant-input { 
-  background: var(--glass-bg) !important;
-  backdrop-filter: var(--blur-md) !important;
-  -webkit-backdrop-filter: var(--blur-md) !important;
-  border: 1px solid var(--glass-border) !important;
+  background: #fff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid #cfdae8 !important;
   border-radius: var(--radius-lg) !important;
   transition: all var(--duration-normal) ease !important;
   box-shadow: var(--shadow-sm) !important;
@@ -102,11 +100,11 @@
 
 /* 侧边栏布局样式 - 玻璃拟态 */
 .ant-layout-sider { 
-  background: var(--glass-bg-light) !important;
-  backdrop-filter: var(--blur-xl) !important;
-  -webkit-backdrop-filter: var(--blur-xl) !important;
-  border-right: 1px solid var(--glass-border) !important;
-  box-shadow: var(--shadow-lg) !important;
+  background: #fff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-right: 1px solid #e2e9f3 !important;
+  box-shadow: 2px 0 12px rgba(34, 68, 111, 0.06) !important;
   z-index: 10 !important;
 }
 

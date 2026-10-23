@@ -50,13 +50,13 @@ const PositionManagement = React.lazy(() => import('./components/PositionManagem
 const { Header, Content, Sider } = Layout;
 const { Title } = Typography;
 
-// 样式组件 - 未来科技感设计
+// Keep the shell light enough for long candidate lists on office PCs.
 const StyledSider = styled(Sider)`
-  background: var(--glass-bg) !important;
-  backdrop-filter: var(--blur-lg) !important;
-  -webkit-backdrop-filter: var(--blur-lg) !important;
-  border-right: 1px solid var(--glass-border) !important;
-  box-shadow: var(--shadow-xl) !important;
+  background: #fff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-right: 1px solid #e2e9f3 !important;
+  box-shadow: 2px 0 12px rgba(34, 68, 111, 0.06) !important;
   z-index: 10;
   position: fixed;
   height: 100vh;
@@ -85,54 +85,29 @@ const StyledSider = styled(Sider)`
 
 const StyledLayout = styled(Layout)`
   height: 100vh;
-  background: var(--gradient-glass) !important;
+  background: #f3f6fb !important;
   overflow: hidden;
   position: relative;
   
-  &::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: var(--grid-background);
-    opacity: 0.03;
-    pointer-events: none;
-    z-index: 0;
-  }
 `;
 
 const StyledHeader = styled(Header).withConfig({
   shouldForwardProp: (prop) => prop !== 'hasModal'
 })`
-  background: var(--glass-bg) !important;
-  backdrop-filter: var(--blur-xl) !important;
-  -webkit-backdrop-filter: var(--blur-xl) !important;
-  border-bottom: 1px solid var(--glass-border) !important;
+  background: #fff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-bottom: 1px solid #e2e9f3 !important;
   display: flex;
   align-items: center;
   padding: 0 32px;
-  box-shadow: var(--shadow-lg) !important;
+  box-shadow: 0 2px 10px rgba(34, 68, 111, 0.06) !important;
   position: fixed;
   width: ${props => props.hasModal ? 'calc(100% - 256px - 33.33%)' : 'calc(100% - 256px)'};
   z-index: 9;
   top: 0;
   left: 256px;
-  transition: all var(--duration-normal) cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  will-change: width;
-  
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: var(--gradient-cyber);
-    opacity: 0.1;
-    pointer-events: none;
-  }
+  transition: width 180ms ease;
 `;
 
 const StyledContent = styled(Content).withConfig({
@@ -147,8 +122,7 @@ const StyledContent = styled(Content).withConfig({
   margin-top: 64px;
   margin-left: 256px;
   overflow: visible;
-  transition: all var(--duration-normal) cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  will-change: width;
+  transition: width 180ms ease;
   position: relative;
   z-index: 1;
 `;

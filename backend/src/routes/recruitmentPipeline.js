@@ -208,6 +208,13 @@ router.post('/evaluate-batch/start', (req, res) => {
 router.post('/evaluate-batch/stop', (_req, res) =>
   res.json({ success: true, data: batchService.stop() }));
 
+router.get('/report/preview', (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, data: service.reportPreview(req.query) });
+  } catch (error) { fail(res, error); }
+});
+
 router.get('/report', async (req, res) => {
   try {
     const format = String(req.query.format || 'md').toLowerCase();

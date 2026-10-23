@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Button, Card, Col, Progress, Row, Space, Statistic, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, InputNumber, Progress, Row, Space, Statistic, Tag, Typography, message } from 'antd';
 import { apiGet, apiPost } from '../utils/apiClient';
 
 const { Text } = Typography;
@@ -13,16 +13,41 @@ function collectorState(source, status) {
   if (!status) return { label: '状态不可用', color: 'default' };
   const batch = source === 'qcwy' ? status.batch : status;
   if (batch?.running || status.isActive) return { label: '采集中', color: 'processing' };
-  if (batch?.pausedForVerification || /verif|captcha/i.test(String(status.status || ''))) return { label: '等待平台验证', color: 'warning' };
-  if (status.status === 'paused' || batch?.stopReason === 'paused') return { label: '已暂停', color: 'warning' };
+  if (batch?.pausedForVerification || /verif|captcha/i.test(String(status.status || '')) ||
+      /VERIFICATION|RATE_LIMIT/.test(String(status.lastFailureCode || ''))) {
+    return { label: '等待平台验证', color: 'warning' };
+  }
+  if (status.status === 'paused' || ['verification_required', 'login_required'].includes(batch?.stopReason)) {
+    return { label: '已暂停', color: 'warning' };
+  }
   if (status.lastError || status.error) return { label: '需检查', color: 'error' };
   return { label: '当前未采集', color: 'default' };
+}
+
+function recoveryHint(source, status) {
+  if (!status) return '状态暂时不可用，请刷新；其他平台可继续使用。';
+  const batch = source === 'qcwy' ? status.batch : status;
+  const reason = String(status.lastFailureCode || batch?.stopReason || status.lastError || '').toUpperCase();
+  if (/WINDOW_MINIMIZED|VIEWPORT_TOO_SMALL/.test(reason)) {
+    return '专用 Chrome 被最小化或窗口太小；在服务器桌面恢复为正常窗口后，点“续接上次任务”或重开一轮。';
+  }
+  if (/VERIFICATION|CAPTCHA|RATE_LIMIT/.test(reason) || batch?.pausedForVerification) {
+    return '平台要求人工验证或暂时限流；在服务器浏览器按官方页面完成处理后再续采，不要反复请求验证码。';
+  }
+  if (/LOGIN/.test(reason)) return '登录已过期；在服务器专用浏览器完成登录，再启动本次采集。';
+  if (/PERMISSION/.test(reason)) return '当前企业账号缺少该搜索权限，请先在招聘平台确认权限。';
+  if (/DOM|STRUCTURE|SELECTOR|PAGE/.test(reason)) {
+    return '招聘平台页面结构可能变化；已保留入库结果。请在采集控制台查看提示并确认平台页面，再决定是否重试。';
+  }
+  return status.lastError || batch?.errors?.slice?.(-1)?.[0] || '';
 }
 
 export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, refreshKey = 0 }) {
   const [snapshot, setSnapshot] = useState(null);
   const [failed, setFailed] = useState(false);
   const [recovering, setRecovering] = useState(null);
+  const [perRunTargets, setPerRunTargets] = useState({});
+  const [actionError, setActionError] = useState({});
   const refreshing = useRef(false);
   const collecting = useRef(false);
 
@@ -66,7 +91,7 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
   const bySource = snapshot?.analytics?.bySource || [];
   const target = Number(job?.targetCount) || 0;
 
-  const recover = async (source) => {
+  const recover = async (source, resumeCheckpoint = false) => {
     if (recovering) return;
     setRecovering(source.key);
     try {
@@ -85,41 +110,33 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
       const currentStatus = statusReply.data;
       if (!currentJob?.title || !currentJob?.jobRequirements ||
           currentAnalytics?.job?.configured !== true) {
-        throw new Error('请先保存完整岗位要求，再补齐简历');
+        throw new Error('请先保存完整岗位要求，再启动采集');
       }
-      const goal = Number(currentJob.targetCount);
-      if (!Number.isInteger(goal) || goal < 1 || goal > 200) {
-        throw new Error('请先在岗位设置中保存 1～200 份目标数量');
-      }
-      const captured = Number(currentAnalytics.bySource?.find(row => row.source === source.key)?.total);
-      if (!Number.isInteger(captured) || captured < 0) {
-        throw new Error('当前岗位已入库数量不可用，请先刷新');
-      }
-      const remaining = goal - captured;
-      if (remaining <= 0) {
-        message.info(`${source.label}已达到当前岗位的 ${goal} 份目标`);
-        await refresh();
-        return;
+      const defaultTarget = Number(currentJob.targetCount) || 3;
+      const max = source.key === 'qcwy' ? 30 : 200;
+      const requested = Number(perRunTargets[source.key] ?? Math.min(defaultTarget, max));
+      if (!Number.isInteger(requested) || requested < 1 || requested > max) {
+        throw new Error(`${source.label}本次新增份数需为 1～${max}`);
       }
       if (currentStatus.isActive || currentStatus.batch?.running) {
         throw new Error(`${source.label}采集仍在运行，请勿重复启动`);
       }
       if (source.key === 'boss') {
         await apiPost('/boss-zhipin/start', {});
-        const checkpointRemaining = Number(currentStatus.targetCount) -
-          Number(currentStatus.collectedCount);
-        const exactResume = currentStatus.resumeAvailable === true &&
+        const exactResume = resumeCheckpoint && currentStatus.resumeAvailable === true &&
           currentStatus.mode === 'search' &&
           currentStatus.filters?.position === currentJob.title &&
-          checkpointRemaining === remaining &&
           Number.isInteger(Number(currentStatus.maxRuntimeMinutes)) &&
           Number(currentStatus.maxRuntimeMinutes) >= 1;
+        if (resumeCheckpoint && !exactResume) {
+          throw new Error('断点已失效或岗位条件变化；请点击“启动本次采集”重新开始，已入库简历会去重保留');
+        }
         await apiPost('/boss-zhipin/start-browsing', exactResume
           ? { mode: 'search', filters: currentStatus.filters,
               targetCount: currentStatus.targetCount,
               maxRuntimeMinutes: currentStatus.maxRuntimeMinutes, resume: true }
           : { mode: 'search', filters: { position: currentJob.title },
-              targetCount: remaining, maxRuntimeMinutes: 90 });
+              targetCount: requested, maxRuntimeMinutes: 90 });
       } else if (source.key === 'zlzp') {
         await apiPost('/zhilian/init', {});
         const login = await apiGet('/zhilian/login-status');
@@ -129,7 +146,7 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
         await apiPost('/zhilian/start-browsing', {
           mode: 'search',
           filters: { position: currentJob.title, location: currentJob.location || '不限' },
-          targetCount: remaining
+          targetCount: requested
         });
       } else {
         const session = await apiPost('/wuyou/start', {});
@@ -143,14 +160,16 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
           (['不限', '大专及以上', '本科及以上', '硕士及以上'].includes(currentJob.education)
             ? currentJob.education : '不限');
         await apiPost('/wuyou/keyword-batch', {
-          keywords, targetCount: Math.min(remaining, 30),
+          keywords, targetCount: requested,
           jobRequirements: currentJob.jobRequirements, education
         });
       }
-      message.success(`${source.label}已按当前岗位补采，目标新增 ${Math.min(remaining, source.key === 'qcwy' ? 30 : remaining)} 份`);
+      setActionError(previous => ({ ...previous, [source.key]: '' }));
+      message.success(`${source.label}已${resumeCheckpoint ? '续接上次任务' : `启动本次采集，目标新增 ${requested} 份`}`);
       await refresh();
     } catch (error) {
-      message.error(error.message || '补齐采集未能启动');
+      setActionError(previous => ({ ...previous, [source.key]: error.message || '采集未能启动' }));
+      message.error(error.message || '采集未能启动');
     } finally {
       setRecovering(null);
     }
@@ -161,7 +180,7 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
     {!job?.title ? <Alert type="info" showIcon message="尚未设置当前岗位，请先在三平台候选人中导入或填写岗位条件。" /> : <>
       <Space style={{ marginBottom: 14 }} wrap>
         <Text strong style={{ fontSize: 18 }}>{job.title}</Text>
-        <Tag>目标 {target || '未设置'} 份</Tag>
+        <Tag>单次默认 {target || '未设置'} 份</Tag>
         <Button type="link" onClick={() => onOpenPipeline()}>查看岗位与候选人</Button>
       </Space>
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
@@ -175,18 +194,40 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
       <Row gutter={[12, 12]} style={{ marginTop: 14 }}>
         {SOURCES.map((source, index) => {
           const counts = bySource.find(item => item.source === source.key) || {};
-          const state = collectorState(source.key, snapshot?.statuses?.[index]);
+          const status = snapshot?.statuses?.[index];
+          const state = collectorState(source.key, status);
           const count = Number(counts.total) || 0;
+          const batch = source.key === 'qcwy' ? status?.batch : status;
+          const taskTarget = Number(batch?.targetCount) || 0;
+          const taskSaved = Number(source.key === 'qcwy' ? batch?.saved : batch?.collectedCount) || 0;
+          const runLimit = source.key === 'qcwy' ? 30 : 200;
+          const runTarget = perRunTargets[source.key] ?? Math.min(target || 3, runLimit);
+          const hint = recoveryHint(source.key, status);
           return <Col xs={24} md={8} key={source.key}>
             <Card size="small" title={source.label} extra={<Tag color={state.color}>{state.label}</Tag>}>
               <Text>当前岗位已关联 {count} 份 · 已评估 {counts.evaluated || 0} 份 · 符合 {counts.passed || 0} 份</Text>
               {(counts.nameNeedsReview > 0 || counts.positionNeedsReview > 0 || counts.parseNeedsReview > 0) &&
                 <div><Text type="warning">待核实：姓名 {counts.nameNeedsReview || 0} 份，求职岗位 {counts.positionNeedsReview || 0} 份，结构化解析 {counts.parseNeedsReview || 0} 份。平台匿名展示时系统不会编造姓名。</Text></div>}
-              {target > 0 && <Progress percent={Math.min(100, Math.round(count / target * 100))} format={() => `${count}/${target}`} style={{ marginTop: 8 }} />}
-              <Space wrap>
+              {taskTarget > 0 && <Progress percent={Math.min(100, Math.round(taskSaved / taskTarget * 100))}
+                format={() => `上次任务 ${taskSaved}/${taskTarget}`} style={{ marginTop: 8 }} />}
+              {hint && (state.color === 'warning' || state.color === 'error') &&
+                <Alert type="warning" showIcon style={{ marginTop: 8 }} message={hint} />}
+              {actionError[source.key] && <Alert type="error" showIcon style={{ marginTop: 8 }}
+                message={actionError[source.key]} />}
+              <Space wrap style={{ marginTop: 9 }}>
+                <Text>本次新增</Text>
+                <InputNumber aria-label={`${source.label}本次新增份数`} min={1} max={runLimit}
+                  precision={0} style={{ width: 82 }} value={runTarget}
+                  onChange={value => setPerRunTargets(previous => ({ ...previous, [source.key]: value ?? 1 }))} />
                 <Button size="small" type="primary" loading={recovering === source.key}
-                  disabled={Boolean(recovering) || !snapshot?.analytics || !job.jobRequirements || !target || count >= target || state.label === '采集中'}
-                  onClick={() => recover(source)}>补齐剩余 {Math.max(0, target - count)} 份</Button>
+                  disabled={Boolean(recovering) || !snapshot?.analytics || !job.jobRequirements || state.label === '采集中'}
+                  onClick={() => recover(source)}>启动本次采集</Button>
+                {source.key === 'boss' && status?.resumeAvailable &&
+                  <Button size="small" loading={recovering === source.key}
+                    disabled={Boolean(recovering) || state.label === '采集中'}
+                    onClick={() => recover(source, true)}>
+                    续接上次任务（剩余 {Math.max(0, Number(status.targetCount) - Number(status.collectedCount))} 份）
+                  </Button>}
                 <Button size="small" type="link" onClick={() => onOpenPipeline(source.key)}>查看简历</Button>
                 <Button size="small" type="link" onClick={() => onOpenControl(source.key)}>采集控制台</Button>
               </Space>
@@ -194,7 +235,7 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
           </Col>;
         })}
       </Row>
-      <div style={{ marginTop: 10 }}><Text type="secondary">采集暂停或服务重启后，可直接点“补齐剩余”续采。若平台要求登录或安全验证，先用页顶“服务器浏览器”在原窗口完成，再点补齐；已入库简历会去重保留。</Text></div>
+      <div style={{ marginTop: 10 }}><Text type="secondary">岗位里的采集目标是每次任务的默认份数，可在这里另填本次新增目标。采集暂停后先查看提示；平台登录或安全验证必须在服务器原窗口完成。已入库记录保留并去重，BOSS 可在断点有效时续接。</Text></div>
     </>}
   </Card>;
 }

@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Col, Input, InputNumber, Modal, Row, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { DeleteOutlined, DownloadOutlined, MailOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, InfoCircleOutlined, MailOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
 import { apiGet, apiPatch, apiPost, apiPut } from '../utils/apiClient';
 import JobCriteriaEditor, { EMPTY_JOB } from './JobCriteriaEditor';
+import './RecruitmentPipeline.css';
 
 const { Text, Title } = Typography;
 const SOURCES = [
@@ -38,6 +39,15 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const [viewJobTitle, setViewJobTitle] = useState('');
   const [viewJobGroup, setViewJobGroup] = useState('');
   const [scoreOrder, setScoreOrder] = useState('createdAt');
+  const [showGuide, setShowGuide] = useState(() => {
+    try { return window.localStorage.getItem('recruitment-pipeline-guide') !== 'hidden'; }
+    catch (_) { return true; }
+  });
+  const [showJobEditor, setShowJobEditor] = useState(false);
+  const [reportMinScore, setReportMinScore] = useState(0);
+  const [reportCount, setReportCount] = useState(null);
+  const [reportPreview, setReportPreview] = useState(null);
+  const [reportPreviewBusy, setReportPreviewBusy] = useState(false);
   const [selectedHistoryIds, setSelectedHistoryIds] = useState([]);
   const [status, setStatus] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -62,6 +72,13 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const previewGeneration = useRef(0);
   const listGeneration = useRef(0);
   const lastEvaluationQueueChange = useRef(null);
+  const reportGeneration = useRef(0);
+
+  const toggleGuide = () => setShowGuide(previous => {
+    try { window.localStorage.setItem('recruitment-pipeline-guide', previous ? 'hidden' : 'visible'); }
+    catch (_) { /* Page still works when storage is disabled. */ }
+    return !previous;
+  });
 
   useEffect(() => {
     setSource(sourceRequest?.source || '');
@@ -105,6 +122,31 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   }, [source, status, keyword, viewJobTitle, viewJobGroup, scoreOrder, page, pageSize]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    const generation = ++reportGeneration.current;
+    if (!viewJobTitle || !viewJobGroup) {
+      setReportPreview(null);
+      setReportPreviewBusy(false);
+      return;
+    }
+    setReportPreviewBusy(true);
+    const timer = setTimeout(() => {
+      apiGet('/recruitment-pipeline/report/preview', {
+        jobTitle: viewJobTitle, jobGroup: viewJobGroup, source, status, keyword,
+        minScore: reportMinScore
+      }).then(result => {
+        if (generation === reportGeneration.current) setReportPreview(result.data);
+      }).catch(error => {
+        if (generation === reportGeneration.current) {
+          setReportPreview(null);
+          message.error('读取报告份数失败：' + error.message);
+        }
+      }).finally(() => {
+        if (generation === reportGeneration.current) setReportPreviewBusy(false);
+      });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [viewJobTitle, viewJobGroup, source, status, keyword, reportMinScore, candidateTotal]);
   useEffect(() => {
     apiGet('/recruitment-pipeline/active-job')
       .then(result => {
@@ -208,20 +250,22 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
     finally { setBusy(''); }
   };
 
+  const reportSelectedCount = Math.min(500, reportPreview?.eligibleCount || 0,
+    reportCount === null ? 500 : reportCount);
+
   const downloadReport = async format => {
-    if (!jobCriteria.updatedAt || !jobCriteria.title || jobRequirements.trim().length < 5 ||
-        jobRequirements !== jobCriteria.jobRequirements) {
-      return message.warning('请先填写或导入当前岗位条件并保存，再导出初筛报告');
-    }
+    if (!viewJobTitle || !viewJobGroup) return message.warning('请先选择一个招聘岗位，再导出该岗位的初筛报告');
+    if (!reportSelectedCount) return message.warning('当前条件下暂无已完成有效评估且达到分数线的简历');
     setBusy(`report-${format}`);
     try {
       const blob = await apiGet('/recruitment-pipeline/report',
-        { source, status, minScore, topN: 100, format, jobRequirements },
+        { source, status, keyword, jobTitle: viewJobTitle, jobGroup: viewJobGroup,
+          minScore: reportMinScore, topN: reportSelectedCount, format },
         { responseType: 'blob' });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `candidate-report.${format}`;
+      anchor.download = `${viewJobTitle.replace(/[\\/:*?"<>|]/g, '_')}-初筛报告-${reportSelectedCount}份.${format}`;
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) { message.error('导出报告失败：' + error.message); }
@@ -400,9 +444,14 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
 
   const columns = [
     { title: '平台', dataIndex: 'source', width: 115, render: sourceLabel },
-    { title: '候选人', dataIndex: 'name', width: 130, render: value => value || '未识别姓名' },
+    { title: '候选人', dataIndex: 'name', width: 170, render: value => {
+      const label = value || '未识别姓名';
+      const needsReview = /未识别|待核实|平台脱敏|平台称呼/.test(label);
+      return <span>{label}{needsReview && <Tag color="gold" style={{ marginLeft: 5 }}>待核实</Tag>}</span>;
+    } },
     { title: '招聘岗位', dataIndex: 'hiringJobTitle', width: 175,
-      render: value => value || '招聘岗位待核实' },
+      render: value => value && value !== '招聘岗位待核实' ? value :
+        <Tag color="gold">招聘岗位待核实</Tag> },
     { title: '岗位归属', dataIndex: 'jobGroup', width: 125,
       render: value => <Tag color={value === 'current' ? 'green' : 'default'}>
         {value === 'current' ? '在用岗位' : '历史/已删除'}</Tag> },
@@ -422,19 +471,26 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   ];
 
   return (
-    <div style={{ padding: 24, overflowY: 'auto', height: 'calc(100vh - 64px)' }}>
-      <Title level={3}>三平台候选人管道</Title>
-      <Alert showIcon type="info" style={{ marginBottom: 16 }}
+    <div className="recruitment-pipeline">
+      <div className="pipeline-heading">
+        <div><Title level={3} style={{ marginBottom: 4 }}>三平台候选人管道</Title>
+          <Text type="secondary">先查看候选人，再按岗位、平台与评分缩小范围；岗位条件可在列表下方展开。</Text></div>
+        <Button icon={<InfoCircleOutlined />} onClick={toggleGuide}>
+          {showGuide ? '收起说明' : '显示说明'}
+        </Button>
+      </div>
+      {showGuide && <Alert showIcon type="info" className="pipeline-guide"
         message="三平台简历在这里统一跟进和导出。前程无忧已适配的成本核算经理/主管岗位使用本机专用规则，其他岗位与平台使用 DeepSeek AI 辅助评估；评估方式以每份简历的明细为准，分数仅供人工复核。" />
-      <Row gutter={12} style={{ marginBottom: 16 }}>
-        {SOURCES.map(item => <Col span={8} key={item.value}>
+      }
+      <Row gutter={[12, 12]} className="pipeline-summary">
+        {SOURCES.map(item => <Col xs={24} sm={12} lg={8} key={item.value}>
           <Card size="small" title={item.label}>
             <Text strong>{summary[item.value]?.total || 0} 份简历</Text>
             <div><Text type="secondary">待重点查看 {summary[item.value]?.byStatus?.shortlisted || 0} · 已联系 {summary[item.value]?.byStatus?.contacted || 0}</Text></div>
           </Card>
         </Col>)}
       </Row>
-      <Space wrap style={{ marginBottom: 16 }}>
+      <Space wrap className="pipeline-toolbar">
         <Select aria-label="招聘岗位筛选" value={viewJobTitle
           ? JSON.stringify({ title: viewJobTitle, jobGroup: viewJobGroup }) : ''}
           style={{ width: 280 }} showSearch optionFilterProp="label"
@@ -466,26 +522,48 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
           setEmailPreview(null);
           refresh();
         }}>刷新</Button>
+        <Button onClick={() => {
+          setShowJobEditor(true);
+          setTimeout(() => document.getElementById('pipeline-job-editor')?.scrollIntoView({ block: 'start' }), 0);
+        }}>设置岗位条件</Button>
         {viewJobGroup === 'historical' && viewJobTitle && <Button danger icon={<DeleteOutlined />}
           disabled={!selectedHistoryIds.length || Boolean(batch?.running)}
           onClick={() => confirmDeleteHistorical(selectedHistoryIds, viewJobTitle)}>
           删除已选历史简历（{selectedHistoryIds.length}）</Button>}
-        <Button type="primary" icon={<DownloadOutlined />} loading={busy === 'report-docx'}
-          onClick={() => downloadReport('docx')}>导出初筛 Word（前100份）</Button>
-        <Button icon={<DownloadOutlined />} loading={busy === 'report-md'}
-          onClick={() => downloadReport('md')}>导出初筛 Markdown（前100份）</Button>
       </Space>
-      <Alert type="info" showIcon style={{ marginBottom: 12 }}
-        message={`当前查看：${viewJobTitle
+      <div className="pipeline-context" role="status">
+        <Text strong>当前查看：</Text><Text>{viewJobTitle
           ? `${viewJobGroup === 'current' ? '在用岗位' : '历史/已删除'} · ${viewJobTitle}`
-          : '全部招聘岗位'} · ${source ? sourceLabel(source) : '全部平台'} · ${candidateTotal} 位候选人`}
-        description="岗位与平台可独立组合筛选；评分在所有结果中排序，未评估的简历排在末尾。不同岗位的分数依据各自岗位要求，仅供分别复核。下方岗位条件及批量评估仍以当前已应用岗位为准。" />
-      <JobCriteriaEditor value={jobCriteria}
-        onChange={job => {
-          setJobCriteria(job);
-          setJobRequirements(job.jobRequirements || '');
-        }}
-        disabled={Boolean(batch?.running || emailBatch?.sentCount)} />
+          : '全部招聘岗位'} · {source ? sourceLabel(source) : '全部平台'} · {candidateTotal} 位候选人</Text>
+        {showGuide && <Text type="secondary">岗位、平台与状态可组合筛选；未评估简历排在评分列表末尾。不同岗位条件版本的分数不能直接比较。</Text>}
+      </div>
+      <Card size="small" className="pipeline-report" title="按实际岗位导出初筛报告">
+        <Space wrap>
+          <Text>{viewJobTitle
+            ? `${viewJobGroup === 'current' ? '在用' : '历史'} · ${viewJobTitle}`
+            : '请先在上方选择一个岗位'}</Text>
+          <Text>最低匹配分</Text>
+          <InputNumber aria-label="报告最低匹配分" min={0} max={100} precision={0}
+            value={reportMinScore} onChange={value => setReportMinScore(value ?? 0)} />
+          <Text>报告份数</Text>
+          <Select aria-label="报告份数方式" value={reportCount === null ? 'all' : 'custom'}
+            style={{ width: 158 }} onChange={value => setReportCount(value === 'all' ? null : 1)}
+            options={[{ value: 'all', label: '全部符合条件' }, { value: 'custom', label: '指定份数' }]} />
+          {reportCount !== null && <InputNumber aria-label="指定报告份数" min={1} max={500}
+            precision={0} value={reportCount} onChange={value => setReportCount(value ?? 1)} />}
+          <Button type="primary" icon={<DownloadOutlined />} loading={busy === 'report-docx'}
+            disabled={!viewJobTitle || reportPreviewBusy || !reportSelectedCount}
+            onClick={() => downloadReport('docx')}>导出 Word（{reportSelectedCount} 份）</Button>
+          <Button icon={<DownloadOutlined />} loading={busy === 'report-md'}
+            disabled={!viewJobTitle || reportPreviewBusy || !reportSelectedCount}
+            onClick={() => downloadReport('md')}>导出 Markdown（{reportSelectedCount} 份）</Button>
+        </Space>
+        <div className="pipeline-report-note"><Text type="secondary">
+          {viewJobTitle ? reportPreviewBusy ? '正在核对本岗位可导出份数…'
+            : `本次筛选共 ${reportPreview?.total || 0} 份，已有效评估且达到分数线 ${reportPreview?.eligibleCount || 0} 份；单份报告最多 500 份。`
+            : '报告按所选岗位、平台、状态和搜索关键词生成；默认排除人工标记为“不合适”的简历。'}
+        </Text></div>
+      </Card>
       <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 1250 }}
         rowSelection={viewJobGroup === 'historical' && viewJobTitle ? {
           selectedRowKeys: selectedHistoryIds,
@@ -498,6 +576,21 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             setPageSize(nextSize);
             setPage(nextSize === pageSize ? nextPage : 1);
           } }} />
+      <div id="pipeline-job-editor" className="pipeline-job-section">
+        <div className="pipeline-section-heading">
+          <div><Title level={4} style={{ marginBottom: 2 }}>岗位条件</Title>
+            <Text type="secondary">当前应用：{jobCriteria.title || '尚未设置'}。新采集和批量评估使用这里保存的条件。</Text></div>
+          <Button onClick={() => setShowJobEditor(value => !value)}>
+            {showJobEditor ? '收起岗位条件' : '展开岗位条件'}
+          </Button>
+        </div>
+        {showJobEditor && <JobCriteriaEditor value={jobCriteria}
+          onChange={job => {
+            setJobCriteria(job);
+            setJobRequirements(job.jobRequirements || '');
+          }} showHelp={showGuide}
+          disabled={Boolean(batch?.running || emailBatch?.sentCount)} />}
+      </div>
       <Card title="按岗位要求批量评估" style={{ marginBottom: 16 }}>
         <Text>当前岗位：{jobCriteria.title || '尚未设置'}。按当前平台与状态筛选，每次最多处理 100 份简历。</Text>
         <div style={{ marginTop: 10 }}>

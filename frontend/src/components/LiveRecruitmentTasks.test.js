@@ -12,6 +12,9 @@ jest.mock('antd', () => {
     Button: ({ children, onClick, disabled, loading }) =>
       <button onClick={onClick} disabled={disabled || loading}>{children}</button>,
     Card: Box, Col: Box, Row: Box, Space: Box,
+    InputNumber: ({ value, onChange, ...props }) =>
+      <input type="number" aria-label={props['aria-label']} value={value}
+        onChange={event => onChange(Number(event.target.value))} />,
     Progress: ({ format }) => <div>{format()}</div>,
     Statistic: ({ title, value }) => <div>{title}: {value}</div>,
     Tag: Box, Typography: { Text: Box },
@@ -41,51 +44,63 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-test('服务重启后可从页面按当前岗位剩余份数补采 BOSS', async () => {
+test('服务重启后可从页面按单次岗位目标重开 BOSS 任务', async () => {
   render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
-  fireEvent.click((await screen.findAllByRole('button', { name: '补齐剩余 3 份' }))[0]);
+  fireEvent.click((await screen.findAllByRole('button', { name: '启动本次采集' }))[0]);
   await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/boss-zhipin/start-browsing', {
     mode: 'search', filters: { position: '项目经理主管' },
-    targetCount: 3, maxRuntimeMinutes: 90
+    targetCount: 6, maxRuntimeMinutes: 90
   }));
   expect(apiPost).toHaveBeenCalledWith('/boss-zhipin/start', {});
 });
 
-test('单个平台状态不可用不会禁用其他平台；目标已满不再补采', async () => {
+test('累计已达上次目标仍可启动新任务，单个平台状态不可用不影响其他平台', async () => {
   totals.boss = 6;
   const base = apiGet.getMockImplementation();
   apiGet.mockImplementation(url => url === '/wuyou/status?readOnly=1'
     ? Promise.reject(new Error('平台暂不可用')) : base(url));
   render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
-  const buttons = await screen.findAllByRole('button', { name: /补齐剩余/ });
-  expect(buttons[0].disabled).toBe(true);
+  const buttons = await screen.findAllByRole('button', { name: '启动本次采集' });
+  expect(buttons[0].disabled).toBe(false);
   expect(buttons[1].disabled).toBe(false);
   fireEvent.click(buttons[1]);
   await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/zhilian/start-browsing', {
-    mode: 'search', filters: { position: '项目经理主管', location: '不限' }, targetCount: 3
+    mode: 'search', filters: { position: '项目经理主管', location: '不限' }, targetCount: 6
   }));
 });
 
-test('前程无忧从同一岗位条件补齐目标并复用服务器登录状态', async () => {
+test('前程无忧从同一岗位条件按本次份数采集并复用服务器登录状态', async () => {
   render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
-  fireEvent.click((await screen.findAllByRole('button', { name: '补齐剩余 3 份' }))[2]);
+  fireEvent.click((await screen.findAllByRole('button', { name: '启动本次采集' }))[2]);
   await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/wuyou/keyword-batch', {
-    keywords: ['项目经理主管'], targetCount: 3,
+    keywords: ['项目经理主管'], targetCount: 6,
     jobRequirements: job.jobRequirements, education: '不限'
   }));
   expect(apiPost).toHaveBeenCalledWith('/wuyou/start', {});
 });
 
-test('BOSS 人工验证后只有同一岗位且剩余目标一致才续接断点', async () => {
+test('BOSS 人工验证后从独立按钮续接同一岗位断点', async () => {
   const base = apiGet.getMockImplementation();
   apiGet.mockImplementation(url => url === '/boss-zhipin/browsing-status'
     ? Promise.resolve({ success: true, data: { status: 'paused', resumeAvailable: true,
       mode: 'search', filters: { position: job.title }, targetCount: 6,
       collectedCount: 3, maxRuntimeMinutes: 90 } }) : base(url));
   render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
-  fireEvent.click((await screen.findAllByRole('button', { name: '补齐剩余 3 份' }))[0]);
+  fireEvent.click(await screen.findByRole('button', { name: '续接上次任务（剩余 3 份）' }));
   await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/boss-zhipin/start-browsing', {
     mode: 'search', filters: { position: job.title }, targetCount: 6,
     maxRuntimeMinutes: 90, resume: true
+  }));
+});
+
+test('可为新一轮采集单独设置新增 20 份，不受历史累计数限制', async () => {
+  totals.boss = 40;
+  render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
+  fireEvent.change(await screen.findByRole('spinbutton', { name: 'BOSS 直聘本次新增份数' }),
+    { target: { value: '20' } });
+  fireEvent.click((await screen.findAllByRole('button', { name: '启动本次采集' }))[0]);
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/boss-zhipin/start-browsing', {
+    mode: 'search', filters: { position: job.title }, targetCount: 20,
+    maxRuntimeMinutes: 90
   }));
 });

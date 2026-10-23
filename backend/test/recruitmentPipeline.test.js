@@ -328,3 +328,41 @@ test('三平台初筛报告默认排除人工淘汰者，指定淘汰状态仍�
   assert.match(audit, /boss淘汰候选人/);
   assert.doesNotMatch(audit, /正常候选人|zlzp淘汰候选人|qcwy淘汰候选人/);
 });
+
+test('初筛报告按所选岗位与历史版本统计实际份数，不混入同名在用岗位', () => {
+  const currentRequirements = '岗位名称：磁轴销售工程师\n现行条件：销售经验';
+  const oldRequirements = '岗位名称：磁轴销售工程师\n旧版条件：磁轴销售';
+  const olderRequirements = '岗位名称：磁轴销售工程师\n更早条件：工业产品';
+  const evaluated = (id, title, group, requirements, score) => ({
+    id, source: 'boss', name: `候选人${id}`, captureJobTitle: title,
+    captureJobRequirements: requirements, jobGroup: group,
+    originalText: `完整简历 ${id}`.repeat(20), matchScore: score,
+    matchEvaluationStatus: 'completed', matchEvaluation: {
+      method: 'llm', evaluationVersion: 1, evaluatedAt: '2026-10-23T00:00:00.000Z',
+      jobRequirements: requirements, summary: '人工复核所需的初筛结论'
+    }
+  });
+  const records = [
+    evaluated('旧版', '磁轴销售工程师', 'historical', oldRequirements, 75),
+    evaluated('更早版', '磁轴销售工程师', 'historical', olderRequirements, 95),
+    evaluated('现行', '磁轴销售工程师', 'current', currentRequirements, 80),
+    evaluated('别岗', '财务管理经理', 'historical', oldRequirements, 99)
+  ];
+  const service = new RecruitmentPipelineService({
+    store: { getResumes: () => records },
+    activeJobService: { current: () => ({ title: '磁轴销售工程师',
+      jobRequirements: currentRequirements, updatedAt: '2026-10-23T00:00:00.000Z' }) }
+  });
+  const historical = { jobTitle: '磁轴销售工程师', jobGroup: 'historical', minScore: 0 };
+  assert.deepEqual(service.reportPreview(historical), {
+    jobTitle: '磁轴销售工程师', jobGroup: 'historical', source: '', status: '', keyword: '',
+    total: 2, eligibleCount: 2, selectedCount: 2, maxCount: 500, requirementsVersions: 2
+  });
+  const report = service.report({ ...historical, topN: 1 });
+  assert.match(report, /招聘岗位：磁轴销售工程师/);
+  assert.match(report, /有效评估且达到分数线：2 份；本报告展示：1 份/);
+  assert.match(report, /候选人旧版/);
+  assert.doesNotMatch(report, /候选人现行|候选人更早版|候选人别岗/);
+  assert.match(service.report({ jobTitle: '磁轴销售工程师', jobGroup: 'current' }), /候选人现行/);
+  assert.throws(() => service.reportPreview({ ...historical, topN: 501 }), /报告候选人份数/);
+});

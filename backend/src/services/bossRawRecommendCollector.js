@@ -6,7 +6,7 @@ const { connectOwnedBossPage } = require('./bossRawCdp');
 const { ActiveJobService } = require('./activeJobService');
 const resumeModel = require('../models/resumeModel');
 const resumeParserService = require('./resumeParserService');
-const CanvasOcrService = require('./canvasOcrService');
+const IsolatedCanvasOcrService = require('./isolatedCanvasOcrService');
 const { postCaptureEvaluationQueue } = require('./postCaptureEvaluationQueue');
 const { assessBossResumeText } = require('./bossResumeQuality');
 const { BossCardQuarantine } = require('./bossCardQuarantine');
@@ -282,7 +282,7 @@ const EXPRESSIONS = buildExpressions(FRAME,'li.card-item');
 class BossRawRecommendCollector {
   constructor({ connect = connectOwnedBossPage, store = resumeModel,
     jobService = new ActiveJobService(), queue = postCaptureEvaluationQueue,
-    ocr = new CanvasOcrService(), wait = sleep, now = Date.now,
+    ocr = new IsolatedCanvasOcrService(), wait = sleep, now = Date.now,
     quarantine = new BossCardQuarantine(),onProgress = () => {} } = {}) {
     this.connect = connect;
     this.frameSelector = FRAME;

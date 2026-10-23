@@ -17,11 +17,16 @@ class MemoryPositions {
     return position;
   }
   async deletePosition(id) {
+    const position = this.getPositionById(id);
+    if (!position) return { success: false, error: '岗位不存在' };
+    position.archivedAt = new Date().toISOString();
+    return { success: true, position };
+  }
+  async removeUncommittedPosition(id) {
     const before = this.positions.length;
     this.positions = this.positions.filter(item => item.id !== id);
     return { success: this.positions.length < before };
   }
-  async removeUncommittedPosition(id) { return this.deletePosition(id); }
 }
 
 function withService(run) {
@@ -73,6 +78,22 @@ test('新建岗位前归档当前岗位，旧岗位仍可重新应用，重复�
   assert.equal(activeJobService.current().title, '成本核算经理');
   assert.equal(result.position.jobCriteria.title, '项目经理主管');
 }));
+
+test('修订本地岗位应用新版并归档旧版，重用同版不会丢失旧候选人归属', () =>
+  withService(async ({ service, activeJobService, resumeModel }) => {
+    const first = await service.createLocalPosition(initialJob);
+    const revised = await service.reviseLocalPosition(first.position.id,
+      { ...initialJob, jobRequirements: '负责项目计划、交付和预算管控。' });
+    assert.equal(revised.archivedPrevious, true);
+    assert.ok(resumeModel.getPositionById(first.position.id).archivedAt);
+    assert.equal(activeJobService.current().positionId, revised.position.id);
+    assert.equal(resumeModel.positions.filter(item => !item.archivedAt).length, 1);
+    const reused = await service.reviseLocalPosition(revised.position.id,
+      revised.position.jobCriteria);
+    assert.equal(reused.reused, true);
+    assert.equal(reused.archivedPrevious, false);
+    assert.equal(resumeModel.positions.length, 2);
+  }));
 
 test('无效草稿和写入失败不会更改当前岗位，后续保存失败会回滚岗位记录', () => withService(async ({ service, activeJobService, resumeModel }) => {
   const previous = activeJobService.save({

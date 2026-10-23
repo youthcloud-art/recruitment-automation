@@ -124,6 +124,24 @@ class PositionService {
     const job = this.activeJobService.save(position.jobCriteria, { positionId: position.id });
     return { position, job };
   }
+
+  async reviseLocalPosition(positionId, input) {
+    const original = this.resumeModel.getPositionById(positionId);
+    if (!original || original.archivedAt || !original.jobCriteria) {
+      throw new Error('只能修订在用的本地招聘岗位');
+    }
+    const job = normalizeJob(input);
+    if (this.sameJob(original.jobCriteria, job)) {
+      const applied = this.applyLocalPosition(positionId);
+      return { ...applied, reused: true, archivedPrevious: false };
+    }
+    const result = await this.createLocalPosition(job,
+      { department: original.department || '', salary: original.salary || '' });
+    if (result.position.id === positionId) return { ...result, archivedPrevious: false };
+    const archived = await this.deletePosition(positionId);
+    return { ...result, archivedPrevious: Boolean(archived.success),
+      ...(archived.success ? {} : { warning: '新版已应用，但旧版归档失败：' + archived.error }) };
+  }
   
   // 延迟初始化LLM服务
   async initLLMService() {

@@ -60,6 +60,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
   const [addForm] = Form.useForm();
   const [editForm] = Form.useForm();
   const [revisingJob, setRevisingJob] = useState(null);
+  const [revisingPositionId, setRevisingPositionId] = useState(null);
   const [activeJob, setActiveJob] = useState(null);
   const [viewArchived, setViewArchived] = useState(false);
 
@@ -69,6 +70,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     setIsEditModalVisible(false);
     setEditingPosition(null);
     setRevisingJob(null);
+    setRevisingPositionId(null);
   }, [visible]);
 
   // 获取岗位列表
@@ -373,8 +375,11 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
             disabled={isActivePosition(record)}
             onClick={() => applyPosition(record.id)}>应用</Button>}
           <Button type="link" size="small" icon={<EditOutlined />}
-            onClick={() => record.jobCriteria
-              ? setRevisingJob(record.jobCriteria) : openEditModal(record)}>
+            onClick={() => {
+              if (!record.jobCriteria) return openEditModal(record);
+              setRevisingPositionId(record.isVirtualCurrent ? null : record.id);
+              setRevisingJob(record.jobCriteria);
+            }}>
             {record.jobCriteria ? '修订' : '编辑'}
           </Button>
           <Button
@@ -403,7 +408,8 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     >
       <PositionManagementContainer>
         <PositionCreationModal visible={Boolean(revisingJob)} initialJob={revisingJob}
-          onClose={() => setRevisingJob(null)} onCreated={result => {
+          revisingPositionId={revisingPositionId}
+          onClose={() => { setRevisingJob(null); setRevisingPositionId(null); }} onCreated={result => {
             setActiveJob(result.job);
             fetchPositions();
           }} />

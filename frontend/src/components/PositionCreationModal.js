@@ -5,7 +5,8 @@ import JobCriteriaEditor, { EMPTY_JOB } from './JobCriteriaEditor';
 
 const { Paragraph, Text } = Typography;
 
-export default function PositionCreationModal({ visible, onClose, onCreated, initialText = '', initialJob = null }) {
+export default function PositionCreationModal({ visible, onClose, onCreated, initialText = '', initialJob = null,
+  revisingPositionId = null }) {
   const [job, setJob] = useState({ ...EMPTY_JOB });
   const [draftText, setDraftText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,9 +39,13 @@ export default function PositionCreationModal({ visible, onClose, onCreated, ini
     }
     setBusy(true);
     try {
-      const result = await apiPost('/positions/create-local', { job });
+      const result = await apiPost(revisingPositionId
+        ? `/positions/${encodeURIComponent(revisingPositionId)}/revise-local`
+        : '/positions/create-local', { job });
       if (!result.success) throw new Error(result.message || '创建岗位失败');
-      message.success(result.reused ? '已有岗位已重新应用到三平台' : '本地岗位已创建并应用到三平台');
+      message.success(result.archivedPrevious ? '新版岗位已应用，旧版简历已移入历史岗位'
+        : result.reused ? '已有岗位已重新应用到三平台' : '本地岗位已创建并应用到三平台');
+      if (result.warning) message.warning(result.warning);
       onCreated?.(result);
       onClose?.();
     } catch (error) { message.error('创建岗位失败：' + error.message); }
@@ -60,15 +65,18 @@ export default function PositionCreationModal({ visible, onClose, onCreated, ini
   };
 
   return (
-    <Modal title="创建本地招聘岗位" open={visible} onCancel={onClose} width={920} zIndex={1200}
+    <Modal title={revisingPositionId ? '修订本地招聘岗位' : '创建本地招聘岗位'} open={visible} onCancel={onClose} width={920} zIndex={1200}
       style={{ top: 24 }} styles={{ body: { maxHeight: 'calc(100vh - 210px)', overflowY: 'auto' } }}
       destroyOnClose footer={[
         <Button key="cancel" onClick={onClose} disabled={busy}>取消</Button>,
-        <Button key="create" type="primary" loading={busy} onClick={create}>创建并应用到三平台</Button>
+        <Button key="create" type="primary" loading={busy} onClick={create}>
+          {revisingPositionId ? '保存新版并应用' : '创建并应用到三平台'}</Button>
       ]}>
       <Alert type="info" showIcon style={{ marginBottom: 12 }}
         message="创建的是本机岗位与采集筛选条件，不会自动在招聘平台发布职位。"
-        description="可描述岗位生成可编辑草稿、手填条件、用 Excel 模板导入，或载入当前岗位继续编辑。只有点击“创建并应用到三平台”才会替换当前采集岗位。" />
+        description={revisingPositionId
+          ? '修改筛选条件会建立新版并应用；旧版岗位及其候选人会单独保留在历史岗位。'
+          : '可描述岗位生成可编辑草稿、手填条件、用 Excel 模板导入，或载入当前岗位继续编辑。只有点击“创建并应用到三平台”才会替换当前采集岗位。'} />
       <Input.TextArea value={draftText} onChange={event => setDraftText(event.target.value)}
         rows={3} maxLength={5000} disabled={busy}
         placeholder="例如：招聘项目经理主管，至少 5 年项目管理经验，本科及以上，负责项目计划、交付和团队协调；希望获取 18 份简历。" />

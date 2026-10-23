@@ -42,6 +42,16 @@ router.post('/:id/apply-local', localPositionAccess, (req, res) => {
     .json({ success: false, message: error.message }); }
 });
 
+router.post('/:id/revise-local', localPositionAccess, async (req, res) => {
+  try {
+    const result = await PositionService.reviseLocalPosition(req.params.id, req.body?.job || req.body);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(/只能修订/.test(error.message) ? 404 : 400)
+      .json({ success: false, message: error.message });
+  }
+});
+
 // 获取所有岗位
 router.get('/', async (req, res) => {
   try {

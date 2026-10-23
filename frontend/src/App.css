@@ -146,6 +146,19 @@
   color: var(--primary-blue) !important;
 }
 
+/* Keep the active destination readable after the general menu-item background rule. */
+.ant-layout-sider .ant-menu-item-selected,
+.ant-layout-sider .ant-menu-item-selected:hover {
+  background: #e8f2ff !important;
+  color: #0759ba !important;
+  box-shadow: inset 3px 0 #1677ff !important;
+  transform: none !important;
+}
+
+.ant-layout-sider .ant-menu-item-selected .anticon {
+  color: #0759ba !important;
+}
+
 .ant-menu-submenu-title {
   margin: 4px 8px !important;
   padding: 0 16px !important;

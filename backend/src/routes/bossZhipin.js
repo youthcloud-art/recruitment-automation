@@ -164,6 +164,42 @@ router.get('/status', async (req, res) => {
   }
 });
 
+// Read-only structural diagnostics for a paused search resume. Never return
+// candidate text, images, IDs or URLs. This distinguishes a stalled redraw
+// from multiple canvases on the company server without touching the page.
+router.get('/canvas-health', async (_req, res) => {
+  if (process.env.COMPANY_DEPLOYMENT !== 'true') return res.status(404).json({success:false});
+  if (rawStarting || rawTask) return res.status(409).json({success:false,
+    message:'采集运行中，稍后检查画布'});
+  let session;
+  try {
+    session = await connectOwnedBossPage();
+    await session.assertRecruiterReady();
+    const data = await session.evaluate(`(() => {
+      const dialog=document.querySelector('div[data-type="boss-dialog"].active.dialog-wrap');
+      const pane=dialog?.querySelector('.resume-detail-wrap');
+      const iframe=pane?.querySelector('iframe[src*="/web/frame/c-resume/"]');
+      const doc=iframe?.contentDocument;
+      const canvases=[...(doc?.querySelectorAll('canvas#resume')||[])];
+      return {modalOpen:!!dialog,frameReady:!!doc,
+        canvasCount:canvases.length,
+        canvases:canvases.slice(0,16).map(canvas=>({
+          width:canvas.width,height:canvas.height,
+          visible:canvas.getClientRects().length>0
+        })),scrollTop:pane?.scrollTop||0,
+        scrollHeight:pane?.scrollHeight||0,
+        clientHeight:pane?.clientHeight||0,
+        visible:document.visibilityState==='visible'};
+    })()`, {timeoutMs:8000});
+    res.set('Cache-Control','no-store');
+    return res.json({success:true,data});
+  } catch (_) {
+    return res.status(503).json({success:false,message:'当前 BOSS 画布结构不可读取'});
+  } finally {
+    try { session?.close(); } catch (_) { /* Keep the dedicated Chrome open. */ }
+  }
+});
+
 /**
  * 检查登录状态
  */

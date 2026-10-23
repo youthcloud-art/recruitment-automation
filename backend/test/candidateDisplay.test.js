@@ -68,6 +68,13 @@ test('historical BOSS OCR first-line guesses are hidden without rewriting resume
     nameSource: 'boss_search_card' }), '张三');
 });
 
+test('BOSS masked platform aliases are labeled without claiming a full name', () => {
+  const item = { source: 'boss', name: '未识别姓名', nameSource: 'unverified',
+    platformAlias: '涂**', platformAliasType: 'masked' };
+  assert.equal(publicCandidate(item).name, '涂**（平台脱敏）');
+  assert.equal(item.name, '未识别姓名');
+});
+
 test('numeric and opaque platform IDs are never displayed as candidate names', () => {
   assert.equal(publicCandidate({ source: 'zlzp', name: '1234567890' }).name, '未识别姓名');
   assert.equal(publicCandidate({ source: 'boss', name: 'af03dc91b01e' }).name, '未识别姓名');

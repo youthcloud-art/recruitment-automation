@@ -49,8 +49,20 @@ function jobResumeSignature(job) {
 function verifiedCardName(value) {
   const name = String(value || '').normalize('NFKC').replace(/\s+/g,'').trim();
   if (!/^[\u4e00-\u9fff]{2,4}$/.test(name) ||
+      /(?:先生|女士|小姐|同学)$/.test(name) ||
       /^(?:姓名|候选人|求职者|未公开|未识别|匿名|保密|工作经历|个人信息|简历详情)$/.test(name)) return '';
   return name;
+}
+
+function platformCardAlias(value) {
+  const alias = String(value || '').normalize('NFKC').replace(/\s+/g, '').trim();
+  if (/^[\u4e00-\u9fff]{1,2}\*{1,3}$/.test(alias)) {
+    return { value: alias, type: 'masked' };
+  }
+  if (/^[\u4e00-\u9fff]{1,2}(?:先生|女士|小姐|同学)$/.test(alias)) {
+    return { value: alias, type: 'honorific' };
+  }
+  return null;
 }
 
 function verifiedCardPosition(value) {
@@ -998,6 +1010,7 @@ class BossRawRecommendCollector {
   async saveResume(captured, job, sourceCardFingerprint = '', cardMeta = {}) {
     const parsed = resumeParserService.parseResumeText(captured.text);
     const cardName = verifiedCardName(cardMeta.displayName);
+    const cardAlias = cardName ? null : platformCardAlias(cardMeta.displayName);
     const cardPosition = verifiedCardPosition(cardMeta.expectedPosition);
     const ocrName = verifiedBossOcrName(parsed.name, captured.text);
     const ocrPosition = verifiedCardPosition(parsed.expectedPosition?.position);
@@ -1013,6 +1026,8 @@ class BossRawRecommendCollector {
         source:'boss',platform:'BOSS直聘',sourceUrl:captured.url.href,
         sourceCandidateId,sourceFingerprint,sourceCardFingerprint,
         nameSource:cardName ? `boss_${this.pageSegment}_card` : ocrName ? 'ocr' : 'unverified',
+        platformAlias:cardAlias?.value || null,
+        platformAliasType:cardAlias?.type || null,
         positionSource:cardPosition ? `boss_${this.pageSegment}_card`
           : ocrPosition ? 'ocr' : 'unverified',
         originalText:captured.text,
@@ -1043,6 +1058,15 @@ class BossRawRecommendCollector {
         this.progress({lastFailureCode:'BOSS_CARD_INDEX_DEFERRED',
           lastError:'简历已存在，但卡片去重索引暂未更新；下次仍会完整核验'});
       }
+    }
+    if (!result.created && cardAlias && result.resume?.id &&
+        !result.resume.platformAlias &&
+        typeof this.store.updateCandidateMetadata === 'function') {
+      try {
+        const updated = await this.store.updateCandidateMetadata(result.resume.id,
+          {platformAlias:cardAlias.value,platformAliasType:cardAlias.type});
+        if (updated) result.resume = updated;
+      } catch (_) { /* Full resume identity and saved text remain intact. */ }
     }
     this.queueEvaluation(result.resume, job);
     return result;
@@ -1452,5 +1476,5 @@ class BossRawRecommendCollector {
 
 module.exports = { BossRawRecommendCollector, normalizeTitle, chooseExactJob,
   officialResumeUrl, candidateIdFromUrl, hashText, jobResumeSignature, joinScreenText,
-  repeatedScreenText,verifiedCardName, verifiedCardPosition, FRAME, EXPRESSIONS,
+  repeatedScreenText,verifiedCardName,platformCardAlias, verifiedCardPosition, FRAME, EXPRESSIONS,
   buildExpressions };

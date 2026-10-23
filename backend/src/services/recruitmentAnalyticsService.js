@@ -82,6 +82,7 @@ class RecruitmentAnalyticsService {
       const source = sourceMap[item.source];
       source.total++;
       if (/^(?:未识别姓名|匿名候选人|姓名待核实)/.test(candidateName(item)) ||
+          (item.source === 'boss' && Boolean(item.platformAlias)) ||
           (item.source === 'qcwy' && /(?:先生|女士|同学)$/.test(String(item.name || '')))) {
         source.nameNeedsReview++;
       }

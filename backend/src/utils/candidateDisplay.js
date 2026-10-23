@@ -4,6 +4,7 @@
 // label as a verified identity or role.
 const QCWY_PAGE_LABELS = new Set(['通知']);
 const { verifiedBossOcrName } = require('./bossCandidateName');
+const { extractQcwyExpectedPosition } = require('./qcwyExpectedPosition');
 
 function text(value) {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
@@ -32,22 +33,31 @@ function hiringJobTitle(item) {
 function candidateName(item) {
   const name = text(item.name);
   const idLike = /^(?:\d{5,}|[a-f\d-]{8,}|(?:id|编号|候选人编号)\s*[:：]?\s*[a-z\d-]{4,})$/i.test(name);
+  const alias = text(item.platformAlias);
+  const bossAlias = item.source === 'boss' && (
+    (item.platformAliasType === 'masked' && /^[\u4e00-\u9fff]{1,2}\*{1,3}$/.test(alias)) ||
+    (item.platformAliasType === 'honorific' &&
+      /^[\u4e00-\u9fff]{1,2}(?:先生|女士|小姐|同学)$/.test(alias)))
+    ? `${alias}（${item.platformAliasType === 'masked' ? '平台脱敏' : '平台称呼'}）` : '';
   if (item.source === 'boss' && item.nameSource === 'ocr' &&
-      !verifiedBossOcrName(name, item.originalText)) return '未识别姓名';
+      !verifiedBossOcrName(name, item.originalText)) return bossAlias || '未识别姓名';
   if (item.source === 'qcwy' && (!name || name === '未识别姓名' || isQcwyPageLabel(name) || idLike)) {
     return `匿名候选人（前程无忧记录 ID：${sourceRecordId(item)}）`;
   }
   if (item.source === 'qcwy' && /(?:先生|女士|同学)$/.test(name)) {
     return `${name}（平台称呼）`;
   }
-  return idLike ? '未识别姓名' : name || '未识别姓名';
+  return idLike || !name || name === '未识别姓名'
+    ? bossAlias || '未识别姓名' : name;
 }
 
 function candidatePosition(item) {
   const expected = text(item.expectedPosition?.position) || text(item.expectedPosition);
   const stored = text(item.position);
   const position = item.source === 'qcwy' && isQcwyPageLabel(stored) ? expected : stored || expected;
-  if (item.source === 'qcwy' && (!position || isQcwyPageLabel(position))) return '求职岗位待核实';
+  if (item.source === 'qcwy' && (!position || isQcwyPageLabel(position))) {
+    return extractQcwyExpectedPosition(item.originalText) || '求职岗位待核实';
+  }
   return position;
 }
 
@@ -64,9 +74,9 @@ function publicCandidate(item) {
     ? '姓名待核实' : candidateName(item);
   const position = candidatePosition(item);
   let expectedPosition = item.expectedPosition;
-  if (isQcwyPageLabel(expectedPosition)) expectedPosition = position;
+  if (!expectedPosition || isQcwyPageLabel(expectedPosition)) expectedPosition = position;
   else if (expectedPosition && typeof expectedPosition === 'object' &&
-      isQcwyPageLabel(expectedPosition.position)) {
+      (!expectedPosition.position || isQcwyPageLabel(expectedPosition.position))) {
     expectedPosition = { ...expectedPosition, position };
   }
   return { ...common, platformRecordId: sourceRecordId(item),

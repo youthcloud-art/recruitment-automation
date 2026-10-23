@@ -8,7 +8,7 @@ const {BossCardQuarantine} = require('../src/services/bossCardQuarantine');
 const {
   BossRawRecommendCollector, normalizeTitle, chooseExactJob,
   officialResumeUrl, candidateIdFromUrl, joinScreenText, repeatedScreenText, hashText,
-  verifiedCardName, verifiedCardPosition, EXPRESSIONS
+  verifiedCardName, platformCardAlias, verifiedCardPosition, EXPRESSIONS
 } = require('../src/services/bossRawRecommendCollector');
 
 const TITLE = '成本核算经理';
@@ -296,9 +296,30 @@ test('a virtualized list shrinking below the current card window is rescanned on
 test('official card name and job validators reject single-character OCR artifacts', () => {
   assert.equal(verifiedCardName('张三'),'张三');
   assert.equal(verifiedCardName('张'),'');
+  assert.equal(verifiedCardName('张先生'),'');
+  assert.deepEqual(platformCardAlias('涂**'), {value:'涂**',type:'masked'});
+  assert.deepEqual(platformCardAlias('张先生'), {value:'张先生',type:'honorific'});
+  assert.equal(platformCardAlias('张三'), null);
   assert.equal(verifiedCardPosition('成本核算经理'),'成本核算经理');
   assert.equal(verifiedCardPosition('经'),'');
   assert.equal(verifiedCardPosition('不限'),'');
+});
+
+test('masked BOSS card label is saved as a platform alias, not a verified name', async () => {
+  const {session,store} = fakeSession({cardMetadata:{
+    displayName:'涂**',expectedPosition:'销售工程师'
+  }});
+  const collector = new BossRawRecommendCollector({
+    connect:async () => session,store,queue:{enqueue() {}},
+    jobService:{current:() => ({title:TITLE,jobRequirements:'销售经验'})},
+    wait:async () => {}
+  });
+  const result = await collector.collect({targetCount:1});
+  assert.equal(result.state,'completed');
+  assert.equal(store.records[0].name,null);
+  assert.equal(store.records[0].nameSource,'unverified');
+  assert.equal(store.records[0].platformAlias,'涂**');
+  assert.equal(store.records[0].platformAliasType,'masked');
 });
 
 test('validated official card metadata overrides one-character OCR fields at save', async () => {

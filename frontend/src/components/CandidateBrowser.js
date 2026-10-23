@@ -675,7 +675,12 @@ const CandidateBrowser = ({ platform = 'boss-zhipin', onOpenPipeline }) => {
       clearInterval(pollingInterval);
     }
     
+    let inFlight = false;
     const interval = setInterval(async () => {
+      // A slow server response must not start another request every two
+      // seconds: stacked polls can make an otherwise recoverable pause worse.
+      if (inFlight || document.hidden) return;
+      inFlight = true;
       try {
         // 根据平台调用不同的API
         const apiEndpoint = platform === 'zhilian' ? API_ENDPOINTS.ZHILIAN.BROWSING_STATUS : API_ENDPOINTS.BOSS_ZHIPIN.BROWSING_STATUS;
@@ -766,6 +771,8 @@ const CandidateBrowser = ({ platform = 'boss-zhipin', onOpenPipeline }) => {
         }
       } catch (error) {
         console.error('获取浏览状态失败:', error);
+      } finally {
+        inFlight = false;
       }
     }, 2000);
     

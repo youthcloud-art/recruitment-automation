@@ -7,6 +7,7 @@ const { RecruitmentPipelineService } = require('./recruitmentPipelineService');
 const { loadBrowserSession, saveBrowserSession } = require('./browserSessionStore');
 const { launchVisibleChromeCdp } = require('./visibleChromeCdp');
 const { isQcwyPageLabel, jobTitleFromRequirements } = require('../utils/candidateDisplay');
+const { extractQcwyExpectedPosition } = require('../utils/qcwyExpectedPosition');
 
 const HOME_URL = 'https://ehire.51job.com/';
 const TALENT_SEARCH_URL = 'https://ehire.51job.com/Revision/talent/search';
@@ -895,6 +896,15 @@ class WuyouService {
     if (parsed.expectedPosition && typeof parsed.expectedPosition === 'object' &&
         isQcwyPageLabel(parsed.expectedPosition.position)) {
       parsed.expectedPosition = { ...parsed.expectedPosition, position: '' };
+    }
+    const intentPosition = extractQcwyExpectedPosition(resume.text);
+    if (intentPosition && (!parsed.position || isQcwyPageLabel(parsed.position))) {
+      parsed.position = intentPosition;
+    }
+    if (intentPosition && (!parsed.expectedPosition ||
+        !parsed.expectedPosition.position || isQcwyPageLabel(parsed.expectedPosition.position))) {
+      parsed.expectedPosition = { ...(typeof parsed.expectedPosition === 'object' &&
+        parsed.expectedPosition ? parsed.expectedPosition : {}), position: intentPosition };
     }
     const result = await this.resumeStore.addResume({
       ...parsed,

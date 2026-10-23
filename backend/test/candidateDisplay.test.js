@@ -75,6 +75,16 @@ test('BOSS masked platform aliases are labeled without claiming a full name', ()
   assert.equal(item.name, '未识别姓名');
 });
 
+test('智联简历首行平台称呼可显示但不冒充实名，也不采用页面栏目标题', () => {
+  const item = { source: 'zlzp', name: '未识别姓名', nameSource: 'unverified',
+    originalText: 'C先生\n半年内活跃\n工作经历：工业品销售' };
+  assert.equal(publicCandidate(item).name, 'C先生（平台称呼）');
+  assert.equal(publicCandidate({ ...item, name: 'C先生' }).name, 'C先生（平台称呼）');
+  assert.equal(item.name, '未识别姓名');
+  assert.equal(candidateName({ ...item, originalText: '工作经历\nC先生\n销售经验' }), '未识别姓名');
+  assert.equal(candidateName({ ...item, originalText: '张三\n工作经历\n销售经验' }), '未识别姓名');
+});
+
 test('numeric and opaque platform IDs are never displayed as candidate names', () => {
   assert.equal(publicCandidate({ source: 'zlzp', name: '1234567890' }).name, '未识别姓名');
   assert.equal(publicCandidate({ source: 'boss', name: 'af03dc91b01e' }).name, '未识别姓名');

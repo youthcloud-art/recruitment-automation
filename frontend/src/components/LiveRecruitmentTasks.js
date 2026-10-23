@@ -145,7 +145,8 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
         }
         await apiPost('/zhilian/start-browsing', {
           mode: 'search',
-          filters: { position: currentJob.title, location: currentJob.location || '不限' },
+          filters: { position: currentJob.searchKeywords || currentJob.title,
+            location: currentJob.location || '不限' },
           targetCount: requested
         });
       } else {

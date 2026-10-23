@@ -84,7 +84,7 @@ class RecruitmentAnalyticsService {
       source.total++;
       if (/^(?:未识别姓名|匿名候选人|姓名待核实)/.test(candidateName(item)) ||
           (item.source === 'boss' && Boolean(item.platformAlias)) ||
-          (item.source === 'qcwy' && /（平台称呼）$/.test(candidateName(item)))) {
+          (['qcwy', 'zlzp'].includes(item.source) && /（平台称呼）$/.test(candidateName(item)))) {
         source.nameNeedsReview++;
       }
       if (!candidatePosition(item) || /待核实/.test(candidatePosition(item))) source.positionNeedsReview++;

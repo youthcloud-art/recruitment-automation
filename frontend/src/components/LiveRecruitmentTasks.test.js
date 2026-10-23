@@ -79,6 +79,20 @@ test('前程无忧从同一岗位条件按本次份数采集并复用服务器�
   expect(apiPost).toHaveBeenCalledWith('/wuyou/start', {});
 });
 
+test('智联从已保存岗位读取多个搜索关键词，便于结果不足时自行补采', async () => {
+  const base = apiGet.getMockImplementation();
+  apiGet.mockImplementation(url => url === '/recruitment-pipeline/active-job'
+    ? Promise.resolve({ success: true, data: { ...job,
+      searchKeywords: '项目经理主管,项目经理,工程项目主管' } }) : base(url));
+  render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
+  fireEvent.click((await screen.findAllByRole('button', { name: '启动本次采集' }))[1]);
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/zhilian/start-browsing', {
+    mode: 'search', filters: {
+      position: '项目经理主管,项目经理,工程项目主管', location: '不限'
+    }, targetCount: 6
+  }));
+});
+
 test('BOSS 人工验证后从独立按钮续接同一岗位断点', async () => {
   const base = apiGet.getMockImplementation();
   apiGet.mockImplementation(url => url === '/boss-zhipin/browsing-status'

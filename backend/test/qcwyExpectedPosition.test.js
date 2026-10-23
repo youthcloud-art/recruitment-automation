@@ -8,6 +8,10 @@ test('51job intent line yields the desired role before a city or city list', () 
     '销售工程师');
   assert.equal(extractQcwyExpectedPosition('求职意向\n广州区域销售经理上海全职8千/月\n工作经历'),
     '广州区域销售经理');
+  for (const city of ['鸡西', '潍坊', '咸阳']) {
+    assert.equal(extractQcwyExpectedPosition(`求职意向\n\n销售工程师${city}全职5-7千/月\n工作经历`),
+      '销售工程师');
+  }
   const historical = { source: 'qcwy', name: '未识别姓名', position: '通知',
     originalText: '求职意向\n\n销售工程师无锡、常州全职8千/月\n工作经历' };
   const displayed = publicCandidate(historical);

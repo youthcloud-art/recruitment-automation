@@ -15,6 +15,13 @@ function isQcwyPageLabel(value) {
   return QCWY_PAGE_LABELS.has(text(value));
 }
 
+function zhilianHeaderAlias(value) {
+  const first = String(value || '').split(/\r?\n/).map(part => part.trim()).find(Boolean) || '';
+  // A recruiter-visible honorific is useful context, but it is not a
+  // verified full name. Read only the resume header, never page chrome.
+  return /^(?:[A-Z]|[\u4e00-\u9fff]{1,2})(?:先生|女士|小姐)$/.test(first) ? first : '';
+}
+
 function sourceRecordId(item) {
   const key = text(item.sourceRecordKey);
   if (/^[a-f0-9]{64}$/i.test(key)) return key.slice(0, 16);
@@ -49,6 +56,13 @@ function candidateName(item) {
   }
   if (item.source === 'qcwy' && /(?:先生|女士|同学)$/.test(name)) {
     return `${name}（平台称呼）`;
+  }
+  if (item.source === 'zlzp' && /^(?:[A-Z]|[\u4e00-\u9fff]{1,2})(?:先生|女士|小姐)$/.test(name)) {
+    return `${name}（平台称呼）`;
+  }
+  if (item.source === 'zlzp' && (idLike || !name || name === '未识别姓名')) {
+    const alias = zhilianHeaderAlias(item.originalText);
+    return alias ? `${alias}（平台称呼）` : '未识别姓名';
   }
   return idLike || !name || name === '未识别姓名'
     ? bossAlias || '未识别姓名' : name;

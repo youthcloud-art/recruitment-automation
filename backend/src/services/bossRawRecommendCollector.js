@@ -1251,7 +1251,7 @@ class BossRawRecommendCollector {
             .replace(/\s+/g,' ').trim().length >= 300;
           if (specificCard && cardCounts.get(identity) === 1 &&
               typeof this.store.findBossCardMatch === 'function') {
-            const prior = await this.store.findBossCardMatch(identity);
+            let prior = await this.store.findBossCardMatch(identity);
             const capturedAt = Date.parse(prior?.createdAt || '');
             const ageMs = this.now() - capturedAt;
             if (prior?.source === 'boss' &&
@@ -1259,6 +1259,15 @@ class BossRawRecommendCollector {
                 prior.parseStatus === 'completed' && prior.sourceFingerprint &&
                 String(prior.originalText || '').length >= 100 &&
                 Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 24*60*60*1000) {
+              const alias=platformCardAlias(card.displayName);
+              if (alias && !prior.platformAlias &&
+                  typeof this.store.updateCandidateMetadata === 'function') {
+                try {
+                  prior=await this.store.updateCandidateMetadata(prior.id,{
+                    platformAlias:alias.value,platformAliasType:alias.type
+                  }) || prior;
+                } catch (_) { /* A known stored resume remains available. */ }
+              }
               this.queueEvaluation(prior,job);
               this.completedCardFingerprints.add(identity);
               this.progress({attempted:this.status.attempted+1,

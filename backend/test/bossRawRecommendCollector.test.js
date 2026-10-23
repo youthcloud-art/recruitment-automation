@@ -432,10 +432,16 @@ test('collector pauses before candidate click when owned page stays hidden', asy
 });
 
 test('recent unique long official card with a complete indexed resume skips repeat OCR', async () => {
-  const {session,state,store} = fakeSession({cardText:LONG_CARD});
+  const {session,state,store} = fakeSession({cardText:LONG_CARD,
+    cardMetadata:{displayName:'涂**'}});
   const fingerprint = hashText(`cost-job\n${LONG_CARD}`);
   let lookups = 0;
+  const updates=[];
   const queued = [];
+  store.updateCandidateMetadata=async (id,changes)=>{
+    updates.push([id,changes]);
+    return {id,source:'boss',...changes};
+  };
   store.findBossCardMatch = async value => {
     lookups++;
     assert.equal(value,fingerprint);
@@ -459,6 +465,9 @@ test('recent unique long official card with a complete indexed resume skips repe
   assert.equal(store.records.length,0);
   assert.ok(lookups >= 1);
   assert.equal(state.clicks.includes('li.card-item'),false);
+  assert.deepEqual(updates,[['existing',{
+    platformAlias:'涂**',platformAliasType:'masked'
+  }]]);
   assert.deepEqual(queued,[['existing','本科，三年以上成本核算经验']]);
 });
 

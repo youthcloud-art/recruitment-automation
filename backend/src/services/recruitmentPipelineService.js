@@ -155,6 +155,16 @@ class RecruitmentPipelineService {
     return this.activeJobService.current();
   }
 
+  deleteHistoricalCandidates({ ids, jobTitle } = {}) {
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 50 ||
+        ids.some(id => typeof id !== 'string' || id.length < 1 || id.length > 120) ||
+        new Set(ids).size !== ids.length) throw new Error('请从当前页选择 1～50 份不同的历史简历');
+    const title = String(jobTitle || '').trim();
+    if (!title || title.length > 120) throw new Error('请先选择要删除的历史岗位');
+    if (typeof this.store.deleteHistoricalResumes !== 'function') throw new Error('简历存储不支持历史岗位删除');
+    return this.store.deleteHistoricalResumes(ids, title);
+  }
+
   update(id, { status, notes } = {}) {
     const item = this.store.getResumeById(id);
     if (!item || !SOURCES.includes(item.source)) throw new Error('未找到该平台候选人');

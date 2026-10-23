@@ -143,6 +143,27 @@ test('restoring a unique archived job also restores safely matched legacy candid
   assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
 });
 
+test('历史岗位简历按岗位与 ID 原子删除，混入在用简历会整批拒绝', t => {
+  const positions = [{ id: 'position_live', title: '网络运维',
+    jobCriteria: { jobRequirements: '负责网络设备维护' } },
+  { id: 'position_old', title: '网络运维', archivedAt: '2026-10-01T00:00:00Z',
+    jobCriteria: { jobRequirements: '负责旧网络设备维护' } }];
+  const resumes = [
+    { id: 'live', source: 'boss', captureJobTitle: '网络运维', capturePositionId: 'position_live' },
+    { id: 'old-a', source: 'zlzp', captureJobTitle: '网络运维', capturePositionId: 'position_old' },
+    { id: 'old-b', source: 'qcwy', captureJobTitle: '网络运维', capturePositionId: 'position_old' }
+  ];
+  const { libraryDir, cleanup } = fixture(t, { resumes, positions, categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  assert.throws(() => model.deleteHistoricalResumes(['old-a', 'live'], '网络运维'), /已变化/);
+  assert.equal(model.getResumesPage({ hiringJobTitle: '网络运维' }).total, 3);
+  assert.throws(() => model.deleteHistoricalResumes(['old-a'], '其他岗位'), /已变化/);
+  assert.equal(model.deleteHistoricalResumes(['old-a', 'old-b'], '网络运维').count, 2);
+  assert.equal(model.getResumesPage({ jobGroup: 'historical' }).total, 0);
+  assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
+});
+
 test('invalid legacy JSON cannot create a replacement SQLite database', t => {
   const { libraryDir, legacy, cleanup } = fixture(t, { resumes: [{ id: 'same' }, { id: 'same' }],
     positions: [], categories: [] });

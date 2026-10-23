@@ -806,6 +806,21 @@ class ResumeModel {
     }
   }
 
+  deleteHistoricalResumes(ids, expectedTitle) {
+    if (this.sqliteStore) return this.sqliteStore.deleteHistoricalResumes(ids, expectedTitle);
+    const db = this.readDatabase();
+    const selected = db.resumes.filter(item => ids.includes(item.id));
+    if (selected.length !== ids.length || selected.some(item =>
+      !['boss', 'zlzp', 'qcwy'].includes(item.source) ||
+      hiringJobTitle(item) !== expectedTitle ||
+      resumeJobState(item, db.positions) === 'current')) {
+      throw new Error('所选简历已变化，或不属于该历史岗位；请刷新后重选');
+    }
+    db.resumes = db.resumes.filter(item => !ids.includes(item.id));
+    this.writeDatabase(db);
+    return { success: true, count: selected.length };
+  }
+
   /**
    * 清空所有简历
    * @returns {Object} 清空结果

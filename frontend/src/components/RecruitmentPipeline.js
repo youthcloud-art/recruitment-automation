@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Col, Input, InputNumber, Modal, Row, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { DownloadOutlined, MailOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, MailOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
 import { apiGet, apiPatch, apiPost, apiPut } from '../utils/apiClient';
 import JobCriteriaEditor, { EMPTY_JOB } from './JobCriteriaEditor';
 
@@ -38,6 +38,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const [viewJobTitle, setViewJobTitle] = useState('');
   const [viewJobGroup, setViewJobGroup] = useState('');
   const [scoreOrder, setScoreOrder] = useState('createdAt');
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState([]);
   const [status, setStatus] = useState('');
   const [keyword, setKeyword] = useState('');
   const [jobRequirements, setJobRequirements] = useState('');
@@ -68,6 +69,9 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
     setViewJobGroup('');
     setPage(1);
   }, [sourceRequest]);
+
+  useEffect(() => { setSelectedHistoryIds([]); },
+    [source, status, keyword, viewJobTitle, viewJobGroup, scoreOrder, page, pageSize]);
 
   const refresh = useCallback(async () => {
     const generation = ++listGeneration.current;
@@ -376,6 +380,24 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
     });
   };
 
+  const confirmDeleteHistorical = (ids, title) => {
+    Modal.confirm({
+      title: `永久删除 ${ids.length} 份历史岗位简历？`,
+      content: `岗位：${title}。只删除所选的 ${ids.length} 份本机候选人记录，不删除岗位或其他平台/岗位的简历；删除后不能撤销。`,
+      okText: '确认删除所选简历', okType: 'danger', cancelText: '取消', zIndex: 1300,
+      onOk: async () => {
+        const result = await apiPost('/recruitment-pipeline/candidates/historical/delete',
+          { ids, jobTitle: title });
+        if (!result.success) throw new Error(result.message || '删除失败');
+        message.success(`已删除 ${result.data.count} 份历史岗位简历`);
+        setSelectedHistoryIds([]);
+        setSelected(null);
+        setPage(1);
+        refresh();
+      }
+    });
+  };
+
   const columns = [
     { title: '平台', dataIndex: 'source', width: 115, render: sourceLabel },
     { title: '候选人', dataIndex: 'name', width: 130, render: value => value || '未识别姓名' },
@@ -444,6 +466,10 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
           setEmailPreview(null);
           refresh();
         }}>刷新</Button>
+        {viewJobGroup === 'historical' && viewJobTitle && <Button danger icon={<DeleteOutlined />}
+          disabled={!selectedHistoryIds.length || Boolean(batch?.running)}
+          onClick={() => confirmDeleteHistorical(selectedHistoryIds, viewJobTitle)}>
+          删除已选历史简历（{selectedHistoryIds.length}）</Button>}
         <Button type="primary" icon={<DownloadOutlined />} loading={busy === 'report-docx'}
           onClick={() => downloadReport('docx')}>导出初筛 Word（前100份）</Button>
         <Button icon={<DownloadOutlined />} loading={busy === 'report-md'}
@@ -461,6 +487,11 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         }}
         disabled={Boolean(batch?.running || emailBatch?.sentCount)} />
       <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 1250 }}
+        rowSelection={viewJobGroup === 'historical' && viewJobTitle ? {
+          selectedRowKeys: selectedHistoryIds,
+          onChange: keys => setSelectedHistoryIds(keys),
+          getCheckboxProps: row => ({ disabled: row.jobGroup !== 'historical' })
+        } : undefined}
         pagination={{ current: page, pageSize, total: candidateTotal, showSizeChanger: true,
           pageSizeOptions: [10, 20, 50], showTotal: count => `共 ${count} 位候选人`,
           onChange: (nextPage, nextSize) => {
@@ -587,7 +618,11 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             {selected.name === '姓名待核实' && <Text type="warning"> · 平台未提供可核实姓名，请在原始页面确认</Text>}</div>
           {selected.jobGroup === 'historical' && <Alert type="info" showIcon
             message="历史/已删除岗位简历已单独保留"
-            description="可查看和记录跟进；重新评估前请先在岗位管理中恢复并应用原岗位。" />}
+            description="可查看、记录跟进或单独删除；重新评估前请先在岗位管理中恢复并应用原岗位。" />}
+          {selected.jobGroup === 'historical' && <Button danger icon={<DeleteOutlined />}
+            disabled={Boolean(batch?.running)}
+            onClick={() => confirmDeleteHistorical([selected.id], selected.hiringJobTitle || '招聘岗位待核实')}>
+            删除这份历史简历</Button>}
           <div><Text>跟进状态：</Text><Select value={selected.workflowStatus || 'new'} style={{ width: 180 }}
             options={STATUSES} onChange={value => update({ status: value })} /></div>
           <div><Text>人工备注：</Text><Input.TextArea rows={3} maxLength={3000} value={notes}

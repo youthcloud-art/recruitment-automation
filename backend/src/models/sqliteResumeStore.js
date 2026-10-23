@@ -780,6 +780,23 @@ class SqliteResumeStore {
     return this.db.prepare('DELETE FROM candidate_resumes WHERE id = ?').run(id).changes > 0;
   }
 
+  deleteHistoricalResumes(ids, expectedTitle) {
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db.prepare(`SELECT id, source, hiring_job_title, job_state
+        FROM candidate_resumes WHERE id IN (${placeholders})`).all(...ids);
+      if (rows.length !== ids.length || rows.some(row =>
+        !['boss', 'zlzp', 'qcwy'].includes(row.source) ||
+        row.hiring_job_title !== expectedTitle || row.job_state === 'current')) {
+        throw new Error('所选简历已变化，或不属于该历史岗位；请刷新后重选');
+      }
+      this.db.prepare(`DELETE FROM candidate_resumes WHERE id IN (${placeholders})`).run(...ids);
+      this.db.exec('COMMIT');
+      return { success: true, count: rows.length };
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
   clearAllResumes() {
     return this.db.prepare('DELETE FROM candidate_resumes').run().changes;
   }

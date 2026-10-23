@@ -173,6 +173,13 @@ router.get('/candidates/page', (req, res) => {
   } catch (error) { fail(res, error); }
 });
 
+router.post('/candidates/historical/delete', (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, data: service.deleteHistoricalCandidates(req.body) });
+  } catch (error) { fail(res, error); }
+});
+
 router.patch('/candidates/:id', (req, res) => {
   try { res.json({ success: true, data: publicCandidate(service.update(req.params.id, req.body)) }); }
   catch (error) { fail(res, error); }

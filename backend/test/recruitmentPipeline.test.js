@@ -59,6 +59,19 @@ test('大简历库按流筛选后才截取报告上限，末尾命中的候选�
   assert.deepEqual(service.list({ keyword: '目标', limit: 1 }).map(item => item.id), ['10001']);
 });
 
+test('历史简历删除入口要求明确岗位和互异 ID，不允许空选或批量越界', () => {
+  const calls = [];
+  const service = new RecruitmentPipelineService({ store: {
+    deleteHistoricalResumes: (ids, title) => { calls.push({ ids, title });
+      return { success: true, count: ids.length }; }
+  }, activeJobService: noActiveJob });
+  assert.throws(() => service.deleteHistoricalCandidates({ ids: [], jobTitle: '网络运维' }), /选择/);
+  assert.throws(() => service.deleteHistoricalCandidates({ ids: ['a', 'a'], jobTitle: '网络运维' }), /选择/);
+  assert.throws(() => service.deleteHistoricalCandidates({ ids: ['a'], jobTitle: '' }), /岗位/);
+  assert.equal(service.deleteHistoricalCandidates({ ids: ['a'], jobTitle: '网络运维' }).count, 1);
+  assert.deepEqual(calls, [{ ids: ['a'], title: '网络运维' }]);
+});
+
 test('三平台候选人分页仅传输当前页，汇总使用按平台状态聚合', () => {
   const calls = [];
   const store = {

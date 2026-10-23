@@ -72,20 +72,21 @@ class RecruitmentPipelineService {
     if (status && !STATUSES.includes(status)) throw new Error('不支持的跟进状态');
     const term = String(keyword).trim().toLowerCase();
     const max = Math.min(Math.max(Number(limit) || 200, 1), 10000);
-    let records = [];
-    if (jobGroup && typeof this.store.forEachResume === 'function') {
-      this.store.forEachResume(item => {
-        if (records.length <= max) records.push(item);
-      }, { source: source || null, status: status || null, jobGroup });
-    } else records = this.store.getResumes();
-    return records.filter(item => SOURCES.includes(item.source))
-      .filter(item => !source || item.source === source)
-      .filter(item => !status || (item.workflowStatus || 'new') === status)
-      .filter(item => !term || [item.name, item.position, item.expectedPosition?.position,
+    const matches = item => SOURCES.includes(item.source) &&
+      (!source || item.source === source) &&
+      (!status || (item.workflowStatus || 'new') === status) &&
+      (!term || [item.name, item.position, item.expectedPosition?.position,
         typeof item.expectedPosition === 'string' ? item.expectedPosition : '',
         ...(Array.isArray(item.skills) ? item.skills : [])]
-        .some(value => String(value || '').toLowerCase().includes(term)))
-      .slice(0, max);
+        .some(value => String(value || '').toLowerCase().includes(term)));
+    if (typeof this.store.forEachResume === 'function') {
+      const records = [];
+      this.store.forEachResume(item => {
+        if (records.length <= max && matches(item)) records.push(item);
+      }, { source: source || null, status: status || null, jobGroup: jobGroup || null });
+      return records.slice(0, max);
+    }
+    return this.store.getResumes().filter(matches).slice(0, max);
   }
 
   listPage({ source = '', status = '', keyword = '', jobTitle = '', jobGroup = '',

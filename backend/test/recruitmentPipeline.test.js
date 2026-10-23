@@ -46,6 +46,19 @@ test('三平台候选人可按平台、状态、关键词查询，手动简历�
   assert.throws(() => service.update('a', { status: 'unknown' }), /不支持/);
 });
 
+test('大简历库按流筛选后才截取报告上限，末尾命中的候选人仍可读取', () => {
+  const store = {
+    getResumes: () => { throw new Error('不应把全部简历加载进内存'); },
+    forEachResume: (visit) => {
+      for (let index = 0; index < 10002; index++) visit({
+        id: String(index), source: 'boss', name: index === 10001 ? '目标候选人' : '其他人'
+      });
+    }
+  };
+  const service = new RecruitmentPipelineService({ store, activeJobService: noActiveJob });
+  assert.deepEqual(service.list({ keyword: '目标', limit: 1 }).map(item => item.id), ['10001']);
+});
+
 test('三平台候选人分页仅传输当前页，汇总使用按平台状态聚合', () => {
   const calls = [];
   const store = {

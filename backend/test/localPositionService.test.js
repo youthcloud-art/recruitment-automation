@@ -21,6 +21,7 @@ class MemoryPositions {
     this.positions = this.positions.filter(item => item.id !== id);
     return { success: this.positions.length < before };
   }
+  async removeUncommittedPosition(id) { return this.deletePosition(id); }
 }
 
 function withService(run) {

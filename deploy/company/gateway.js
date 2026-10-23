@@ -91,6 +91,18 @@ function addressAllowed(address, config) {
   return number !== null && config.cidrs.some(cidr => ((number & cidr.mask) >>> 0) === cidr.network);
 }
 
+// Only the browser running on this server may change its shared AI model.
+// Compare TCP peer addresses; request headers are fully controlled by clients.
+function isServerBrowser(req) {
+  const peer = remoteAddress(req);
+  const local = String(req.socket.localAddress || '').replace(/^::ffff:/i, '');
+  return LOOPBACK.has(peer) || Boolean(peer && local && peer === local);
+}
+
+function isModelConfigPath(pathname) {
+  return pathname === '/api/model-config' || pathname.startsWith('/api/model-config/');
+}
+
 // Never use Forwarded, X-Forwarded-For or X-Real-IP for this decision. The
 // gateway is the LAN boundary and sees the connecting employee's real socket.
 function boundaryError(req, config, pathname) {
@@ -309,6 +321,7 @@ function compressible(filename, size) {
 function createGateway(options = {}) {
   const config = readConfig(options);
   const checkBackend = options.backendHealthy || backendHealthy;
+  const serverBrowser = options.isServerBrowser || isServerBrowser;
   // Cache only public build assets, never proxied API responses or resumes.
   // Coalesce simultaneous first requests and bound the resident bytes so
   // repeated Brotli compression cannot slow capture or other browser users.
@@ -363,6 +376,15 @@ function createGateway(options = {}) {
         status: frontend && backend ? 'ok' : 'unavailable',
         frontend: frontend ? 'ok' : 'unavailable', backend: backend ? 'ok' : 'unavailable'
       });
+      return;
+    }
+    if (pathname === '/api/model-config/access' && req.method === 'GET') {
+      json(res, 200, { success: true, data: { canEdit: serverBrowser(req) } });
+      return;
+    }
+    if (isModelConfigPath(pathname) && !['GET', 'HEAD'].includes(req.method) &&
+        !serverBrowser(req)) {
+      json(res, 403, { success: false, message: '模型配置仅允许在公司服务器本机浏览器中修改或测试' });
       return;
     }
     if (isProxyPath(pathname)) { proxyHttp(req, res, config); return; }
@@ -441,4 +463,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { createGateway, readConfig, boundaryError };
+module.exports = { createGateway, readConfig, boundaryError, isServerBrowser };

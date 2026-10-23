@@ -7,7 +7,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const { createGateway, readConfig, boundaryError } = require('./gateway');
+const { createGateway, readConfig, boundaryError, isServerBrowser } = require('./gateway');
 
 const PUBLIC_ORIGIN = 'http://192.168.1.24:4000';
 const PUBLIC_HOST = '192.168.1.24:4000';
@@ -135,6 +135,33 @@ test('LAN source check uses the socket and refuses spoofed forwarding headers', 
   const expanded = readConfig({ environment: { LAN_ALLOW_CIDRS: '10.20.0.0/16' } });
   assert.equal(boundaryError(syntheticRequest('10.20.1.22'), expanded, '/api/positions'), null);
   assert.match(boundaryError(syntheticRequest('192.168.1.22'), expanded, '/api/positions'), /公司网段/);
+});
+
+test('模型配置只认本机 TCP 连接，转发头和 Host 不能伪装为服务器', async t => {
+  assert.equal(isServerBrowser({ socket: { remoteAddress: '192.168.1.24',
+    localAddress: '192.168.1.24' } }), true);
+  assert.equal(isServerBrowser({ socket: { remoteAddress: '::ffff:192.168.1.24',
+    localAddress: '::ffff:192.168.1.24' } }), true);
+  assert.equal(isServerBrowser({ socket: { remoteAddress: '192.168.1.58',
+    localAddress: '192.168.1.24' }, headers: { 'x-forwarded-for': '192.168.1.24' } }), false);
+  const app = await fixture(t);
+  const access = await request(app.port, '/api/model-config/access');
+  assert.equal(JSON.parse(access.body).data.canEdit, true);
+  const save = await request(app.port, '/api/model-config', { method: 'PUT',
+    headers: { origin: PUBLIC_ORIGIN, 'content-type': 'application/json' },
+    chunks: [Buffer.from('{"model":"deepseek-chat"}')] });
+  assert.equal(save.status, 201);
+  assert.equal(app.requests.at(-1).url, '/api/model-config');
+  const remote = await fixture(t, { gatewayOptions: { isServerBrowser: () => false } });
+  const remoteAccess = await request(remote.port, '/api/model-config/access');
+  assert.equal(JSON.parse(remoteAccess.body).data.canEdit, false);
+  for (const [url, method] of [['/api/model-config', 'PUT'], ['/api/model-config/test', 'POST']]) {
+    const denied = await request(remote.port, url, { method, headers: {
+      origin: PUBLIC_ORIGIN, 'x-forwarded-for': '127.0.0.1', 'x-real-ip': '192.168.1.24'
+    } });
+    assert.equal(denied.status, 403);
+  }
+  assert.equal(remote.requests.length, 0);
 });
 
 test('Host, Origin and fetch metadata prevent rebinding and cross-site access', () => {

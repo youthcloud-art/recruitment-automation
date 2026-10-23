@@ -1038,6 +1038,7 @@ class BossRawRecommendCollector {
         originalText:captured.text,
         captureJobRequirements:String(job?.jobRequirements || '').trim() || null,
         captureJobTitle:String(job?.title || '').trim() || null,
+        capturePositionId:job?.positionId || null,
         qualityScore:parsed.qualityScore,parseMethod:captured.method,
         parseStatus:'completed'
       }, {returnStatus:true});

@@ -31,9 +31,13 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const [summary, setSummary] = useState({});
   const [candidates, setCandidates] = useState([]);
   const [candidateTotal, setCandidateTotal] = useState(0);
+  const [availableJobs, setAvailableJobs] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [source, setSource] = useState(sourceRequest?.source || '');
+  const [viewJobTitle, setViewJobTitle] = useState('');
+  const [viewJobGroup, setViewJobGroup] = useState('');
+  const [scoreOrder, setScoreOrder] = useState('createdAt');
   const [status, setStatus] = useState('');
   const [keyword, setKeyword] = useState('');
   const [jobRequirements, setJobRequirements] = useState('');
@@ -60,17 +64,22 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
 
   useEffect(() => {
     setSource(sourceRequest?.source || '');
+    setViewJobTitle('');
+    setViewJobGroup('');
     setPage(1);
   }, [sourceRequest]);
 
   const refresh = useCallback(async () => {
     const generation = ++listGeneration.current;
     try {
-      const [list, stats] = await Promise.all([
+      const [list, stats, jobs] = await Promise.all([
         apiGet('/recruitment-pipeline/candidates/page', {
-          source, status, keyword, limit: pageSize, offset: (page - 1) * pageSize
+          source, status, keyword, jobTitle: viewJobTitle, jobGroup: viewJobGroup,
+          sortBy: scoreOrder,
+          limit: pageSize, offset: (page - 1) * pageSize
         }),
-        apiGet('/recruitment-pipeline/summary')
+        apiGet('/recruitment-pipeline/summary'),
+        apiGet('/recruitment-pipeline/candidates/jobs')
       ]);
       if (generation !== listGeneration.current) return;
       const data = list.data || { items: [], total: 0 };
@@ -82,13 +91,14 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       setCandidates(data.items || []);
       setCandidateTotal(data.total || 0);
       setSummary(stats.data || {});
+      setAvailableJobs(jobs.data || []);
       setSelected(current => current
         ? (data.items || []).find(item => item.id === current.id) || current
         : null);
     } catch (error) {
       if (generation === listGeneration.current) message.error('读取候选人失败：' + error.message);
     }
-  }, [source, status, keyword, page, pageSize]);
+  }, [source, status, keyword, viewJobTitle, viewJobGroup, scoreOrder, page, pageSize]);
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
@@ -171,6 +181,15 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   };
 
   const evaluate = async () => {
+    if (selected?.jobGroup === 'historical') {
+      message.warning('该简历属于历史/已删除岗位，恢复并应用原岗位后才能重新评估');
+      return;
+    }
+    if (selected?.hiringJobTitle && selected.hiringJobTitle !== '招聘岗位待核实' &&
+        jobCriteria.title && selected.hiringJobTitle !== jobCriteria.title) {
+      message.warning(`这份简历归属“${selected.hiringJobTitle}”，请先应用该岗位条件后再评估`);
+      return;
+    }
     if (!selected || !jobCriteria.updatedAt || jobRequirements !== jobCriteria.jobRequirements) {
       message.warning('请先在上方保存并应用岗位条件');
       return;
@@ -362,10 +381,12 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
     { title: '候选人', dataIndex: 'name', width: 130, render: value => value || '未识别姓名' },
     { title: '招聘岗位', dataIndex: 'hiringJobTitle', width: 175,
       render: value => value || '招聘岗位待核实' },
+    { title: '岗位归属', dataIndex: 'jobGroup', width: 125,
+      render: value => <Tag color={value === 'current' ? 'green' : 'default'}>
+        {value === 'current' ? '在用岗位' : '历史/已删除'}</Tag> },
     { title: '求职岗位', width: 180, render: (_, row) => row.position || row.expectedPosition?.position ||
       (typeof row.expectedPosition === 'string' ? row.expectedPosition : '未填写') },
-    { title: '岗位匹配分（当前页排序）', dataIndex: 'matchScore', width: 160,
-      sorter: (a, b) => (a.matchScore ?? -1) - (b.matchScore ?? -1),
+    { title: '岗位匹配分', dataIndex: 'matchScore', width: 160,
       render: (value, row) => Number.isFinite(value)
         ? <span title={`评估方式：${evaluationMethodLabel(row.matchEvaluation)}`}>{value}/100{row.matchEvaluation ? (row.matchEvaluation.method === 'local' ? '（本机）' : '（AI）') : ''}</span>
         : '未评估' },
@@ -392,12 +413,29 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         </Col>)}
       </Row>
       <Space wrap style={{ marginBottom: 16 }}>
+        <Select aria-label="招聘岗位筛选" value={viewJobTitle
+          ? JSON.stringify({ title: viewJobTitle, jobGroup: viewJobGroup }) : ''}
+          style={{ width: 280 }} showSearch optionFilterProp="label"
+          onChange={value => {
+            const selectedJob = value ? JSON.parse(value) : { title: '', jobGroup: '' };
+            setViewJobTitle(selectedJob.title);
+            setViewJobGroup(selectedJob.jobGroup);
+            setPage(1);
+          }}
+          options={[{ value: '', label: `全部招聘岗位（${availableJobs.reduce((count, job) => count + job.total, 0)}）` },
+            ...availableJobs.map(job => ({ value: JSON.stringify({ title: job.title, jobGroup: job.jobGroup }),
+              label: `${job.jobGroup === 'current' ? '在用岗位' : '历史/已删除'} · ${job.title}（${job.total}）` }))]} />
         <Select value={source} style={{ width: 155 }} disabled={Boolean(emailBatch?.sentCount)}
           onChange={value => { setSource(value); setPage(1); }}
           options={[{ value: '', label: '全部平台' }, ...SOURCES]} />
         <Select value={status} style={{ width: 155 }} disabled={Boolean(emailBatch?.sentCount)}
           onChange={value => { setStatus(value); setPage(1); }}
           options={[{ value: '', label: '全部状态' }, ...STATUSES]} />
+        <Select aria-label="匹配分排序" value={scoreOrder} style={{ width: 165 }}
+          onChange={value => { setScoreOrder(value); setPage(1); }}
+          options={[{ value: 'createdAt', label: '按入库时间' },
+            { value: 'scoreDesc', label: '匹配分从高到低' },
+            { value: 'scoreAsc', label: '匹配分从低到高' }]} />
         <Input.Search placeholder="搜索姓名、岗位、技能" allowClear style={{ width: 245 }}
           onSearch={value => { setKeyword(value); setPage(1); }}
           onChange={event => { if (!event.target.value && keyword) { setKeyword(''); setPage(1); } }} />
@@ -411,13 +449,18 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         <Button icon={<DownloadOutlined />} loading={busy === 'report-md'}
           onClick={() => downloadReport('md')}>导出初筛 Markdown（前100份）</Button>
       </Space>
+      <Alert type="info" showIcon style={{ marginBottom: 12 }}
+        message={`当前查看：${viewJobTitle
+          ? `${viewJobGroup === 'current' ? '在用岗位' : '历史/已删除'} · ${viewJobTitle}`
+          : '全部招聘岗位'} · ${source ? sourceLabel(source) : '全部平台'} · ${candidateTotal} 位候选人`}
+        description="岗位与平台可独立组合筛选；评分在所有结果中排序，未评估的简历排在末尾。不同岗位的分数依据各自岗位要求，仅供分别复核。下方岗位条件及批量评估仍以当前已应用岗位为准。" />
       <JobCriteriaEditor value={jobCriteria}
         onChange={job => {
           setJobCriteria(job);
           setJobRequirements(job.jobRequirements || '');
         }}
         disabled={Boolean(batch?.running || emailBatch?.sentCount)} />
-      <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 1125 }}
+      <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 1250 }}
         pagination={{ current: page, pageSize, total: candidateTotal, showSizeChanger: true,
           pageSizeOptions: [10, 20, 50], showTotal: count => `共 ${count} 位候选人`,
           onChange: (nextPage, nextSize) => {
@@ -542,6 +585,9 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         {selected && <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div><Text>招聘岗位：{selected.hiringJobTitle || '招聘岗位待核实'}</Text>
             {selected.name === '姓名待核实' && <Text type="warning"> · 平台未提供可核实姓名，请在原始页面确认</Text>}</div>
+          {selected.jobGroup === 'historical' && <Alert type="info" showIcon
+            message="历史/已删除岗位简历已单独保留"
+            description="可查看和记录跟进；重新评估前请先在岗位管理中恢复并应用原岗位。" />}
           <div><Text>跟进状态：</Text><Select value={selected.workflowStatus || 'new'} style={{ width: 180 }}
             options={STATUSES} onChange={value => update({ status: value })} /></div>
           <div><Text>人工备注：</Text><Input.TextArea rows={3} maxLength={3000} value={notes}
@@ -550,7 +596,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
           <div><Text>当前岗位要求：</Text><Input.TextArea rows={4} value={jobRequirements}
             readOnly placeholder="请在上方岗位条件中填写或导入后保存" />
             <Button type="primary" icon={<RobotOutlined />} style={{ marginTop: 8 }}
-              loading={busy === 'evaluate'} disabled={Boolean(emailBatch?.sentCount)}
+              loading={busy === 'evaluate'} disabled={Boolean(emailBatch?.sentCount) || selected.jobGroup === 'historical'}
               onClick={evaluate}>评估岗位匹配</Button></div>
           {selected.matchEvaluation && <Card size="small" title={`岗位匹配分 ${selected.matchScore}/100 · ${evaluationMethodLabel(selected.matchEvaluation)}`}>
             <p>{selected.matchEvaluation.summary}</p>

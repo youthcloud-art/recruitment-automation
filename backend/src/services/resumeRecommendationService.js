@@ -1,5 +1,6 @@
 const resumeModel = require('../models/resumeModel');
 const { ActiveJobService } = require('./activeJobService');
+const { hasTrackedActiveJob } = require('../utils/activeJobScope');
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
 const { candidateName, candidatePosition } = require('../utils/candidateDisplay');
 
@@ -90,7 +91,8 @@ class ResumeRecommendationService {
     };
     if (typeof this.store.forEachResume === 'function') {
       this.store.forEachResume(collect, { source: source || null,
-        jobRequirements: requirements });
+        jobRequirements: requirements,
+        jobGroup: hasTrackedActiveJob(this.store, activeJob, requirements) ? 'current' : null });
     } else {
       this.store.getResumes().forEach(collect);
     }

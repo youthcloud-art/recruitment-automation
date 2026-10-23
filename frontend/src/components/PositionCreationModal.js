@@ -60,7 +60,7 @@ export default function PositionCreationModal({ visible, onClose, onCreated, ini
   };
 
   return (
-    <Modal title="创建本地招聘岗位" open={visible} onCancel={onClose} width={920}
+    <Modal title="创建本地招聘岗位" open={visible} onCancel={onClose} width={920} zIndex={1200}
       style={{ top: 24 }} styles={{ body: { maxHeight: 'calc(100vh - 210px)', overflowY: 'auto' } }}
       destroyOnClose footer={[
         <Button key="cancel" onClick={onClose} disabled={busy}>取消</Button>,

@@ -6,6 +6,7 @@ const { RecruitmentPipelineService, SOURCES, STATUSES } = require('./recruitment
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
 const { markdownToDocx } = require('./candidateReportDocx');
 const { candidateName, candidatePosition } = require('../utils/candidateDisplay');
+const { hasTrackedActiveJob } = require('../utils/activeJobScope');
 
 const SOURCE_NAMES = { boss: 'BOSS直聘', zlzp: '智联招聘', qcwy: '前程无忧' };
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -119,10 +120,16 @@ class CandidateEmailService {
     return { configured: missing.length === 0, missing };
   }
 
+  activeJobGroup(requirements) {
+    return hasTrackedActiveJob(this.pipeline.store, this.pipeline.activeJob?.(), requirements)
+      ? 'current' : '';
+  }
+
   select(input, { excludedHashes = null, recipientJobKey = '' } = {}) {
     const selection = normalizeSelection(input);
     const selectedZhilian = [];
-    const sourceRecords = this.pipeline.list({ source: selection.source, status: selection.status, limit: 10000 });
+    const sourceRecords = this.pipeline.list({ source: selection.source, status: selection.status,
+      limit: 10000, jobGroup: this.activeJobGroup(selection.jobRequirements) });
     if (sourceRecords.length >= 10000) {
       throw new Error('单次邮件筛选最多检查 10000 份简历，请按平台或跟进状态缩小范围');
     }
@@ -167,7 +174,8 @@ class CandidateEmailService {
   }
 
   screeningSummary(selection, candidates) {
-    const evaluated = this.pipeline.list({ source: selection.source, status: selection.status, limit: 10000 })
+    const evaluated = this.pipeline.list({ source: selection.source, status: selection.status,
+      limit: 10000, jobGroup: this.activeJobGroup(selection.jobRequirements) })
       .filter(item => (!selection.source || item.source === selection.source) &&
         (selection.status
           ? (item.workflowStatus || 'new') === selection.status

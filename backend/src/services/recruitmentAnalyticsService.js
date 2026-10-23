@@ -1,5 +1,6 @@
 const resumeModel = require('../models/resumeModel');
 const { ActiveJobService } = require('./activeJobService');
+const { hasTrackedActiveJob } = require('../utils/activeJobScope');
 const { isVettedEvaluation } = require('./resumeRecommendationService');
 const { candidateName, candidatePosition } = require('../utils/candidateDisplay');
 
@@ -125,7 +126,9 @@ class RecruitmentAnalyticsService {
     if (scope === 'all' || configured) {
       if (typeof this.store.forEachResume === 'function') {
         this.store.forEachResume(countRecord,
-          { jobRequirements: scope === 'active' ? requirements : null });
+          { jobRequirements: scope === 'active' ? requirements : null,
+            jobGroup: scope === 'active' && hasTrackedActiveJob(this.store, activeJob, requirements)
+              ? 'current' : null });
       } else {
         this.store.getResumes().forEach(countRecord);
       }

@@ -51,6 +51,56 @@ test('SQLite migration retains legacy JSON, deduplicates and updates a single ca
   assert.equal(model.getResumes().length, 2);
 });
 
+test('三平台岗位筛选与评分排序在 SQLite 全部结果分页前执行', t => {
+  const resumes = [
+    { id: 'a', source: 'boss', captureJobTitle: '网络运维', matchScore: 60 },
+    { id: 'b', source: 'zlzp', captureJobTitle: '网络运维', matchScore: 95 },
+    { id: 'c', source: 'qcwy', captureJobTitle: '网络运维', matchScore: 0 },
+    { id: 'd', source: 'boss', captureJobTitle: '网络运维' },
+    { id: 'e', source: 'boss', captureJobTitle: '财务经理', matchScore: 99 },
+    { id: 'f', source: 'qcwy', captureJobRequirements: '岗位名称：网络运维\n要求：Linux', matchScore: 70 }
+  ].map((item, index) => ({ ...item, createdAt: `2026-10-0${index + 1}T00:00:00.000Z` }));
+  const { libraryDir, cleanup } = fixture(t, { resumes, positions: [], categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  const filters = { hiringJobTitle: '网络运维', sources: ['boss', 'zlzp', 'qcwy'] };
+  assert.deepEqual(model.getResumesPage({ ...filters, sortBy: 'scoreDesc', limit: 2 }).items.map(x => x.id), ['b', 'f']);
+  assert.deepEqual(model.getResumesPage({ ...filters, sortBy: 'scoreDesc', limit: 2, offset: 2 }).items.map(x => x.id), ['a', 'c']);
+  assert.deepEqual(model.getResumesPage({ ...filters, sortBy: 'scoreAsc', limit: 6 }).items.map(x => x.id), ['c', 'a', 'f', 'b', 'd']);
+  assert.deepEqual(model.getResumesPage({ ...filters, source: 'qcwy', sortBy: 'scoreDesc' }).items.map(x => x.id), ['f', 'c']);
+  const counts = model.getHiringJobCounts(['boss', 'zlzp', 'qcwy']);
+  assert.equal(counts.filter(row => row.title === '网络运维').reduce((sum, row) => sum + row.total, 0), 5);
+  model.updateCandidateMetadata('d', { matchScore: 85 });
+  assert.deepEqual(model.getResumesPage({ ...filters, sortBy: 'scoreDesc', limit: 2 }).items.map(x => x.id), ['b', 'd']);
+});
+
+test('同名岗位归档后新旧候选人独立保存，旧无 ID 记录不会混入在用岗位', t => {
+  const criteria = { jobRequirements: '岗位名称：磁轴销售工程师\n负责销售' };
+  const positions = [
+    { id: 'position_old', title: '磁轴销售工程师', jobCriteria: criteria,
+      archivedAt: '2026-10-01T00:00:00Z' },
+    { id: 'position_new', title: '磁轴销售工程师', jobCriteria: criteria }
+  ];
+  const resumes = [
+    { id: 'old', source: 'boss', captureJobTitle: '磁轴销售工程师',
+      captureJobRequirements: criteria.jobRequirements, capturePositionId: 'position_old' },
+    { id: 'new', source: 'zlzp', captureJobTitle: '磁轴销售工程师',
+      captureJobRequirements: criteria.jobRequirements, capturePositionId: 'position_new' },
+    { id: 'legacy', source: 'qcwy', captureJobTitle: '磁轴销售工程师',
+      captureJobRequirements: criteria.jobRequirements }
+  ];
+  const { libraryDir, cleanup } = fixture(t, { resumes, positions, categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  assert.deepEqual(model.getResumesPage({ hiringJobTitle: '磁轴销售工程师',
+    jobGroup: 'current' }).items.map(item => item.id), ['new']);
+  assert.deepEqual(model.getResumesPage({ hiringJobTitle: '磁轴销售工程师',
+    jobGroup: 'historical' }).items.map(item => item.id).sort(), ['legacy', 'old']);
+  const groups = model.getHiringJobCounts(['boss', 'zlzp', 'qcwy']);
+  assert.equal(groups.filter(item => item.jobGroup === 'current').reduce((n, item) => n + item.total, 0), 1);
+  assert.equal(groups.filter(item => item.jobGroup === 'historical').reduce((n, item) => n + item.total, 0), 2);
+});
+
 test('SQLite position edits avoid loading candidate payloads and preserve linked resumes', async t => {
   const { libraryDir, cleanup } = fixture(t, { resumes: [], positions: [], categories: [] });
   const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
@@ -64,12 +114,33 @@ test('SQLite position edits avoid loading candidate payloads and preserve linked
   assert.equal(model.getPositionById(linked.id).description, '负责网络设备维护');
   const candidate = await model.addResume({ source: 'boss', positionId: linked.id,
     sourceFingerprint: 'position-linked', originalText: '独立测试简历' });
-  assert.deepEqual(await model.deletePosition(linked.id), {
-    success: false, error: '该岗位还有关联的简历，无法删除'
-  });
+  const archived = await model.deletePosition(linked.id);
+  assert.equal(archived.success, true);
+  assert.ok(archived.position.archivedAt);
+  assert.ok(model.getResumeById(candidate.id));
+  assert.equal(model.getResumesPage({ jobGroup: 'historical' }).total, 1);
+  assert.equal((await model.restorePosition(linked.id)).success, true);
+  assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
   assert.equal((await model.deletePosition(other.id)).success, true);
-  assert.equal(model.getPositions().length, 1);
+  assert.equal(model.getPositions().length, 2);
+  assert.equal(model.getPositionById(other.id).status, '已归档');
   assert.equal(model.getResumeById(candidate.id).positionId, linked.id);
+});
+
+test('restoring a unique archived job also restores safely matched legacy candidates', async t => {
+  const requirements = '岗位名称：网络运维\n负责企业网络设备维护';
+  const { libraryDir, cleanup } = fixture(t, { resumes: [], positions: [], categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  const position = await model.addPosition({ title: '网络运维',
+    jobCriteria: { jobRequirements: requirements } });
+  await model.addResume({ source: 'boss', captureJobTitle: '网络运维',
+    captureJobRequirements: requirements, sourceFingerprint: 'legacy-job-resume' });
+  assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
+  assert.equal((await model.deletePosition(position.id)).success, true);
+  assert.equal(model.getResumesPage({ jobGroup: 'historical' }).total, 1);
+  assert.equal((await model.restorePosition(position.id)).success, true);
+  assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
 });
 
 test('invalid legacy JSON cannot create a replacement SQLite database', t => {

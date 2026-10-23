@@ -5,7 +5,8 @@ const { evaluateLocally, isCostAccountingManagerJD, removePersonalInformation } 
 const { ActiveJobService } = require('./activeJobService');
 const { isVettedEvaluation } = require('./resumeRecommendationService');
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
-const { candidateName, candidatePosition } = require('../utils/candidateDisplay');
+const { candidateName, candidatePosition, hiringJobTitle } = require('../utils/candidateDisplay');
+const { hasTrackedActiveJob } = require('../utils/activeJobScope');
 
 const SOURCES = ['boss', 'zlzp', 'qcwy'];
 const STATUSES = ['new', 'shortlisted', 'viewed', 'contacted', 'rejected'];
@@ -65,12 +66,19 @@ class RecruitmentPipelineService {
     this.activeJobService = activeJobService;
   }
 
-  list({ source = '', status = '', keyword = '', limit = 200 } = {}) {
+  list({ source = '', status = '', keyword = '', limit = 200,
+    jobGroup = '' } = {}) {
     if (source && !SOURCES.includes(source)) throw new Error('不支持的招聘平台');
     if (status && !STATUSES.includes(status)) throw new Error('不支持的跟进状态');
     const term = String(keyword).trim().toLowerCase();
     const max = Math.min(Math.max(Number(limit) || 200, 1), 10000);
-    return this.store.getResumes().filter(item => SOURCES.includes(item.source))
+    const records = [];
+    if (jobGroup && typeof this.store.forEachResume === 'function') {
+      this.store.forEachResume(item => {
+        if (records.length <= max) records.push(item);
+      }, { source: source || null, status: status || null, jobGroup });
+    } else records.push(...this.store.getResumes());
+    return records.filter(item => SOURCES.includes(item.source))
       .filter(item => !source || item.source === source)
       .filter(item => !status || (item.workflowStatus || 'new') === status)
       .filter(item => !term || [item.name, item.position, item.expectedPosition?.position,
@@ -80,7 +88,8 @@ class RecruitmentPipelineService {
       .slice(0, max);
   }
 
-  listPage({ source = '', status = '', keyword = '', limit = 10, offset = 0 } = {}) {
+  listPage({ source = '', status = '', keyword = '', jobTitle = '', jobGroup = '',
+    sortBy = 'createdAt', limit = 10, offset = 0 } = {}) {
     if (source && !SOURCES.includes(source)) throw new Error('不支持的招聘平台');
     if (status && !STATUSES.includes(status)) throw new Error('不支持的跟进状态');
     const pageSize = Number(limit);
@@ -91,9 +100,36 @@ class RecruitmentPipelineService {
     }
     const term = String(keyword).trim();
     if (term.length > 100) throw new Error('搜索关键词过长');
-    return this.store.getResumesPage({ source: source || null,
+    const title = String(jobTitle).trim();
+    if (title.length > 120) throw new Error('岗位名称过长');
+    if (jobGroup && !['current', 'historical'].includes(jobGroup)) throw new Error('岗位分组无效');
+    if (!['createdAt', 'scoreAsc', 'scoreDesc'].includes(sortBy)) throw new Error('排序方式无效');
+    return this.store.getResumesPage({ source: source || null, hiringJobTitle: title || null,
+      jobGroup: jobGroup || null,
       sources: source ? null : SOURCES, status: status || null, keyword: term,
-      keywordFields: 'pipeline', limit: pageSize, offset: start });
+      keywordFields: 'pipeline', sortBy, limit: pageSize, offset: start });
+  }
+
+  jobs() {
+    const rows = typeof this.store.getHiringJobCounts === 'function'
+      ? this.store.getHiringJobCounts(SOURCES)
+      : this.store.getResumes().filter(item => SOURCES.includes(item.source))
+        .map(item => ({ title: hiringJobTitle(item),
+          source: item.source, total: 1 }));
+    const jobs = new Map();
+    for (const row of rows) {
+      const title = row.title || '招聘岗位待核实';
+      const jobGroup = row.jobGroup === 'historical' ? 'historical' : 'current';
+      const key = `${jobGroup}\u0000${title}`;
+      if (!jobs.has(key)) jobs.set(key, { title, jobGroup, total: 0,
+        bySource: Object.fromEntries(SOURCES.map(source => [source, 0])) });
+      const count = Number(row.total) || 0;
+      jobs.get(key).total += count;
+      if (row.source in jobs.get(key).bySource) jobs.get(key).bySource[row.source] += count;
+    }
+    return [...jobs.values()].sort((a, b) =>
+      (a.jobGroup === b.jobGroup ? 0 : a.jobGroup === 'current' ? -1 : 1) ||
+      b.total - a.total || a.title.localeCompare(b.title, 'zh-CN'));
   }
 
   summary() {
@@ -197,7 +233,8 @@ class RecruitmentPipelineService {
     if (requirements.length > 5000) {
       throw new Error('岗位要求需为 5～5000 字');
     }
-    const records = this.list({ source, status, limit: 10000 });
+    const records = this.list({ source, status, limit: 10000,
+      jobGroup: hasTrackedActiveJob(this.store, activeJob, requirements) ? 'current' : '' });
     if (records.length >= 10000) {
       throw new Error('单次报告最多检查 10000 份简历，请按平台或跟进状态缩小范围');
     }

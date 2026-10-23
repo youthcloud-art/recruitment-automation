@@ -216,8 +216,14 @@ class ActiveJobService {
     }
   }
 
-  save(input) {
+  save(input, { positionId = null } = {}) {
     const normalized = normalizeJob(input);
+    if (positionId !== null) {
+      if (typeof positionId !== 'string' || !/^position_[A-Za-z0-9_-]{1,80}$/.test(positionId)) {
+        throw new Error('岗位编号无效');
+      }
+      normalized.positionId = positionId;
+    }
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = `${this.file}.${process.pid}.tmp`;
     try {

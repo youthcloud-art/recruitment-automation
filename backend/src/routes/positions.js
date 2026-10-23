@@ -45,7 +45,7 @@ router.post('/:id/apply-local', localPositionAccess, (req, res) => {
 // 获取所有岗位
 router.get('/', async (req, res) => {
   try {
-    const positions = await PositionService.getPositions();
+    const positions = await PositionService.getPositions({ includeArchived: req.query.includeArchived === '1' });
     res.json({ success: true, data: positions });
   } catch (error) {
     console.error('获取岗位列表失败:', error);
@@ -123,6 +123,15 @@ router.delete('/:id', async (req, res) => {
     }
   } catch (error) {
     console.error('删除岗位失败:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/:id/restore', async (req, res) => {
+  try {
+    const result = await PositionService.restorePosition(req.params.id);
+    res.status(result.success ? 200 : 404).json(result);
+  } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });

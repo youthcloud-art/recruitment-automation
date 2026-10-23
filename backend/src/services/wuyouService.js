@@ -9,6 +9,7 @@ const { launchVisibleChromeCdp } = require('./visibleChromeCdp');
 const { isQcwyPageLabel, jobTitleFromRequirements } = require('../utils/candidateDisplay');
 const { extractQcwyExpectedPosition } = require('../utils/qcwyExpectedPosition');
 const { qcwyHeaderAlias } = require('../utils/qcwyHeaderAlias');
+const { ActiveJobService } = require('./activeJobService');
 
 const HOME_URL = 'https://ehire.51job.com/';
 const TALENT_SEARCH_URL = 'https://ehire.51job.com/Revision/talent/search';
@@ -101,7 +102,8 @@ class WuyouService {
   constructor({ resumeStore = resumeModel, parser = resumeParserService, pipeline = null,
     browserType = chromium, visibleChromeLauncher = launchVisibleChromeCdp,
     useVisibleCdp = process.platform === 'win32' && browserType === chromium,
-    sessionLoader = loadBrowserSession, sessionSaver = saveBrowserSession } = {}) {
+    sessionLoader = loadBrowserSession, sessionSaver = saveBrowserSession,
+    activeJobService = new ActiveJobService() } = {}) {
     this.resumeStore = resumeStore;
     this.parser = parser;
     this.pipeline = pipeline || new RecruitmentPipelineService({ store: resumeStore });
@@ -110,6 +112,7 @@ class WuyouService {
     this.useVisibleCdp = useVisibleCdp;
     this.sessionLoader = sessionLoader;
     this.sessionSaver = sessionSaver;
+    this.activeJobService = activeJobService;
     this.browser = null;
     this.context = null;
     this.page = null;
@@ -909,6 +912,7 @@ class WuyouService {
       parsed.expectedPosition = { ...(typeof parsed.expectedPosition === 'object' &&
         parsed.expectedPosition ? parsed.expectedPosition : {}), position: intentPosition };
     }
+    const activeJob = jobRequirements && this.activeJobService.current();
     const result = await this.resumeStore.addResume({
       ...parsed,
       name: verifiedName || '未识别姓名',
@@ -922,6 +926,8 @@ class WuyouService {
       originalText: resume.text,
       captureJobRequirements: String(jobRequirements || '').trim() || null,
       captureJobTitle: jobTitleFromRequirements(jobRequirements) || null,
+      capturePositionId: activeJob?.jobRequirements === String(jobRequirements || '').trim()
+        ? activeJob.positionId || null : null,
       parseMethod: 'local',
       parseStatus: 'completed'
     }, { returnStatus: true });

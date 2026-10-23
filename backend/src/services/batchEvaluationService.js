@@ -2,6 +2,7 @@ const { RecruitmentPipelineService } = require('./recruitmentPipelineService');
 const { isCostAccountingManagerJD, COST_ACCOUNTING_RUBRIC_VERSION } =
   require('./localResumeEvaluationService');
 const { classifyLlmAccessError } = require('./llmAccessError');
+const { hasTrackedActiveJob } = require('../utils/activeJobScope');
 
 function hasCurrentEvaluation(item, requirements) {
   const evaluation = item.matchEvaluation;
@@ -64,8 +65,11 @@ class BatchEvaluationService {
       if (candidates.length < count) candidates.push(item);
     };
     if (typeof this.pipeline.store?.forEachResume === 'function') {
+      const activeJob = typeof this.pipeline.activeJob === 'function' ? this.pipeline.activeJob() : null;
+      const scopeCurrentJob = hasTrackedActiveJob(this.pipeline.store, activeJob, requirements);
       this.pipeline.store.forEachResume(consider, {
-        source: source || null, status: status || null
+        source: source || null, status: status || null,
+        ...(scopeCurrentJob ? { jobRequirements: requirements, jobGroup: 'current' } : {})
       });
     } else {
       this.pipeline.list({ source, status, limit: 10000 }).forEach(consider);

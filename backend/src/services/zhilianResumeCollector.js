@@ -135,6 +135,7 @@ class ZhilianResumeCollector {
       originalText: captured.text,
       captureJobRequirements: String(activeJob?.jobRequirements || '').trim() || null,
       captureJobTitle: String(activeJob?.title || '').trim() || null,
+      capturePositionId: activeJob?.positionId || null,
       parseMethod,
       parseStatus: parseMethod === 'llm' ? 'completed' : 'needs_review'
     };

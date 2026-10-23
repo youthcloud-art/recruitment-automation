@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const os = require('os');
 const { bossNameKey, sameBossNearDuplicate,
   chooseBossNearDuplicate } = require('../utils/bossResumeIdentity');
+const { hiringJobTitle } = require('../utils/candidateDisplay');
 
 const BASE_SNAPSHOT = Symbol('sqlite-resume-read-snapshot');
 
@@ -47,6 +48,21 @@ function validLibrary(value) {
     ids.add(resume.id);
   }
   return value;
+}
+
+function resumeJobState(resume, positions) {
+  if (resume.jobArchiveState === 'archived') return 'archived';
+  const id = resume.capturePositionId || resume.positionId;
+  if (id) {
+    const position = positions.find(item => item.id === id);
+    return position ? (position.archivedAt ? 'archived' : 'current') : 'historical';
+  }
+  const requirements = resume.captureJobRequirements;
+  if (!requirements) return 'historical';
+  const matches = positions.filter(position =>
+    position.title === hiringJobTitle(resume) &&
+    position.jobCriteria?.jobRequirements === requirements);
+  return matches.length === 1 ? (matches[0].archivedAt ? 'archived' : 'current') : 'historical';
 }
 
 class SqliteResumeStore {
@@ -133,6 +149,10 @@ class SqliteResumeStore {
         source_url TEXT,
         candidate_name TEXT,
         position TEXT,
+        hiring_job_title TEXT,
+        match_score REAL,
+        capture_position_id TEXT,
+        job_state TEXT,
         workflow_status TEXT,
         created_at TEXT,
         payload TEXT NOT NULL
@@ -188,6 +208,65 @@ class SqliteResumeStore {
     }
     if (!columns.some(column => column.name === 'boss_name_key')) {
       this.db.exec('ALTER TABLE candidate_resumes ADD COLUMN boss_name_key TEXT');
+    }
+    if (!columns.some(column => column.name === 'hiring_job_title')) {
+      this.db.exec('ALTER TABLE candidate_resumes ADD COLUMN hiring_job_title TEXT');
+    }
+    if (!columns.some(column => column.name === 'match_score')) {
+      this.db.exec('ALTER TABLE candidate_resumes ADD COLUMN match_score REAL');
+    }
+    if (!columns.some(column => column.name === 'capture_position_id')) {
+      this.db.exec('ALTER TABLE candidate_resumes ADD COLUMN capture_position_id TEXT');
+    }
+    if (!columns.some(column => column.name === 'job_state')) {
+      this.db.exec('ALTER TABLE candidate_resumes ADD COLUMN job_state TEXT');
+    }
+    const candidateViewBackfilled = this.db.prepare(`SELECT value FROM library_metadata
+      WHERE key = 'candidate_view_fields_backfilled'`).get();
+    if (!candidateViewBackfilled) {
+      const rows = this.db.prepare('SELECT id, payload FROM candidate_resumes').iterate();
+      const update = this.db.prepare(`UPDATE candidate_resumes
+        SET hiring_job_title = ?, match_score = ? WHERE id = ?`);
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const row of rows) {
+          const resume = JSON.parse(row.payload);
+          update.run(hiringJobTitle(resume), Number.isFinite(resume.matchScore) ? resume.matchScore : null, row.id);
+        }
+        this.db.prepare(`INSERT INTO library_metadata (key, value) VALUES
+          ('candidate_view_fields_backfilled', 'true')`).run();
+        this.db.exec('COMMIT');
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    }
+    this.db.exec(`CREATE INDEX IF NOT EXISTS candidate_hiring_job
+      ON candidate_resumes(hiring_job_title, source, created_at DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS candidate_match_score
+      ON candidate_resumes(match_score, created_at DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS candidate_job_group
+      ON candidate_resumes(job_state, hiring_job_title, source, created_at DESC)`);
+    // Staging databases have no legacy hash until migration has loaded its
+    // metadata. Backfill on the first real open so old candidates are assigned
+    // from the retained position catalog exactly once.
+    if (this.db.prepare(`SELECT value FROM library_metadata WHERE key = 'legacy_sha256'`).get() &&
+        !this.db.prepare(`SELECT value FROM library_metadata
+          WHERE key = 'candidate_job_state_backfilled'`).get()) {
+      const positions = this.metadata('positions');
+      const update = this.db.prepare(`UPDATE candidate_resumes
+        SET capture_position_id = ?, job_state = ? WHERE id = ?`);
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const row of this.db.prepare('SELECT id, payload FROM candidate_resumes').iterate()) {
+          const resume = JSON.parse(row.payload);
+          update.run(resume.capturePositionId || resume.positionId || null,
+            resumeJobState(resume, positions), row.id);
+        }
+        this.db.prepare(`INSERT INTO library_metadata (key, value) VALUES
+          ('candidate_job_state_backfilled', 'true')`).run();
+        this.db.exec('COMMIT');
+      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     }
     this.db.exec(`CREATE INDEX IF NOT EXISTS candidate_boss_identity
       ON candidate_resumes(source, source_candidate_id)`);
@@ -282,8 +361,10 @@ class SqliteResumeStore {
         const insert = staging.prepare(`INSERT INTO candidate_resumes
           (id, source, source_fingerprint, source_candidate_id, source_card_fingerprint,
            boss_name_key, source_url,
-           candidate_name, position, workflow_status, created_at, payload)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+           candidate_name, position, hiring_job_title, match_score,
+           capture_position_id, job_state,
+           workflow_status, created_at, payload)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         for (const resume of library.resumes) insert.run(...SqliteResumeStore.values(resume));
         const meta = staging.prepare('INSERT INTO library_metadata (key, value) VALUES (?, ?)');
         meta.run('positions', JSON.stringify(library.positions));
@@ -316,12 +397,15 @@ class SqliteResumeStore {
     }
   }
 
-  static values(resume) {
+  static values(resume, jobState = 'historical') {
     return [resume.id, resume.source || null, resume.sourceFingerprint || null,
       resume.sourceCandidateId || null, resume.sourceCardFingerprint || null,
       resume.source === 'boss' ? bossNameKey(resume.name) || null : null,
       resume.sourceUrl || null, resume.name || null,
-      resume.position || null, resume.workflowStatus || 'new',
+      resume.position || null, hiringJobTitle(resume),
+      Number.isFinite(resume.matchScore) ? resume.matchScore : null,
+      resume.capturePositionId || resume.positionId || null, jobState,
+      resume.workflowStatus || 'new',
       resume.createdAt || null, JSON.stringify(resume)];
   }
 
@@ -378,6 +462,57 @@ class SqliteResumeStore {
     }
   }
 
+  archivePosition(positionId) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const positions = this.metadata('positions');
+      const index = positions.findIndex(item => item.id === positionId);
+      if (index < 0 || positions[index].archivedAt) {
+        this.db.exec('ROLLBACK');
+        return { success: false, error: index < 0 ? '岗位不存在' : '岗位已归档' };
+      }
+      const position = { ...positions[index], archivedAt: new Date().toISOString(), status: '已归档' };
+      positions[index] = position;
+      this.db.prepare(`UPDATE library_metadata SET value = ? WHERE key = 'positions'`)
+        .run(JSON.stringify(positions));
+      this.db.prepare(`UPDATE candidate_resumes SET job_state = 'archived'
+        WHERE capture_position_id = ? OR
+          (capture_position_id IS NULL AND job_state = 'current' AND hiring_job_title = ?
+           AND json_extract(payload, '$.captureJobRequirements') = ?)`)
+        .run(positionId, position.title, position.jobCriteria?.jobRequirements || null);
+      this.db.exec('COMMIT');
+      return { success: true, position, message: '岗位已归档，相关简历已保留' };
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
+  restorePosition(positionId) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const positions = this.metadata('positions');
+      const index = positions.findIndex(item => item.id === positionId && item.archivedAt);
+      if (index < 0) {
+        this.db.exec('ROLLBACK');
+        return { success: false, error: '未找到已归档岗位' };
+      }
+      const position = { ...positions[index], status: '招聘中' };
+      delete position.archivedAt;
+      positions[index] = position;
+      this.db.prepare(`UPDATE library_metadata SET value = ? WHERE key = 'positions'`)
+        .run(JSON.stringify(positions));
+      this.db.prepare(`UPDATE candidate_resumes SET job_state = 'current'
+        WHERE capture_position_id = ?`).run(positionId);
+      if (positions.filter(item => item.title === position.title &&
+          item.jobCriteria?.jobRequirements === position.jobCriteria?.jobRequirements).length === 1) {
+        this.db.prepare(`UPDATE candidate_resumes SET job_state = 'current'
+          WHERE capture_position_id IS NULL AND job_state = 'archived'
+          AND hiring_job_title = ? AND json_extract(payload, '$.captureJobRequirements') = ?`)
+          .run(position.title, position.jobCriteria?.jobRequirements || null);
+      }
+      this.db.exec('COMMIT');
+      return { success: true, position, message: '岗位已恢复' };
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
   hasResumeForPositionId(positionId) {
     return Boolean(this.db.prepare(`SELECT 1 FROM candidate_resumes
       WHERE json_extract(payload, '$.positionId') = ? LIMIT 1`).get(positionId));
@@ -396,12 +531,15 @@ class SqliteResumeStore {
   // Read one payload at a time for aggregate views. The legacy getResumes()
   // API must still return an array, but recommendation/analytics should not
   // materialize every historical candidate just to count the current job.
-  forEachResume(visitor, { source = null, status = null, jobRequirements = null } = {}) {
+  forEachResume(visitor, { source = null, status = null, jobRequirements = null,
+    jobGroup = null } = {}) {
     if (typeof visitor !== 'function') throw new TypeError('简历读取回调无效');
     const filters = [];
     const params = [];
     if (source) { filters.push('source = ?'); params.push(source); }
     if (status) { filters.push('workflow_status = ?'); params.push(status); }
+    if (jobGroup === 'current') filters.push("job_state = 'current'");
+    else if (jobGroup === 'historical') filters.push("job_state IN ('archived', 'historical')");
     if (jobRequirements !== null) {
       filters.push("(json_extract(payload, '$.matchEvaluation.jobRequirements') = ? OR json_extract(payload, '$.captureJobRequirements') = ?)");
       params.push(jobRequirements, jobRequirements);
@@ -416,17 +554,21 @@ class SqliteResumeStore {
     return count;
   }
 
-  getResumesPage({ position = null, source = null, sources = null, status = null,
+  getResumesPage({ position = null, hiringJobTitle: jobTitle = null, jobGroup = null,
+    source = null, sources = null, status = null,
     keyword = '', keywordFields = 'library', sortBy = 'createdAt', limit = 100, offset = 0 } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500 ||
         !Number.isInteger(offset) || offset < 0) throw new Error('分页参数无效');
-    if (!['createdAt', 'name', 'experience', 'education', 'age'].includes(sortBy)) {
+    if (!['createdAt', 'name', 'experience', 'education', 'age', 'scoreAsc', 'scoreDesc'].includes(sortBy)) {
       throw new Error('排序方式无效');
     }
     if (!['library', 'pipeline'].includes(keywordFields)) throw new Error('搜索范围无效');
     const filters = [];
     const params = [];
     if (position) { filters.push('position = ?'); params.push(position); }
+    if (jobTitle) { filters.push('hiring_job_title = ?'); params.push(jobTitle); }
+    if (jobGroup === 'current') filters.push("job_state = 'current'");
+    else if (jobGroup === 'historical') filters.push("job_state IN ('archived', 'historical')");
     if (source) { filters.push('source = ?'); params.push(source); }
     else if (sources?.length) {
       filters.push(`source IN (${sources.map(() => '?').join(',')})`);
@@ -438,7 +580,7 @@ class SqliteResumeStore {
       // Limit the JSON scan to the fields exposed by the library search. The
       // result and count stay in SQLite; only the selected page reaches React.
       const fields = [
-        'candidate_name', 'position',
+        'candidate_name', 'position', 'hiring_job_title',
         "json_extract(payload, '$.expectedPosition.position')",
         "json_extract(payload, '$.expectedPosition')",
         "json_extract(payload, '$.skills')",
@@ -459,13 +601,16 @@ class SqliteResumeStore {
       education: `CASE CAST(json_extract(payload, '$.education') AS TEXT)
         WHEN '博士' THEN 5 WHEN '硕士' THEN 4 WHEN '本科' THEN 3
         WHEN '大专' THEN 2 WHEN '高中' THEN 1 ELSE 0 END DESC, created_at DESC, rowid DESC`,
-      age: "CAST(COALESCE(json_extract(payload, '$.age'), '0') AS INTEGER) ASC, created_at DESC, rowid DESC"
+      age: "CAST(COALESCE(json_extract(payload, '$.age'), '0') AS INTEGER) ASC, created_at DESC, rowid DESC",
+      scoreAsc: '(match_score IS NULL) ASC, match_score ASC, created_at DESC, rowid DESC',
+      scoreDesc: '(match_score IS NULL) ASC, match_score DESC, created_at DESC, rowid DESC'
     }[sortBy];
     const total = this.db.prepare(`SELECT COUNT(*) AS total FROM candidate_resumes ${where}`)
       .get(...params).total;
-    const items = this.db.prepare(`SELECT payload FROM candidate_resumes ${where}
+    const items = this.db.prepare(`SELECT payload, job_state FROM candidate_resumes ${where}
       ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
-      .all(...params, limit, offset).map(row => JSON.parse(row.payload));
+      .all(...params, limit, offset).map(row => ({ ...JSON.parse(row.payload),
+        jobGroup: row.job_state === 'current' ? 'current' : 'historical' }));
     return { items, total, limit, offset };
   }
 
@@ -474,6 +619,15 @@ class SqliteResumeStore {
     return this.db.prepare(`SELECT source, workflow_status AS status, COUNT(*) AS total
       FROM candidate_resumes WHERE source IN (${sources.map(() => '?').join(',')})
       GROUP BY source, workflow_status`).all(...sources);
+  }
+
+  getHiringJobCounts(sources) {
+    if (!Array.isArray(sources) || !sources.length) return [];
+    return this.db.prepare(`SELECT hiring_job_title AS title, source,
+        CASE WHEN job_state = 'current' THEN 'current' ELSE 'historical' END AS jobGroup,
+        COUNT(*) AS total
+      FROM candidate_resumes WHERE source IN (${sources.map(() => '?').join(',')})
+      GROUP BY hiring_job_title, source, jobGroup`).all(...sources);
   }
 
   getResumeById(id) {
@@ -587,11 +741,15 @@ class SqliteResumeStore {
   }
 
   putResume(resume) {
+    const existing = this.db.prepare('SELECT job_state FROM candidate_resumes WHERE id = ?').get(resume.id);
+    const state = existing?.job_state || resumeJobState(resume, this.metadata('positions'));
     this.db.prepare(`INSERT INTO candidate_resumes
       (id, source, source_fingerprint, source_candidate_id, source_card_fingerprint,
        boss_name_key, source_url,
-       candidate_name, position, workflow_status, created_at, payload)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       candidate_name, position, hiring_job_title, match_score,
+       capture_position_id, job_state,
+       workflow_status, created_at, payload)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET source=excluded.source,
         source_fingerprint=excluded.source_fingerprint,
         source_candidate_id=excluded.source_candidate_id,
@@ -599,8 +757,10 @@ class SqliteResumeStore {
         boss_name_key=excluded.boss_name_key,
         source_url=excluded.source_url,
         candidate_name=excluded.candidate_name, position=excluded.position,
+        hiring_job_title=excluded.hiring_job_title, match_score=excluded.match_score,
+        capture_position_id=excluded.capture_position_id, job_state=excluded.job_state,
         workflow_status=excluded.workflow_status, created_at=excluded.created_at,
-        payload=excluded.payload`).run(...SqliteResumeStore.values(resume));
+        payload=excluded.payload`).run(...SqliteResumeStore.values(resume, state));
   }
 
   insertIfNew(incoming, resume) {
@@ -675,4 +835,4 @@ class SqliteResumeStore {
   close() { this.db.close(); }
 }
 
-module.exports = { SqliteResumeStore };
+module.exports = { SqliteResumeStore, resumeJobState };

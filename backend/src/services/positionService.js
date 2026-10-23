@@ -92,24 +92,24 @@ class PositionService {
     }
     const previous = this.activeJobService.current();
     const existing = this.resumeModel.getPositions();
-    const match = existing.find(position => this.sameJob(position.jobCriteria, job));
+    const match = existing.find(position => !position.archivedAt && this.sameJob(position.jobCriteria, job));
     const added = [];
     try {
       // Preserve a job set through the older active-job editor before it is
       // replaced, so it can later be selected again from the local job list.
       if (previous.title && previous.jobRequirements &&
           !this.sameJob(previous, job) &&
-          !existing.some(position => this.sameJob(position.jobCriteria, previous))) {
+          !existing.some(position => !position.archivedAt && this.sameJob(position.jobCriteria, previous))) {
         added.push(await this.resumeModel.addPosition(this.positionDataFromJob(previous)));
       }
       const position = match || await this.resumeModel.addPosition(this.positionDataFromJob(job, checkedMetadata));
       if (!match) added.push(position);
-      const savedJob = this.activeJobService.save(job);
+      const savedJob = this.activeJobService.save(job, { positionId: position.id });
       positionCache.del('all_positions');
       return { position, job: savedJob, reused: Boolean(match) };
     } catch (error) {
       for (const position of added.reverse()) {
-        const rollback = await this.resumeModel.deletePosition(position.id);
+        const rollback = await this.resumeModel.removeUncommittedPosition(position.id);
         if (!rollback.success) error.message += '；本地岗位记录回滚失败，请检查岗位列表';
       }
       positionCache.del('all_positions');
@@ -119,9 +119,9 @@ class PositionService {
 
   applyLocalPosition(positionId) {
     const position = this.resumeModel.getPositionById(positionId);
-    if (!position) throw new Error('岗位不存在');
+    if (!position || position.archivedAt) throw new Error('岗位不存在或已归档');
     if (!position.jobCriteria) throw new Error('该岗位没有可应用的三平台筛选条件');
-    const job = this.activeJobService.save(position.jobCriteria);
+    const job = this.activeJobService.save(position.jobCriteria, { positionId: position.id });
     return { position, job };
   }
   
@@ -401,19 +401,19 @@ ${positionInfo.salary || '面议'}
     };
   }
 
-  async getPositions() {
+  async getPositions({ includeArchived = false } = {}) {
     const cacheKey = 'all_positions';
     let cachedPositions = positionCache.get(cacheKey);
     
     if (cachedPositions) {
       console.log('📦 使用缓存的岗位数据');
-      return cachedPositions;
+      return includeArchived ? cachedPositions : cachedPositions.filter(position => !position.archivedAt);
     }
     
     const positions = await this.resumeModel.getPositions();
     positionCache.set(cacheKey, positions);
     
-    return positions;
+    return includeArchived ? positions : positions.filter(position => !position.archivedAt);
   }
 
   async getPositionById(positionId) {
@@ -454,6 +454,12 @@ ${positionInfo.salary || '面议'}
 
   async deletePosition(positionId) {
     try {
+      const active = this.activeJobService.current();
+      const position = this.resumeModel.getPositionById(positionId);
+      if (position && (active.positionId === positionId ||
+          (!active.positionId && this.sameJob(position.jobCriteria, active)))) {
+        return { success: false, error: '当前使用的岗位不能归档，请先应用另一个岗位' };
+      }
       const result = await this.resumeModel.deletePosition(positionId);
       if (result.success) {
         positionCache.del('all_positions');
@@ -467,6 +473,15 @@ ${positionInfo.salary || '面议'}
         error: error.message
       };
     }
+  }
+
+  async restorePosition(positionId) {
+    const result = await this.resumeModel.restorePosition(positionId);
+    if (result.success) {
+      positionCache.del('all_positions');
+      positionCache.del(`position_${positionId}`);
+    }
+    return result;
   }
 }
 

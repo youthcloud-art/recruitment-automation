@@ -25,6 +25,8 @@ const PositionManagementContainer = styled.div`
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
     margin-bottom: 16px;
     
     .title {
@@ -59,12 +61,21 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
   const [editForm] = Form.useForm();
   const [revisingJob, setRevisingJob] = useState(null);
   const [activeJob, setActiveJob] = useState(null);
+  const [viewArchived, setViewArchived] = useState(false);
+
+  useEffect(() => {
+    if (visible) return;
+    setIsAddModalVisible(false);
+    setIsEditModalVisible(false);
+    setEditingPosition(null);
+    setRevisingJob(null);
+  }, [visible]);
 
   // 获取岗位列表
   const fetchPositions = async () => {
     setLoading(true);
     try {
-      const result = await apiGet(API_ENDPOINTS.POSITIONS.LIST);
+      const result = await apiGet(API_ENDPOINTS.POSITIONS.LIST, { includeArchived: 1 });
       
       if (result.success) {
         setPositions(result.data || []);
@@ -135,8 +146,9 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
   }, [visible]);
 
   const visiblePositions = mergeActivePosition(positions, activeJob);
+  const scopedPositions = visiblePositions.filter(position => Boolean(position.archivedAt) === viewArchived);
   const filteredPositions = companyInfo?.filters
-    ? applyFilters(visiblePositions, companyInfo.filters) : visiblePositions;
+    ? applyFilters(scopedPositions, companyInfo.filters) : scopedPositions;
 
   // 添加岗位
   const handleAddPosition = async (values) => {
@@ -197,7 +209,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     try {
       const result = await apiDelete(`${API_ENDPOINTS.POSITIONS.DELETE}/${positionId}`);
       if (result.success) {
-        message.success('岗位删除成功');
+        message.success('岗位已归档，简历已保留在三平台候选人的历史岗位中');
         fetchPositions(); // 重新获取岗位列表
       } else {
         throw new Error(result.error || '删除岗位失败');
@@ -208,16 +220,24 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     }
   };
 
+  const restorePosition = async positionId => {
+    try {
+      const result = await apiPost(`/positions/${encodeURIComponent(positionId)}/restore`);
+      if (!result.success) throw new Error(result.error || '恢复岗位失败');
+      message.success('岗位已恢复；需要采集时请再点击“应用”');
+      fetchPositions();
+    } catch (error) { message.error('恢复岗位失败：' + error.message); }
+  };
+
   // Keep the confirmation outside the table row. Refreshing the table while a
   // row-level Popconfirm is open can unmount that row before its onConfirm runs.
   const confirmDeletePosition = (positionId) => {
     Modal.confirm({
-      title: '确认删除',
-      content: '删除后无法恢复，确定要删除这个岗位吗？',
-      okText: '删除',
-      okType: 'danger',
+      title: '归档岗位并保留简历？',
+      content: '岗位将从在用列表移到历史岗位；已采集的候选人与评分仍可单独查看，也可以恢复岗位。',
+      okText: '归档岗位',
       cancelText: '取消',
-      zIndex: 1100,
+      zIndex: 1200,
       onOk: () => handleDeletePosition(positionId)
     });
   };
@@ -230,7 +250,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     } catch (error) { message.error('应用岗位失败：' + error.message); }
   };
 
-  const isActivePosition = position => sameCriteria(position.jobCriteria, activeJob);
+  const isActivePosition = position => !position.archivedAt && sameCriteria(position.jobCriteria, activeJob);
 
   // 打开编辑弹窗
   const openEditModal = (position) => {
@@ -258,6 +278,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
       render: (text, record) => <>
         <strong>{record.title || text || '-'}</strong>
         {isActivePosition(record) && <Tag color="green" style={{ marginLeft: 6 }}>当前使用</Tag>}
+        {record.archivedAt && <Tag style={{ marginLeft: 6 }}>历史岗位</Tag>}
       </>
     },
     {
@@ -346,6 +367,8 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
       fixed: 'right',
       render: (_, record) => (
         <Space size="small">
+          {record.archivedAt ? <Button type="link" size="small"
+            onClick={() => restorePosition(record.id)}>恢复岗位</Button> : <>
           {record.jobCriteria && <Button type="link" size="small"
             disabled={isActivePosition(record)}
             onClick={() => applyPosition(record.id)}>应用</Button>}
@@ -362,8 +385,9 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
             icon={<DeleteOutlined />}
             onClick={() => confirmDeletePosition(record.id)}
           >
-            删除
+            归档
           </Button>
+          </>}
         </Space>
       )
     }
@@ -442,13 +466,14 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
               </span>
             )}
           </div>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setIsAddModalVisible(true)}
-          >
-            添加岗位
-          </Button>
+          <Space>
+            <Button type={viewArchived ? 'default' : 'primary'} onClick={() => setViewArchived(false)}>
+              在用岗位（{visiblePositions.filter(item => !item.archivedAt).length}）</Button>
+            <Button type={viewArchived ? 'primary' : 'default'} onClick={() => setViewArchived(true)}>
+              历史岗位（{visiblePositions.filter(item => item.archivedAt).length}）</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddModalVisible(true)}>
+              添加岗位</Button>
+          </Space>
         </div>
 
         <Table
@@ -470,6 +495,9 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
         <Modal
           title="添加岗位"
           open={isAddModalVisible}
+          zIndex={1200}
+          style={{ top: 24 }}
+          styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' } }}
           onCancel={() => {
             setIsAddModalVisible(false);
             addForm.resetFields();
@@ -570,6 +598,9 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
         <Modal
           title="编辑岗位"
           open={isEditModalVisible}
+          zIndex={1200}
+          style={{ top: 24 }}
+          styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' } }}
           onCancel={() => {
             setIsEditModalVisible(false);
             setEditingPosition(null);

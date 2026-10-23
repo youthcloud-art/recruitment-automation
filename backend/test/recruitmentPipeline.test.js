@@ -65,10 +65,32 @@ test('三平台候选人分页仅传输当前页，汇总使用按平台状态�
   const page = service.listPage({ keyword: '网络', limit: '20', offset: '20' });
   assert.equal(page.total, 61);
   assert.deepEqual(calls[0], { source: null, sources: ['boss', 'zlzp', 'qcwy'],
-    status: null, keyword: '网络', keywordFields: 'pipeline', limit: 20, offset: 20 });
+    hiringJobTitle: null, jobGroup: null, status: null, keyword: '网络', keywordFields: 'pipeline',
+    sortBy: 'createdAt', limit: 20, offset: 20 });
   assert.equal(service.summary().boss.total, 20);
   assert.equal(service.summary().qcwy.byStatus.shortlisted, 7);
   assert.throws(() => service.listPage({ limit: 0 }), /分页/);
+  service.listPage({ source: 'boss', jobTitle: '网络运维', sortBy: 'scoreDesc', limit: 10 });
+  assert.equal(calls[1].hiringJobTitle, '网络运维');
+  assert.equal(calls[1].jobGroup, null);
+  assert.equal(calls[1].sortBy, 'scoreDesc');
+  assert.throws(() => service.listPage({ sortBy: 'scoreRandom' }), /排序/);
+});
+
+test('岗位选项跨平台汇总，同名岗位不会重复', () => {
+  const service = new RecruitmentPipelineService({
+    store: { getHiringJobCounts: () => [
+      { title: '网络运维', source: 'boss', total: 2 },
+      { title: '网络运维', source: 'zlzp', total: 3 },
+      { title: '财务经理', source: 'qcwy', total: 1 }
+    ] }, activeJobService: noActiveJob
+  });
+  assert.deepEqual(service.jobs(), [
+    { title: '网络运维', jobGroup: 'current', total: 5,
+      bySource: { boss: 2, zlzp: 3, qcwy: 0 } },
+    { title: '财务经理', jobGroup: 'current', total: 1,
+      bySource: { boss: 0, zlzp: 0, qcwy: 1 } }
+  ]);
 });
 
 test('DeepSeek 岗位评估只保存可解析结果且屏蔽联系方式', async () => {

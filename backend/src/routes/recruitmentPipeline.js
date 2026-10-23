@@ -8,7 +8,8 @@ const { postCaptureEvaluationQueue } = require('../services/postCaptureEvaluatio
 const { SmtpConfigService } = require('../services/smtpConfigService');
 const { markdownToDocx } = require('../services/candidateReportDocx');
 const multer = require('multer');
-const { ActiveJobService, parseJobTemplate } = require('../services/activeJobService');
+const { parseJobTemplate } = require('../services/activeJobService');
+const positionService = require('../services/positionService');
 const { RecruitmentAnalyticsService } = require('../services/recruitmentAnalyticsService');
 const { ResumeRecommendationService } = require('../services/resumeRecommendationService');
 const { publicCandidate, publicCandidateSummary } = require('../utils/candidateDisplay');
@@ -22,7 +23,6 @@ const batchService = new BatchEvaluationService({ pipeline: service,
     if (evaluation?.method === 'llm') postCaptureEvaluationQueue.resume();
   } });
 const smtpConfig = new SmtpConfigService();
-const activeJobService = new ActiveJobService();
 const analyticsService = new RecruitmentAnalyticsService();
 const recommendationService = new ResumeRecommendationService();
 const uploadJobTemplate = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1_500_000 } }).single('file');
@@ -116,19 +116,25 @@ router.get('/active-job/template', (_req, res) => {
   } catch (error) { fail(res, error); }
 });
 
-router.put('/active-job', (req, res) => {
-  try { res.json({ success: true, data: activeJobService.save(req.body) }); }
+router.put('/active-job', async (req, res) => {
+  try {
+    const result = await positionService.createLocalPosition(req.body);
+    res.json({ success: true, data: result.job });
+  }
   catch (error) { res.status(400).json({ success: false, message: error.message }); }
 });
 
 router.post('/active-job/import', (req, res) => {
-  uploadJobTemplate(req, res, error => {
+  uploadJobTemplate(req, res, async error => {
     if (error) return res.status(400).json({ success: false,
       message: error.code === 'LIMIT_FILE_SIZE' ? '模板文件不能超过 1.5 MB' : '模板上传失败：' + error.message });
     if (!req.file || !/\.xlsx$/i.test(req.file.originalname || '')) {
       return res.status(400).json({ success: false, message: '请选择 .xlsx 岗位条件模板' });
     }
-    try { res.json({ success: true, data: activeJobService.import(req.file.buffer) }); }
+    try {
+      const result = await positionService.createLocalPosition(parseJobTemplate(req.file.buffer));
+      res.json({ success: true, data: result.job });
+    }
     catch (importError) { res.status(400).json({ success: false, message: importError.message }); }
   });
 });
@@ -150,6 +156,13 @@ router.post('/active-job/preview-import', (req, res) => {
 router.get('/candidates', (req, res) => {
   try { res.json({ success: true, data: service.list(req.query).map(publicCandidate) }); }
   catch (error) { fail(res, error); }
+});
+
+router.get('/candidates/jobs', (_req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, data: service.jobs() });
+  } catch (error) { fail(res, error); }
 });
 
 router.get('/candidates/page', (req, res) => {

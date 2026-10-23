@@ -715,7 +715,8 @@ test('search state detects an enabled custom slider despite an active 不限 chi
 
 test('search modal probes require the observed official child wrapper',()=>{
   const canvas={width:777,height:905};
-  const resumeDoc={querySelector:selector=>selector==='canvas#resume' ? canvas : null};
+  const resumeDoc={querySelector:selector=>selector==='canvas#resume' ? canvas : null,
+    body:{innerText:'工作经历：五年项目销售经历。教育经历：本科机械工程专业。'}};
   const frame={src:RESUME,contentDocument:resumeDoc,
     contentWindow:{location:{href:RESUME},performance:{timeOrigin:3}}};
   const pane={scrollTop:0,scrollHeight:2570,clientHeight:905,
@@ -731,6 +732,7 @@ test('search modal probes require the observed official child wrapper',()=>{
   assert.equal(modal.active,true);
   assert.equal(modal.frameReady,true);
   assert.equal(modal.canvasWidth,777);
+  assert.match(modal.text,/教育经历/);
   assert.equal(modal.scrollHeight,2570);
   assert.equal(modal.iframeLiveUrl,RESUME);
   assert.equal(modal.resumeOrigin,3);
@@ -1013,13 +1015,29 @@ test('search extraction accepts complete official DOM resume and rejects blank c
   ].join('\n');
   const url=new URL(RESUME);
   collector.readModal=async()=>({active:true,frameReady:true,text,canvas:false,
-    url,scrollTop:0,iframeSrc:RESUME,iframeLiveUrl:RESUME,
+    url,scrollTop:0,scrollHeight:905,clientHeight:905,
+    iframeSrc:RESUME,iframeLiveUrl:RESUME,
     outerOrigin:1,resumeOrigin:2});
   collector.assertJob=async()=>({});
   const direct=await collector.extractResume(Date.now()+1000,
     {title:TITLE,id:TITLE});
   assert.equal(direct.method,'dom');
   assert.equal(direct.text,text);
+
+  let top=0;
+  const scrolling=new BossRawSearchCollector({wait:async()=>{}});
+  scrolling.readModal=async()=>({active:true,frameReady:true,text,canvas:true,
+    canvasWidth:777,canvasHeight:905,url,scrollTop:top,
+    scrollHeight:1302,clientHeight:953,iframeSrc:RESUME,
+    iframeLiveUrl:RESUME,outerOrigin:1,resumeOrigin:2});
+  scrolling.assertJob=async()=>({});
+  scrolling.setSearchResumeScrollTop=async value=>{
+    top=value;return {after:top};
+  };
+  const complete=await scrolling.extractResume(Date.now()+1000,
+    {title:TITLE,id:TITLE});
+  assert.equal(complete.method,'dom');
+  assert.equal(top,349,'the official resume bottom is checked before saving DOM text');
 
   let time=0;
   const blank=new BossRawSearchCollector({now:()=>time,wait:async ms=>{time+=ms;}});

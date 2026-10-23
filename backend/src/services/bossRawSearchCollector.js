@@ -211,6 +211,10 @@ const SEARCH_MODAL = `(() => { /* bossRaw:searchModal */
       .forEach(el=>el.remove());
     text=(clone.textContent||'').trim();
   }
+  // Some search-resume layouts render their sections as visible iframe text
+  // without any of the older wrapper classes. Read only this verified official
+  // resume iframe; the collector still checks content quality and scroll end.
+  if (!text && doc?.body) text=(doc.body.innerText||'').trim();
   const canvas=doc?.querySelector('canvas#resume');
   return {active:true,iframeSrc:iframe.src,iframeLiveUrl,
     outerOrigin:performance.timeOrigin,resumeOrigin,frameReady:!!doc,text,
@@ -1085,7 +1089,25 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       modal=await this.readModal();
     }
     if (assessBossResumeText(modal.text).valid) {
-      return {text:modal.text,url:modal.url,method:'dom'};
+      const firstText=modal.text;
+      const max=Math.max(0,modal.scrollHeight-modal.clientHeight);
+      if (max<=2) return {text:firstText,url:modal.url,method:'dom'};
+      await this.setSearchResumeScrollTop(max,expectedUrl);
+      await this.wait(500);
+      const last=await this.readModal();
+      if (!last.active || last.url?.href!==expectedUrl ||
+          Math.abs(last.scrollTop-max)>2) throw fail('BOSS_RESUME_DIALOG_BLOCKED',
+        'BOSS 搜索简历在核对正文末尾时发生变化');
+      const prefix=firstText.slice(0,Math.min(120,firstText.length));
+      if (assessBossResumeText(last.text).valid &&
+          last.text.length>=firstText.length &&
+          (last.text===firstText || last.text.includes(prefix))) {
+        return {text:last.text,url:last.url,method:'dom'};
+      }
+      // A virtualized body may contain only one viewport. Fall back to the
+      // verified screenshot path instead of saving that partial DOM text.
+      await this.setSearchResumeScrollTop(0,expectedUrl);
+      modal=await this.readModal();
     }
     const texts=[];
     const hashes=new Set();

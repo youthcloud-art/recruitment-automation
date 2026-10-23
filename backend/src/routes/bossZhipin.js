@@ -183,6 +183,8 @@ router.get('/canvas-health', async (_req, res) => {
       const canvases=[...(doc?.querySelectorAll('canvas#resume')||[])];
       const paneRect=pane?.getBoundingClientRect();
       const iframeRect=iframe?.getBoundingClientRect();
+      const bodyText=doc?.body?.innerText || '';
+      const bodyContent=doc?.body?.textContent || '';
       return {modalOpen:!!dialog,frameReady:!!doc,
         canvasCount:canvases.length,
         canvases:canvases.slice(0,16).map(canvas=>({
@@ -195,6 +197,9 @@ router.get('/canvas-health', async (_req, res) => {
           height:Math.round(paneRect.height)} : null,
         iframeSize:iframeRect ? {width:Math.round(iframeRect.width),
           height:Math.round(iframeRect.height)} : null,
+        bodyTextLength:bodyText.length,
+        bodyContentLength:bodyContent.length,
+        bodyHasResumeSections:/工作经历|教育经历|项目经历|专业技能|求职意向/.test(bodyText),
         visible:document.visibilityState==='visible'};
     })()`, {timeoutMs:8000});
     res.set('Cache-Control','no-store');

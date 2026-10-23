@@ -72,12 +72,12 @@ class RecruitmentPipelineService {
     if (status && !STATUSES.includes(status)) throw new Error('不支持的跟进状态');
     const term = String(keyword).trim().toLowerCase();
     const max = Math.min(Math.max(Number(limit) || 200, 1), 10000);
-    const records = [];
+    let records = [];
     if (jobGroup && typeof this.store.forEachResume === 'function') {
       this.store.forEachResume(item => {
         if (records.length <= max) records.push(item);
       }, { source: source || null, status: status || null, jobGroup });
-    } else records.push(...this.store.getResumes());
+    } else records = this.store.getResumes();
     return records.filter(item => SOURCES.includes(item.source))
       .filter(item => !source || item.source === source)
       .filter(item => !status || (item.workflowStatus || 'new') === status)

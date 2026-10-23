@@ -399,6 +399,41 @@ test('captureCanvasPng keeps candidate pixels in memory and rejects malformed da
   session.close();
 });
 
+test('search resume viewport screenshot requires the exact official iframe and stable clip', async () => {
+  const socket = new FakeWebSocket(PAGE_SOCKET);
+  const session = new BossRawCdpSession(socket);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+    + 'AAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
+  const resumeUrl='https://www.zhipin.com/web/frame/c-resume/123';
+  let clip={x:400,y:0,width:1,height:1,scale:1};
+  session.assertRecruiterReady=async()=>RECRUITER_URL;
+  session.assertUsableRecruiterWindow=async()=>true;
+  session.evaluate=async expression=>{
+    assert.doesNotThrow(()=>new vm.Script(expression));
+    assert.match(expression,/canvas#resume/);
+    return {state:'ready',clip,outerOrigin:1,resumeOrigin:2,scrollTop:700};
+  };
+  const calls=[];
+  session.send=async (method,params)=>{
+    calls.push(method);
+    return method==='Page.captureScreenshot' ? {data:png.toString('base64')} : {};
+  };
+  assert.deepEqual(await session.captureSearchResumeViewportPng({
+    expectedResumeUrl:resumeUrl,expectedTop:700
+  }),png);
+  assert.deepEqual(calls,['Page.enable','Page.captureScreenshot']);
+  await assert.rejects(session.captureSearchResumeViewportPng({
+    expectedResumeUrl:'https://example.com/web/frame/c-resume/123',expectedTop:700
+  }),error=>error.code==='BOSS_CDP_INVALID_TARGET');
+  let reads=0;
+  session.evaluate=async()=>({state:'ready',clip:reads++ ?
+    {...clip,x:clip.x+10}:clip,outerOrigin:1,resumeOrigin:2,scrollTop:700});
+  await assert.rejects(session.captureSearchResumeViewportPng({
+    expectedResumeUrl:resumeUrl,expectedTop:700
+  }),error=>error.code==='BOSS_CDP_REGION_UNSTABLE');
+  session.close();
+});
+
 test('target expressions safely compile with exact card text containing quotes and line breaks', () => {
   const socket = new FakeWebSocket(PAGE_SOCKET);
   const session = new BossRawCdpSession(socket);

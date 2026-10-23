@@ -181,6 +181,8 @@ router.get('/canvas-health', async (_req, res) => {
       const iframe=pane?.querySelector('iframe[src*="/web/frame/c-resume/"]');
       const doc=iframe?.contentDocument;
       const canvases=[...(doc?.querySelectorAll('canvas#resume')||[])];
+      const paneRect=pane?.getBoundingClientRect();
+      const iframeRect=iframe?.getBoundingClientRect();
       return {modalOpen:!!dialog,frameReady:!!doc,
         canvasCount:canvases.length,
         canvases:canvases.slice(0,16).map(canvas=>({
@@ -189,6 +191,10 @@ router.get('/canvas-health', async (_req, res) => {
         })),scrollTop:pane?.scrollTop||0,
         scrollHeight:pane?.scrollHeight||0,
         clientHeight:pane?.clientHeight||0,
+        paneSize:paneRect ? {width:Math.round(paneRect.width),
+          height:Math.round(paneRect.height)} : null,
+        iframeSize:iframeRect ? {width:Math.round(iframeRect.width),
+          height:Math.round(iframeRect.height)} : null,
         visible:document.visibilityState==='visible'};
     })()`, {timeoutMs:8000});
     res.set('Cache-Control','no-store');

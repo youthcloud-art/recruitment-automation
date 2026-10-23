@@ -967,6 +967,33 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     return {image,fingerprint:crypto.createHash('sha256').update(image).digest('hex')};
   }
 
+  async verifiedViewport(expectedUrl,expectedTop) {
+    const inspect=async()=>{
+      const page=await this.assertPage();
+      const modal=await this.readModal();
+      const identity=await this.readOnlyExpression(SEARCH_CANVAS_IDENTITY,
+        'viewport_preflight');
+      if (page.visibilityState!=='visible' || !modal.active ||
+          modal.url?.href!==expectedUrl || identity?.state!=='ready' ||
+          officialResumeUrl(identity.resumeUrl)?.href!==expectedUrl ||
+          Math.abs(modal.scrollTop-expectedTop)>2 ||
+          Math.abs(identity.scrollTop-expectedTop)>2) {
+        throw fail('BOSS_RESUME_DIALOG_BLOCKED',
+          'BOSS 搜索简历可见区域或位置已变化，已暂停采集');
+      }
+      return identity;
+    };
+    const before=await inspect();
+    const image=await this.session.captureSearchResumeViewportPng({
+      expectedResumeUrl:expectedUrl,expectedTop,timeoutMs:15000
+    });
+    const after=await inspect();
+    if (before.outerOrigin!==after.outerOrigin ||
+        before.resumeOrigin!==after.resumeOrigin) throw fail(
+      'BOSS_RESUME_DIALOG_BLOCKED','BOSS 搜索简历区域截图期间已切换');
+    return {image,fingerprint:crypto.createHash('sha256').update(image).digest('hex')};
+  }
+
   async setSearchResumeScrollTop(targetTop,expectedUrl) {
     await this.ensureVisibleSearchResume();
     const modal=await this.readModal();
@@ -1065,6 +1092,18 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     let reachedEnd=false;
     let previousAcceptedTop=null;
     let duplicateRecoveryShifts=0;
+    const stableViewport=async currentTop=>{
+      if (typeof this.session?.captureSearchResumeViewportPng!=='function') return null;
+      for (let attempt=0;attempt<3 && this.now()<deadlineAt;attempt++) {
+        const first=await this.verifiedViewport(expectedUrl,currentTop);
+        await this.wait(300);
+        const second=await this.verifiedViewport(expectedUrl,currentTop);
+        if (first.fingerprint===second.fingerprint &&
+            !hashes.has(first.fingerprint)) return second;
+        await this.wait(350);
+      }
+      return null;
+    };
     for (let page=0;page<12;page++) {
       if (this.now()>=deadlineAt) throw fail('BOSS_CANDIDATE_TIMEOUT',
         'BOSS 搜索多页简历超过单份时间上限');
@@ -1076,7 +1115,7 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
         'BOSS_RESUME_DIALOG_BLOCKED','BOSS 搜索简历弹窗已变化');
       const currentTop=modal.scrollTop;
       let stable=null;
-      for (let attempt=0;attempt<20 && this.now()<deadlineAt;attempt++) {
+      for (let attempt=0;attempt<6 && this.now()<deadlineAt;attempt++) {
         const first=await this.verifiedCanvas(expectedUrl,currentTop);
         await this.wait(300);
         const second=await this.verifiedCanvas(expectedUrl,currentTop);
@@ -1084,8 +1123,9 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
             !hashes.has(first.fingerprint)) {stable=second;break;}
         await this.wait(350);
       }
+      if (!stable) stable=await stableViewport(currentTop);
       if (!stable) throw fail('BOSS_RESUME_CANVAS_STALLED',
-        'BOSS 搜索简历画布未稳定更新，未入库');
+        'BOSS 搜索简历画布和可见区域均未稳定更新，未入库');
       let recognized=await this.ocr.recognizeTextFromImage(stable.image);
       if (repeatedScreenText(recognized,texts)) {
         // A settled Canvas may finish painting a moment after its dimensions
@@ -1099,6 +1139,16 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
             !hashes.has(refreshedSecond.fingerprint)) {
           recognized=await this.ocr.recognizeTextFromImage(refreshedSecond.image);
           stable=refreshedSecond;
+        }
+      }
+      if (repeatedScreenText(recognized,texts)) {
+        const viewport=await stableViewport(currentTop);
+        if (viewport && viewport.fingerprint!==stable.fingerprint) {
+          const visibleText=await this.ocr.recognizeTextFromImage(viewport.image);
+          if (!repeatedScreenText(visibleText,texts)) {
+            recognized=visibleText;
+            stable=viewport;
+          }
         }
       }
       if (repeatedScreenText(recognized,texts)) {

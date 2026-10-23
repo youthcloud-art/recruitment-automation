@@ -8,6 +8,7 @@ const { loadBrowserSession, saveBrowserSession } = require('./browserSessionStor
 const { launchVisibleChromeCdp } = require('./visibleChromeCdp');
 const { isQcwyPageLabel, jobTitleFromRequirements } = require('../utils/candidateDisplay');
 const { extractQcwyExpectedPosition } = require('../utils/qcwyExpectedPosition');
+const { qcwyHeaderAlias } = require('../utils/qcwyHeaderAlias');
 
 const HOME_URL = 'https://ehire.51job.com/';
 const TALENT_SEARCH_URL = 'https://ehire.51job.com/Revision/talent/search';
@@ -869,8 +870,10 @@ class WuyouService {
     const detailName = validName(resume.nameHint) ? resume.nameHint.trim() :
       nameFromResumeText(resume.text);
     const cardName = validName(cardNameHint) ? cardNameHint.trim() : '';
-    const verifiedName = detailName || cardName || '';
-    const nameSource = detailName ? 'qcwy_detail' : cardName ? 'qcwy_card' : 'unverified';
+    const detailAlias = qcwyHeaderAlias(resume.text);
+    const verifiedName = detailName || cardName || detailAlias || '';
+    const nameSource = detailName ? 'qcwy_detail' : cardName ? 'qcwy_card' :
+      detailAlias ? 'qcwy_detail_alias' : 'unverified';
     if (existing) {
       const needsName = !validName(existing.name);
       const jobTitle = jobTitleFromRequirements(jobRequirements);

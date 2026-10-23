@@ -1060,6 +1060,36 @@ test('search OCR shifts only within the prior viewport when one lazy screen repe
   assert.match(result.text,/项目经历/);
 });
 
+test('search OCR reads the verified visible resume when a static Canvas repeats after scrolling',async()=>{
+  let top=0;
+  const screens={
+    canvas:'工作经历：2020年至今负责设备销售与客户维护，跟进合同、交付、验收、回款以及售后服务，持续五年以上。',
+    viewport:'教育经历：2016年至2020年在大学完成机械工程本科学习。专业技能：熟悉磁性材料、电机产品和工业客户项目沟通。'
+  };
+  const collector=new BossRawSearchCollector({wait:async()=>{},
+    ocr:{recognizeTextFromImage:async image=>screens[image.toString()]}});
+  collector.session={captureSearchResumeViewportPng:async()=>{}};
+  collector.readModal=async()=>({active:true,frameReady:true,text:'',canvas:true,
+    canvasWidth:777,canvasHeight:905,scrollTop:top,scrollHeight:1605,
+    clientHeight:905,url:new URL(RESUME),iframeSrc:RESUME,
+    iframeLiveUrl:RESUME,outerOrigin:1,resumeOrigin:2});
+  collector.assertJob=async()=>({});
+  collector.assertPage=async()=>({url:PAGE,visibilityState:'visible'});
+  collector.verifiedCanvas=async()=>({image:Buffer.from('canvas'),
+    fingerprint:'same-canvas-pixels'});
+  collector.verifiedViewport=async()=>({image:Buffer.from('viewport'),
+    fingerprint:`visible-at-${top}`});
+  collector.setSearchResumeScrollTop=async value=>{
+    top=value;return {after:top};
+  };
+  const result=await collector.extractResume(Date.now()+10_000,
+    {title:TITLE,id:searchScope(TITLE)});
+  assert.equal(result.method,'ocr');
+  assert.match(result.text,/工作经历/);
+  assert.match(result.text,/教育经历/);
+  assert.equal(top,700);
+});
+
 test('search OCR refuses to bridge an unknown gap when the final screen repeats',async()=>{
   let top=0;
   const moves=[];

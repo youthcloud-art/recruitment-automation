@@ -5,6 +5,7 @@
 const QCWY_PAGE_LABELS = new Set(['通知']);
 const { verifiedBossOcrName } = require('./bossCandidateName');
 const { extractQcwyExpectedPosition } = require('./qcwyExpectedPosition');
+const { qcwyHeaderAlias } = require('./qcwyHeaderAlias');
 
 function text(value) {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
@@ -42,7 +43,9 @@ function candidateName(item) {
   if (item.source === 'boss' && item.nameSource === 'ocr' &&
       !verifiedBossOcrName(name, item.originalText)) return bossAlias || '未识别姓名';
   if (item.source === 'qcwy' && (!name || name === '未识别姓名' || isQcwyPageLabel(name) || idLike)) {
-    return `匿名候选人（前程无忧记录 ID：${sourceRecordId(item)}）`;
+    const alias = qcwyHeaderAlias(item.originalText);
+    return alias ? `${alias}（平台称呼）` :
+      `匿名候选人（前程无忧记录 ID：${sourceRecordId(item)}）`;
   }
   if (item.source === 'qcwy' && /(?:先生|女士|同学)$/.test(name)) {
     return `${name}（平台称呼）`;

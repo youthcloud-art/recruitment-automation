@@ -418,6 +418,93 @@ class BossRawCdpSession {
     catch { throw cdpError('BOSS_CDP_CANVAS_INVALID', 'BOSS 简历 Canvas 图片无效'); }
   }
 
+  // On the official search resume dialog the single Canvas can retain its
+  // pixels while the enclosing resume viewport scrolls over content below it.
+  // Capture only the visible intersection of that verified iframe and pane;
+  // this is the screen the recruiter sees, with no navigation or interaction.
+  async captureSearchResumeViewportPng({ expectedResumeUrl, expectedTop,
+    timeoutMs = 15000 } = {}) {
+    let expected;
+    try { expected = new URL(expectedResumeUrl); } catch (_) {}
+    if (!expected || expected.protocol !== 'https:' ||
+        expected.hostname !== 'www.zhipin.com' ||
+        !/^\/web\/frame\/c-resume\//.test(expected.pathname) ||
+        !Number.isFinite(expectedTop) || expectedTop < 0) {
+      throw cdpError('BOSS_CDP_INVALID_TARGET', 'BOSS 搜索简历区域身份无效');
+    }
+    const outerUrl = await this.assertRecruiterReady();
+    await this.assertUsableRecruiterWindow({
+      frameSelector:'iframe[src*="/web/frame/search/"]'
+    });
+    const geometryExpression = `(() => {
+      if (document.visibilityState!=='visible') return {state:'hidden'};
+      const dialogs=[...document.querySelectorAll(
+        'div[data-type="boss-dialog"].active.dialog-wrap')];
+      if (dialogs.length!==1) return {state:'dialog_unavailable'};
+      const wrappers=[...dialogs[0].querySelectorAll(':scope > '
+        + '.boss-popup__wrapper.boss-dialog.boss-dialog__wrapper.dialog-lib-resume')];
+      if (wrappers.length!==1) return {state:'dialog_unavailable'};
+      const panes=[...wrappers[0].querySelectorAll('.resume-detail-wrap')];
+      if (panes.length!==1 || Math.abs(panes[0].scrollTop-${expectedTop})>2)
+        return {state:'pane_changed'};
+      const frames=[...panes[0].querySelectorAll(
+        'iframe[src*="/web/frame/c-resume/"]')];
+      if (frames.length!==1 || !frames[0].contentDocument ||
+          frames[0].contentWindow.location.href!==${JSON.stringify(expected.href)})
+        return {state:'frame_changed'};
+      const canvases=[...frames[0].contentDocument.querySelectorAll('canvas#resume')];
+      if (canvases.length!==1 || canvases[0].width<=300 ||
+          canvases[0].height<=150 ||
+          canvases[0].width*canvases[0].height>${MAX_CANVAS_PIXELS})
+        return {state:'canvas_unavailable'};
+      const pane=panes[0].getBoundingClientRect();
+      const frame=frames[0].getBoundingClientRect();
+      const x=Math.max(0,pane.left,frame.left);
+      const y=Math.max(0,pane.top,frame.top);
+      const right=Math.min(innerWidth,pane.right,frame.right);
+      const bottom=Math.min(innerHeight,pane.bottom,frame.bottom);
+      const width=right-x,height=bottom-y;
+      if (width<500 || height<300 || width*height>${MAX_CANVAS_PIXELS})
+        return {state:'out_of_view'};
+      const hit=document.elementFromPoint(x+width/2,y+height/2);
+      if (hit!==frames[0] && !frames[0].contains(hit))
+        return {state:'obscured'};
+      return {state:'ready',clip:{x,y,width,height,scale:1},
+        outerOrigin:performance.timeOrigin,
+        resumeOrigin:frames[0].contentWindow.performance.timeOrigin,
+        scrollTop:panes[0].scrollTop};
+    })()`;
+    const before = await this.evaluate(geometryExpression, { timeoutMs });
+    if (before?.state !== 'ready') throw cdpError('BOSS_CDP_REGION_UNAVAILABLE',
+      `BOSS 搜索简历可见区域不可确认：${before?.state || 'unknown'}`);
+    if (!this.pageDomainEnabled) {
+      await this.send('Page.enable', {}, { timeoutMs });
+      this.pageDomainEnabled = true;
+    }
+    const screenshot = await this.send('Page.captureScreenshot', {
+      format:'png',fromSurface:true,captureBeyondViewport:false,
+      clip:before.clip
+    }, { timeoutMs });
+    const after = await this.evaluate(geometryExpression, { timeoutMs });
+    if (after?.state !== 'ready' ||
+        after.outerOrigin !== before.outerOrigin ||
+        after.resumeOrigin !== before.resumeOrigin ||
+        Math.abs(after.scrollTop-before.scrollTop)>2 ||
+        ['x','y','width','height'].some(key=>
+          Math.abs(after.clip[key]-before.clip[key])>2) ||
+        await this.assertRecruiterReady() !== outerUrl) {
+      throw cdpError('BOSS_CDP_REGION_UNSTABLE',
+        'BOSS 搜索简历在截图期间发生变化');
+    }
+    const image=decodePng(screenshot.data);
+    if (Math.abs(image.readUInt32BE(16)-before.clip.width)>2 ||
+        Math.abs(image.readUInt32BE(20)-before.clip.height)>2) {
+      throw cdpError('BOSS_CDP_REGION_MISMATCH',
+        'BOSS 搜索简历画面未被正确裁切');
+    }
+    return image;
+  }
+
   async captureRegionPng({ frameSelector, selector, timeoutMs = 20000 } = {}) {
     if (typeof frameSelector !== 'string' || !frameSelector.trim() ||
         frameSelector.length > 500 || typeof selector !== 'string' ||

@@ -493,6 +493,11 @@ const ResumeDetailModal = ({ visible, onClose, resume, readOnly = false }) => {
             招聘岗位：{resume.hiringJobTitle || '招聘岗位待核实'}
             {resume.nameSource === 'qcwy_card' &&
               <div style={{ color: '#8c8c8c' }}>候选人称呼来自前程无忧搜索卡片，完整姓名请在平台核实。</div>}
+            {resume.source === 'boss' && resume.parseMethod === 'ocr' &&
+              <div style={{ color: '#ad6800' }}>
+                BOSS 画布简历经 OCR 识别；工作经历等结构化字段仅供初筛，
+                请以下方保存的简历原文及平台页面核实。
+              </div>}
           </div>
         </BaseCard>
 

@@ -1121,6 +1121,12 @@ const PORT = process.env.PORT || 5001;
 server.listen(PORT, HOST, () => {
   console.log(`服务器运行在端口 ${PORT}`);
   console.log(`存储目录: ${storageDir}`);
+  setTimeout(() => {
+    const {repairBossOcrWorkHistory}=require('./services/bossOcrWorkHistoryRepair');
+    void repairBossOcrWorkHistory().then(({scanned,updated}) => {
+      if (updated) console.log(`BOSS OCR 经历字段已按原文补全 ${updated}/${scanned} 份`);
+    }).catch(error => console.error('BOSS OCR 经历字段补全失败:',error));
+  },1500).unref();
 });
 
 // API路由：异步上传简历文件（优化版本，避免超时）

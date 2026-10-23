@@ -590,7 +590,7 @@ const ResumeLibrary = () => {
                         // 确保所有字段都是字符串类型，避免React渲染错误
                         const company = typeof exp.company === 'string' ? exp.company : 
                                        (typeof exp.company === 'object' && exp.company ? JSON.stringify(exp.company) : '未知公司');
-                        const position = typeof exp.position === 'string' ? exp.position : 
+                        const position = typeof exp.position === 'string' && exp.position ? exp.position :
                                         (typeof exp.position === 'object' && exp.position ? JSON.stringify(exp.position) : '未知职位');
                         const duration = typeof exp.duration === 'string' ? exp.duration : 
                                         (typeof exp.duration === 'object' && exp.duration ? JSON.stringify(exp.duration) : '未知时间');
@@ -601,13 +601,15 @@ const ResumeLibrary = () => {
                           <div key={index} style={{ marginBottom: '8px', padding: '6px', backgroundColor: '#fafafa', borderRadius: '4px' }}>
                             <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#333' }}>
                               {company} | {position}
+                              {exp.verificationStatus === 'ocr_needs_review' &&
+                                <span style={{ color: '#b26a00', fontWeight: 'normal' }}> · OCR 待核实</span>}
                             </div>
                             <div style={{ fontSize: '10px', color: '#666', marginBottom: '2px' }}>
                               {duration}
                             </div>
-                            <div style={{ fontSize: '10px', color: '#888', lineHeight: '1.3' }}>
+                            {description && <div style={{ fontSize: '10px', color: '#888', lineHeight: '1.3' }}>
                               {description.length > 50 ? description.substring(0, 50) + '...' : description}
-                            </div>
+                            </div>}
                           </div>
                         );
                       })}

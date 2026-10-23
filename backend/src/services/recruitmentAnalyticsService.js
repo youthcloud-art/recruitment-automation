@@ -87,7 +87,13 @@ class RecruitmentAnalyticsService {
         source.nameNeedsReview++;
       }
       if (!candidatePosition(item) || /待核实/.test(candidatePosition(item))) source.positionNeedsReview++;
-      if (item.parseStatus === 'needs_review') source.parseNeedsReview++;
+      // A complete captured OCR page can still have uncertain structured
+      // fields. Keep that uncertainty visible even when the raw text passed
+      // the full-resume gate and AI evaluation has completed.
+      if (item.parseStatus === 'needs_review' ||
+          (item.source === 'boss' && item.parseMethod === 'ocr')) {
+        source.parseNeedsReview++;
+      }
       const status = statusMap[item.workflowStatus] || statusMap.new;
       status.count++;
       if (String(item.originalText || item.content || '').trim()) {

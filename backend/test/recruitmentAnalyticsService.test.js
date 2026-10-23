@@ -58,6 +58,20 @@ test('历史范围包含未评估记录，分母与通过线调整正确', () =>
   assert.equal(data.scoreBands.reduce((sum, band) => sum + band.count, 0), 3);
 });
 
+test('完整入库的 BOSS OCR 简历仍提示结构化字段需核实', () => {
+  const analytics = new RecruitmentAnalyticsService({
+    store: { getResumes: () => [{ source: 'boss', parseMethod: 'ocr',
+      parseStatus: 'completed', captureJobRequirements: currentRequirements,
+      originalText: '已保存的完整简历原文' }] },
+    activeJobService: { current: () => ({ title: '项目经理主管',
+      jobRequirements: currentRequirements }) }
+  });
+  const boss = analytics.snapshot().bySource.find(row => row.source === 'boss');
+  assert.equal(boss.total, 1);
+  assert.equal(boss.withOriginalText, 1);
+  assert.equal(boss.parseNeedsReview, 1);
+});
+
 test('接口和报告只包含聚合统计，不输出候选人隐私或正文', () => {
   const aggregate = JSON.stringify(service.snapshot({ scope: 'all' }));
   const report = service.reportMarkdown({ scope: 'all' });

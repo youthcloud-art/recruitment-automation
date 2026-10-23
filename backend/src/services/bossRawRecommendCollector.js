@@ -11,6 +11,7 @@ const { postCaptureEvaluationQueue } = require('./postCaptureEvaluationQueue');
 const { assessBossResumeText } = require('./bossResumeQuality');
 const { BossCardQuarantine } = require('./bossCardQuarantine');
 const { verifiedBossOcrName } = require('../utils/bossCandidateName');
+const { extractBossOcrWorkExperience } = require('./bossOcrWorkExperience');
 
 const FRAME = 'iframe[src*="/web/frame/recommend/"]';
 const MAX_RUNTIME_MS = 90 * 60 * 1000;
@@ -1009,6 +1010,10 @@ class BossRawRecommendCollector {
 
   async saveResume(captured, job, sourceCardFingerprint = '', cardMeta = {}) {
     const parsed = resumeParserService.parseResumeText(captured.text);
+    if (captured.method === 'ocr' && !parsed.workExperience?.length) {
+      const partialHistory=extractBossOcrWorkExperience(captured.text);
+      if (partialHistory.length) parsed.workExperience=partialHistory;
+    }
     const cardName = verifiedCardName(cardMeta.displayName);
     const cardAlias = cardName ? null : platformCardAlias(cardMeta.displayName);
     const cardPosition = verifiedCardPosition(cardMeta.expectedPosition);

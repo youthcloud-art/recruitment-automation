@@ -55,6 +55,7 @@ test('单个平台应用岗位时，其余两个平台保持原岗位；三平�
     const service = new ActiveJobService({ file });
     const first = service.save({ title: '磁轴销售工程师',
       jobRequirements: '熟悉磁轴产品、客户开发与技术沟通' });
+    assert.throws(() => service.current('unknown'), /应用平台无效/);
     const second = service.save({ title: 'IT网络运维',
       jobRequirements: '负责网络故障排查和服务器维护' }, { applyTo: 'boss' });
     assert.equal(service.current('boss').title, second.title);

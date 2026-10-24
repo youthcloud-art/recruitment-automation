@@ -222,9 +222,10 @@ class ActiveJobService {
   }
 
   current(platform) {
+    const platformId = platform ? normalizeApplyTo(platform) : null;
     const saved = this.readSaved();
     if (!saved) return { ...EMPTY_JOB };
-    const scoped = platform ? saved.platformJobs?.[normalizeApplyTo(platform)] : null;
+    const scoped = platformId ? saved.platformJobs?.[platformId] : null;
     const { platformJobs: _platformJobs, ...defaultJob } = saved;
     return { ...EMPTY_JOB, ...(scoped || defaultJob) };
   }

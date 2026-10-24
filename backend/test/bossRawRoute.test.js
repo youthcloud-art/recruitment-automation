@@ -52,7 +52,8 @@ test('BOSS route uses raw login and exact-job recommendation collection without 
   }
   const stubs = new Map([
     [servicePath,FakeService],
-    [collectorPath,{BossRawRecommendCollector:FakeCollector}],
+    [collectorPath,{BossRawRecommendCollector:FakeCollector,
+      jobResumeSignature:() => 'a'.repeat(64)}],
     [searchCollectorPath,{BossRawSearchCollector:FakeCollector}],
     [cdpPath,{connectOwnedBossPage:async () => {
       rawLoginCalls++;

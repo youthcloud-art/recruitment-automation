@@ -200,6 +200,32 @@ function Stop-CompanyRuntime($Config) {
     }
 }
 
+function Assert-CompanyCollectionIdle($Config) {
+    # A release switch terminates the backend process. Never interrupt a
+    # collector or an accepted AI evaluation merely to publish new code.
+    $runtime = Get-ScheduledTask -TaskName $Config.runtimeTask -ErrorAction Stop
+    if ($runtime.State -ne 'Running') { return }
+    $base = 'http://127.0.0.1:' + $Config.backendPort + '/api'
+    $checks = @(
+        @{name='BOSS'; path='/boss-zhipin/browsing-status'; active={param($data) [bool]$data.isActive}},
+        @{name='智联'; path='/zhilian/browsing-status'; active={param($data) [bool]$data.isActive}},
+        @{name='前程无忧'; path='/wuyou/status?readOnly=1'; active={param($data) [bool]$data.batch.running}},
+        @{name='AI 评估'; path='/recruitment-pipeline/evaluation-queue/status'; active={param($data) [bool]$data.running -or [int]$data.queued -gt 0}},
+        @{name='批量评估'; path='/recruitment-pipeline/evaluate-batch/status'; active={param($data) [bool]$data.running}}
+    )
+    foreach ($check in $checks) {
+        try {
+            $reply = Invoke-RestMethod -Uri ($base + $check.path) -TimeoutSec 5 -ErrorAction Stop
+            if ($reply.success -ne $true -or $null -eq $reply.data) { throw '状态响应无效' }
+        } catch {
+            throw "DEPLOY_DEFERRED: $($check.name) 状态暂不可确认；保留当前服务并稍后重试部署"
+        }
+        if (& $check.active $reply.data) {
+            throw "DEPLOY_DEFERRED: $($check.name) 正在采集或评估；本次部署延后，当前任务继续运行"
+        }
+    }
+}
+
 function Start-CompanyRuntime($Config) {
     Remove-Item -LiteralPath (Join-Path $Config.installRoot 'control\stop.request') -Force -ErrorAction SilentlyContinue
     Start-ScheduledTask -TaskName $Config.runtimeTask

@@ -397,7 +397,9 @@ router.get('/browsing-status', async (req, res) => {
     const browsingStatus = zhilianService.getBrowsingStatus();
     res.json({
       success: true,
-      data: browsingStatus
+      data: browsingStarting && !browsingStatus.isActive
+        ? { ...browsingStatus, status: 'starting', isActive: true }
+        : browsingStatus
     });
     
   } catch (error) {

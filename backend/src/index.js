@@ -1090,6 +1090,7 @@ app.use('/api/tasks', taskRoutes);
 // 注册岗位路由
 app.use('/api/positions', positionRoutes);
 // 注册 Boss 直聘路由
+app.use(require('./services/collectionDeploymentGate').collectionDeploymentGate());
 const bossZhipinRoutes = require('./routes/bossZhipin');
 // 将io实例传递给Boss直聘路由
 bossZhipinRoutes.setIO(io);

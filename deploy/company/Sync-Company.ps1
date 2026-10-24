@@ -37,11 +37,19 @@ try {
         & $config.gitPath @gitArguments -C $source reset --hard $commit
         if ($LASTEXITCODE -ne 0) { throw 'The delivery checkout could not be updated.' }
     } finally { $ErrorActionPreference = $savedPreference }
+    # Avoid a costly build while a long collection is already in progress.
+    # Switch-Release checks again under a drain barrier before stopping runtime.
+    Assert-CompanyCollectionIdle $config
     & (Join-Path $PSScriptRoot 'Prepare-Release.ps1') -InstallRoot $InstallRoot -SourceRoot $source -Commit $commit
     $prepared = Get-Content -LiteralPath (Join-Path $InstallRoot 'delivery\prepared-release.json') -Raw | ConvertFrom-Json
     & (Join-Path $PSScriptRoot 'Switch-Release.ps1') -InstallRoot $InstallRoot -ReleaseRoot $prepared.root
     Write-JsonFile (Join-Path $InstallRoot 'delivery\last-sync.json') @{ok=$true;result='deployed';commit=$commit;timeUtc=[datetime]::UtcNow.ToString('o')}
 } catch {
+    if ($_.Exception.Message -like '*DEPLOY_DEFERRED:*') {
+        Write-JsonFile (Join-Path $InstallRoot 'delivery\last-sync.json') @{ok=$true;result='deferred_active_work';commit=$commit;reason=$_.Exception.Message;timeUtc=[datetime]::UtcNow.ToString('o')}
+        Write-Host $_.Exception.Message
+        exit 0
+    }
     Write-JsonFile (Join-Path $InstallRoot 'delivery\last-sync.json') @{ok=$false;error=$_.Exception.Message;timeUtc=[datetime]::UtcNow.ToString('o')}
     throw
 } finally {

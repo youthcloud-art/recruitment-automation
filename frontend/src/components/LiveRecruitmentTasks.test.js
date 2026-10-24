@@ -116,6 +116,19 @@ test('BOSS 读取超时且断点无效时可一键填入尚差份数重新采集
   expect(screen.getByText(/浏览器读取暂时中断/)).toBeTruthy();
 });
 
+test('BOSS 服务重启后从持久进度显示尚差份数和人工恢复提示', async () => {
+  const base = apiGet.getMockImplementation();
+  apiGet.mockImplementation(url => url === '/boss-zhipin/browsing-status'
+    ? Promise.resolve({ success: true, data: { status: 'paused', mode: 'search',
+      filters: { position: job.title }, resumeAvailable: false,
+      targetCount: 34, collectedCount: 12,
+      lastFailureCode: 'BOSS_RUNTIME_RESTARTED' } }) : base(url));
+  render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: '将本次新增设为尚差 22 份' }));
+  expect(screen.getByRole('spinbutton', { name: 'BOSS 直聘本次新增份数' }).value).toBe('22');
+  expect(screen.getByText(/服务曾重启/)).toBeTruthy();
+});
+
 test('智联从已保存岗位读取多个搜索关键词，便于结果不足时自行补采', async () => {
   const base = apiGet.getMockImplementation();
   apiGet.mockImplementation(url => url === '/recruitment-pipeline/active-job'

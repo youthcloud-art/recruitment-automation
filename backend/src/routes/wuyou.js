@@ -31,7 +31,11 @@ function parseKeywords(value) {
 
 router.get('/status', async (req, res) => {
   try {
-    res.json({ success: true, data: await service.getStatus({ persistSession: req.query.readOnly !== '1' }) });
+    const data = await service.getStatus({ persistSession: req.query.readOnly !== '1' });
+    if (batchStarting && !data.batch.running) {
+      data.batch = { ...data.batch, running: true };
+    }
+    res.json({ success: true, data });
   } catch (error) {
     handleError(res, error);
   }

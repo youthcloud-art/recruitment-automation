@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const BossZhipinService = require('../services/bossZhipinService');
-const { BossRawRecommendCollector } = require('../services/bossRawRecommendCollector');
+const { BossRawRecommendCollector, jobResumeSignature } = require('../services/bossRawRecommendCollector');
 const { BossRawSearchCollector } = require('../services/bossRawSearchCollector');
+const { CollectionRunJournal } = require('../services/collectionRunJournal');
 const { BossCardQuarantine } = require('../services/bossCardQuarantine');
 const { connectOwnedBossPage } = require('../services/bossRawCdp');
 const { ensureOfficialSearchPage } = require('../services/bossOfficialSearchNavigation');
@@ -19,6 +20,19 @@ let rawRequestedMode = 'recommended';
 let rawRunFilters = null;
 let io = null;
 let startupPromise = null;
+const runJournal = process.env.COMPANY_DEPLOYMENT === 'true'
+  ? new CollectionRunJournal() : null;
+
+function savedRunStatus() {
+  if (!runJournal) return null;
+  try {
+    const job = new ActiveJobService().current();
+    return runJournal.interruptedStatus({signature:job ? jobResumeSignature(job) : ''});
+  } catch (error) {
+    logger.warn(`读取 BOSS 上次采集进度失败: ${error.message}`);
+    return null;
+  }
+}
 
 function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo = null,
   runFilters = null) {
@@ -412,8 +426,24 @@ router.post('/start-browsing', async (req, res) => {
       }
     } else {
       if (mode === 'search') await ensureOfficialSearchPage();
+      const signature = jobResumeSignature(job);
+      let recordedSaved = -1;
+      let recordedState = '';
+      const onProgress = status => {
+        if (!runJournal || (status.saved === recordedSaved &&
+            status.state === recordedState)) return;
+        try {
+          runJournal.write({mode,targetCount:count,jobSignature:signature,
+            jobTitle:job.title,status});
+          recordedSaved=status.saved;
+          recordedState=status.state;
+        } catch (error) {
+          logger.warn(`保存 BOSS 采集进度失败: ${error.message}`);
+        }
+      };
       rawCollector = mode === 'search'
-        ? new BossRawSearchCollector() : new BossRawRecommendCollector();
+        ? new BossRawSearchCollector({onProgress})
+        : new BossRawRecommendCollector({onProgress});
     }
     rawRequestedMode = mode;
     rawRunFilters = mode === 'search' ? {position:job.title} : null;
@@ -520,8 +550,10 @@ router.post('/reset-browsing', async (req, res) => {
         message:'BOSS 简历采集尚未结束，请先停止'});
       rawCollector = null;
       rawRequestedMode = 'recommended';
+      runJournal?.clear();
       return res.json({success:true,message:'BOSS 采集状态已重置'});
     }
+    runJournal?.clear();
     if (!bossZhipinService) {
       return res.status(400).json({
         success: false,
@@ -571,9 +603,16 @@ router.post('/reset-card-quarantine', (req,res) => {
  */
 router.get('/browsing-status', async (req, res) => {
   try {
+    if (rawStarting) return res.json({success:true,data:{
+      ...(rawCollector ? rawStatusToBrowsing(rawCollector.getStatus(),rawRequestedMode,
+        rawCollector.getResumeInfo?.(),rawRunFilters) : savedRunStatus() || {}),
+      status:'starting',isActive:true
+    }});
     if (rawCollector) return res.json({success:true,
       data:rawStatusToBrowsing(rawCollector.getStatus(),rawRequestedMode,
         rawCollector.getResumeInfo?.(),rawRunFilters)});
+    const previousRun = savedRunStatus();
+    if (previousRun) return res.json({success:true,data:previousRun});
     if (!bossZhipinService) {
       return res.json({
         success: true,

@@ -24,8 +24,11 @@ function collectorState(source, status) {
       Number(batch.targetCount) > Number(batch.saved ?? batch.collectedCount ?? 0)) {
     return { label: '目标未完成', color: 'warning' };
   }
-  if (source === 'zlzp' && Number(status.targetCount) > Number(status.collectedCount) &&
-      status.status !== 'idle') return { label: '目标未完成', color: 'warning' };
+  if (['boss', 'zlzp'].includes(source) &&
+      Number(status.targetCount) > Number(status.collectedCount) &&
+      status.status !== 'idle' && status.status !== 'not_initialized') {
+    return { label: '目标未完成', color: 'warning' };
+  }
   if (status.lastError || status.error) return { label: '需检查', color: 'error' };
   return { label: '当前未采集', color: 'default' };
 }
@@ -50,6 +53,9 @@ function recoveryHint(source, status) {
   }
   if (/CDP_TIMEOUT|CDP_DISCONNECTED|TARGET_UNSTABLE/.test(reason)) {
     return '浏览器读取暂时中断。先在“服务器浏览器”恢复并确认原页面稳定；若没有“续接上次任务”按钮，可一键填入尚差份数再启动新一轮，已入库简历自动去重。';
+  }
+  if (/RUNTIME_RESTARTED/.test(reason)) {
+    return '服务曾重启，已入库简历保留。确认专用浏览器仍在原岗位页面后，点“将本次新增设为尚差份数”，再启动新一轮；系统会去重。';
   }
   if (/DOM|STRUCTURE|SELECTOR|PAGE/.test(reason)) {
     return '招聘平台页面结构可能变化；已保留入库结果。请在采集控制台查看提示并确认平台页面，再决定是否重试。';

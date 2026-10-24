@@ -22,10 +22,13 @@ $watchName = [string]$config.watchdogTask
 $watchPath = Join-Path $InstallRoot 'delivery\Watch-Company.ps1'
 $backup = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('backups\delivery-reliability-' +
     (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,6)))
-$files = @('Common.ps1','Run-Company.ps1','Watch-Company.ps1')
+$files = @('Common.ps1','Run-Company.ps1','Watch-Company.ps1',
+    'Sync-Company.ps1','Switch-Release.ps1')
 $copied = $false
 $runtimeStopped = $false
 $watchCreated = $false
+$drainPath = Join-Path $InstallRoot 'shared\local\deploy-drain.request'
+$drainOwned = $false
 try {
     # Prevent the next scheduled mirror run, then wait for any current build
     # to release its exclusive lock. This makes one invocation sufficient.
@@ -56,6 +59,9 @@ try {
             Copy-Item -LiteralPath $destination -Destination (Join-Path $backup $name)
         }
     }
+    [IO.File]::WriteAllText($drainPath, 'reliability update pending')
+    $drainOwned = $true
+    Assert-CompanyCollectionIdle $config
     $copied = $true
     foreach ($name in $files) {
         $destination = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('delivery\' + $name))
@@ -115,6 +121,7 @@ try {
     }
     throw $failure
 } finally {
+    if ($drainOwned) { Remove-Item -LiteralPath $drainPath -Force -ErrorAction SilentlyContinue }
     if ($syncLock) { $syncLock.Dispose() }
     if ($syncTaskDisabled) { Enable-ScheduledTask -TaskName $config.syncTask -ErrorAction Stop | Out-Null }
 }

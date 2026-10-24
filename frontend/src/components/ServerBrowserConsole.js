@@ -78,6 +78,8 @@ export default function ServerBrowserConsole() {
     finally { if (frameRequest.current === pending) frameRequest.current = null; }
   };
 
+  const frameBusy = cause => /画面正在刷新|浏览器正在处理其他操作/.test(cause?.message || '');
+
   const connect = async selected => {
     const requestedGeneration = generation.current;
     if (connection.current) await connection.current.catch(() => {});
@@ -98,7 +100,8 @@ export default function ServerBrowserConsole() {
       leaseAt.current = Date.now();
       hasLease.current = true;
       setLeased(true);
-      await getFrame(selected);
+      try { await getFrame(selected); }
+      catch (cause) { if (!frameBusy(cause)) throw cause; }
     } catch (cause) {
       if (mounted.current && visible.current && currentPlatform.current === selected && generation.current === requestedGeneration) {
         hasLease.current = false;
@@ -213,7 +216,10 @@ export default function ServerBrowserConsole() {
     try {
       if (frameRequest.current) await frameRequest.current.catch(() => {});
       await apiPost(`${ROOT}/restore-window`, { platform, clientId: clientId.current });
-      await getFrame(platform);
+      // Another operator's short screenshot can begin just after the window
+      // was maximized. Keep the successful restore and let polling refresh.
+      try { await getFrame(platform); }
+      catch (cause) { if (!frameBusy(cause)) throw cause; }
     } catch (cause) { setError(cause.message || '未能恢复服务器浏览器窗口'); }
     finally { manualAction.current = false; if (mounted.current) setActing(false); }
   };

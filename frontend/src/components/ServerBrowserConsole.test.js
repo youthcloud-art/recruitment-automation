@@ -151,3 +151,22 @@ test('恢复窗口等待正在刷新的画面，不会把短暂冲突当作操�
     expect.objectContaining({ platform: 'boss', clientId: expect.any(String) })));
   expect(screen.getByText('当前由你操作')).not.toBeNull();
 });
+
+test('窗口已恢复后的截图暂时忙碌不会误报恢复失败', async () => {
+  render(<ServerBrowserConsole />);
+  await openConsole();
+  let busyOnce = true;
+  apiGet.mockImplementation(url => {
+    if (url.endsWith('/status')) return Promise.resolve({ success: true, data: status });
+    if (busyOnce) {
+      busyOnce = false;
+      return Promise.reject(new Error('画面正在刷新，请稍后重试'));
+    }
+    return Promise.resolve({ success: true, data: frame });
+  });
+  fireEvent.click(screen.getByRole('button', { name: '恢复并最大化窗口' }));
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/browser-console/restore-window',
+    expect.objectContaining({ platform: 'boss' })));
+  await waitFor(() => expect(screen.queryByText('画面正在刷新，请稍后重试')).toBeNull());
+  expect(screen.getByText('当前由你操作')).not.toBeNull();
+});

@@ -195,7 +195,10 @@ export default function ServerBrowserConsole() {
     try {
       if (frameRequest.current) await frameRequest.current.catch(() => {});
       await apiPost(`${ROOT}/action`, { platform: selectedPlatform, clientId: clientId.current, ...body });
-      if (visible.current && currentPlatform.current === selectedPlatform) await getFrame(selectedPlatform);
+      if (visible.current && currentPlatform.current === selectedPlatform) {
+        try { await getFrame(selectedPlatform); }
+        catch (cause) { if (!frameBusy(cause)) throw cause; }
+      }
     } catch (cause) {
       if (visible.current && currentPlatform.current === selectedPlatform) setError(cause.message || '操作失败，请重试');
     } finally { manualAction.current = false; if (mounted.current) setActing(false); }

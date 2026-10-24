@@ -170,3 +170,23 @@ test('窗口已恢复后的截图暂时忙碌不会误报恢复失败', async ()
   await waitFor(() => expect(screen.queryByText('画面正在刷新，请稍后重试')).toBeNull());
   expect(screen.getByText('当前由你操作')).not.toBeNull();
 });
+
+test('已发送的浏览器操作不会因随后截图忙碌而误报失败', async () => {
+  render(<ServerBrowserConsole />);
+  const image = await openConsole();
+  image.getBoundingClientRect = () => ({ left: 0, top: 0, width: 500, height: 250 });
+  let busyOnce = true;
+  apiGet.mockImplementation(url => {
+    if (url.endsWith('/status')) return Promise.resolve({ success: true, data: status });
+    if (busyOnce) {
+      busyOnce = false;
+      return Promise.reject(new Error('画面正在刷新，请稍后重试'));
+    }
+    return Promise.resolve({ success: true, data: frame });
+  });
+  await act(async () => { fireEvent.click(image, { clientX: 50, clientY: 50 }); });
+  expect(apiPost).toHaveBeenCalledWith('/browser-console/action',
+    expect.objectContaining({ platform: 'boss', action: 'click' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByText('当前由你操作')).not.toBeNull();
+});

@@ -239,7 +239,9 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
   };
 
   const activePlatforms = position => Object.entries(platformJobs)
-    .filter(([, job]) => !position.archivedAt && sameCriteria(position.jobCriteria, job))
+    .filter(([, job]) => !position.archivedAt &&
+      (job?.positionId && !position.isVirtualCurrent
+        ? job.positionId === position.id : sameCriteria(position.jobCriteria, job)))
     .map(([platform]) => platform);
   const isActivePosition = position => activePlatforms(position).length > 0;
 

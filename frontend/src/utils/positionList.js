@@ -1,6 +1,6 @@
 const CRITERIA_FIELDS = [
   'title', 'searchKeywords', 'location', 'education', 'minExperienceYears',
-  'targetCount', 'jobRequirements'
+  'targetCount', 'recommendationTargetCount', 'jobRequirements'
 ];
 
 export const sameCriteria = (left, right) => Boolean(left && right &&

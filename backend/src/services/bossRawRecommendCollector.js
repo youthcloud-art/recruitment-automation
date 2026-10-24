@@ -388,7 +388,21 @@ class BossRawRecommendCollector {
 
   async readOnlyExpression(expression, stage, timeoutMs = 15000) {
     try { return await this.session.evaluate(expression,{timeoutMs}); }
-    catch (error) { if (!error.stage) error.stage = stage; throw error; }
+    catch (error) {
+      if (error.code !== 'BOSS_CDP_TIMEOUT') {
+        if (!error.stage) error.stage = stage;
+        throw error;
+      }
+      // Runtime.evaluate only reads the current official page. A delayed
+      // response can safely be retried once; clicks and other mutations never
+      // use this path. Downstream page, job and candidate checks still apply.
+      await this.wait(350);
+      try { return await this.session.evaluate(expression,{timeoutMs}); }
+      catch (retryError) {
+        if (!retryError.stage) retryError.stage = stage;
+        throw retryError;
+      }
+    }
   }
 
   async assertPage({allowMissingFrame=false}={}) {

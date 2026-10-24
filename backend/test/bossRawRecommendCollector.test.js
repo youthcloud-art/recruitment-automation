@@ -875,9 +875,11 @@ test('transition-only read does not itself click an exact guide', async () => {
 test('official modal read uses a bounded longer timeout and records its stage', async () => {
   const {session,state}=fakeSession();
   let timeoutMs=0;
+  let reads=0;
   session.evaluate=async (expression,options) => {
     assert.equal(expression,EXPRESSIONS.modal);
     timeoutMs=options.timeoutMs;
+    reads++;
     const error=new Error('CDP timeout');
     error.code='BOSS_CDP_TIMEOUT';
     throw error;
@@ -889,6 +891,29 @@ test('official modal read uses a bounded longer timeout and records its stage', 
   await assert.rejects(collector.readModal(),
     error => error.code === 'BOSS_CDP_TIMEOUT' && error.stage === 'read_modal');
   assert.equal(timeoutMs,15000);
+  assert.equal(reads,2);
+  assert.equal(state.openCount,0);
+});
+
+test('official modal read retries one timed-out read without another click', async () => {
+  const {session,state}=fakeSession();
+  let reads=0;
+  session.evaluate=async expression => {
+    assert.equal(expression,EXPRESSIONS.modal);
+    reads++;
+    if (reads===1) {
+      const error=new Error('CDP timeout');
+      error.code='BOSS_CDP_TIMEOUT';
+      throw error;
+    }
+    return {active:false};
+  };
+  const collector=new BossRawRecommendCollector({
+    connect:async()=>session,store:{},queue:{},jobService:{},wait:async()=>{}
+  });
+  collector.session=session;
+  assert.deepEqual(await collector.readModal(),{active:false});
+  assert.equal(reads,2);
   assert.equal(state.openCount,0);
 });
 

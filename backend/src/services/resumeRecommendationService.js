@@ -72,7 +72,7 @@ class ResumeRecommendationService {
 
   recommend(input = {}) {
     const { source, minScore, limit: requestedLimit } = optionsFor(input);
-    const activeJob = this.activeJobService.current();
+    const activeJob = this.activeJobService.current(source || undefined);
     const targetCount = Number.isInteger(activeJob.recommendationTargetCount) &&
       activeJob.recommendationTargetCount > 0 ? activeJob.recommendationTargetCount : null;
     const limit = requestedLimit ?? targetCount ?? 20;

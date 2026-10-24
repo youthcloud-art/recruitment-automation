@@ -63,6 +63,20 @@ test('平台、最低分和展示上限生效，智联相同简历不会重复�
   assert.deepEqual(result.recommendations.map(item => item.id), ['first']);
 });
 
+test('按单个平台推荐时使用该平台当前岗位，不误用最近应用到其他平台的岗位', () => {
+  const requests = [];
+  const target = new ResumeRecommendationService({
+    store: { getResumes: () => [candidate('zl', 'zlzp', 85)] },
+    activeJobService: { current: platform => {
+      requests.push(platform);
+      return platform === 'zlzp' ? job : { ...job, title: '其他岗位',
+        jobRequirements: '其他岗位要求' };
+    } }
+  });
+  assert.equal(target.recommend({ source: 'zlzp' }).qualifiedCount, 1);
+  assert.deepEqual(requests, ['zlzp']);
+});
+
 test('岗位尚未应用时返回清楚的空状态，不推荐历史岗位候选人', () => {
   const result = service([candidate('old', 'boss', 99)], { ...job, updatedAt: null }).recommend();
   assert.equal(result.evaluatedCount, 0);

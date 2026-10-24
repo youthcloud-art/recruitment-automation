@@ -127,3 +127,27 @@ test('连接请求未完成就关闭时不显示旧画面，返回后释放锁',
   expect(screen.queryByAltText('服务器浏览器画面')).toBeNull();
   expect(apiGet.mock.calls.filter(([url]) => url.endsWith('/screenshot'))).toHaveLength(0);
 });
+
+test('恢复窗口等待正在刷新的画面，不会把短暂冲突当作操作权丢失', async () => {
+  jest.useFakeTimers();
+  render(<ServerBrowserConsole />);
+  await openConsole();
+  let finishFrame;
+  let deferNextFrame = true;
+  apiGet.mockImplementation(url => {
+    if (url.endsWith('/status')) return Promise.resolve({ success: true, data: status });
+    if (deferNextFrame) {
+      deferNextFrame = false;
+      return new Promise(resolve => { finishFrame = resolve; });
+    }
+    return Promise.resolve({ success: true, data: frame });
+  });
+  await act(async () => { jest.advanceTimersByTime(2000); });
+  await waitFor(() => expect(finishFrame).toEqual(expect.any(Function)));
+  fireEvent.click(screen.getByRole('button', { name: '恢复并最大化窗口' }));
+  expect(apiPost.mock.calls.filter(([url]) => url.endsWith('/restore-window'))).toHaveLength(0);
+  await act(async () => { finishFrame({ success: true, data: frame }); });
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/browser-console/restore-window',
+    expect.objectContaining({ platform: 'boss', clientId: expect.any(String) })));
+  expect(screen.getByText('当前由你操作')).not.toBeNull();
+});

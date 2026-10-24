@@ -42,6 +42,8 @@ export default function ServerBrowserConsole() {
   const hasLease = useRef(false);
   const leaseAt = useRef(0);
   const connection = useRef(null);
+  const frameRequest = useRef(null);
+  const manualAction = useRef(false);
   const pendingRelease = useRef(Promise.resolve());
   const generation = useRef(0);
   const sessionStarted = useRef(false);
@@ -62,12 +64,18 @@ export default function ServerBrowserConsole() {
   };
 
   const getFrame = async selected => {
-    const result = await apiGet(`${ROOT}/screenshot`, { platform: selected, clientId: clientId.current }, { cache: 'no-store' });
-    const next = result.data;
-    if (!/^data:image\/(?:png|jpe?g);base64,/.test(next?.image || '') || !Number.isFinite(next.width) || next.width <= 0 || !Number.isFinite(next.height) || next.height <= 0) {
-      throw new Error('服务器返回的浏览器画面无效，请重新连接');
-    }
-    if (mounted.current && visible.current && currentPlatform.current === selected && hasLease.current) setFrame(next);
+    if (frameRequest.current) return frameRequest.current;
+    const pending = (async () => {
+      const result = await apiGet(`${ROOT}/screenshot`, { platform: selected, clientId: clientId.current }, { cache: 'no-store' });
+      const next = result.data;
+      if (!/^data:image\/(?:png|jpe?g);base64,/.test(next?.image || '') || !Number.isFinite(next.width) || next.width <= 0 || !Number.isFinite(next.height) || next.height <= 0) {
+        throw new Error('服务器返回的浏览器画面无效，请重新连接');
+      }
+      if (mounted.current && visible.current && currentPlatform.current === selected && hasLease.current) setFrame(next);
+    })();
+    frameRequest.current = pending;
+    try { return await pending; }
+    finally { if (frameRequest.current === pending) frameRequest.current = null; }
   };
 
   const connect = async selected => {
@@ -111,7 +119,7 @@ export default function ServerBrowserConsole() {
     let polling = false;
     connect(platform);
     const poll = async () => {
-      if (disposed || polling) return;
+      if (disposed || polling || manualAction.current) return;
       polling = true;
       try {
         const next = await apiGet(`${ROOT}/status`, {}, { cache: 'no-store' });
@@ -123,9 +131,10 @@ export default function ServerBrowserConsole() {
           if (disposed) return;
           leaseAt.current = Date.now();
         }
+        if (manualAction.current) return;
         await getFrame(platform);
       } catch (cause) {
-        if (!disposed) {
+        if (!disposed && !/画面正在刷新|浏览器正在处理其他操作/.test(cause.message || '')) {
           hasLease.current = false;
           setLeased(false);
           setFrame(null);
@@ -177,14 +186,16 @@ export default function ServerBrowserConsole() {
   const action = async body => {
     if (disabled || !hasLease.current) return;
     setActing(true);
+    manualAction.current = true;
     setError('');
     const selectedPlatform = platform;
     try {
+      if (frameRequest.current) await frameRequest.current.catch(() => {});
       await apiPost(`${ROOT}/action`, { platform: selectedPlatform, clientId: clientId.current, ...body });
       if (visible.current && currentPlatform.current === selectedPlatform) await getFrame(selectedPlatform);
     } catch (cause) {
       if (visible.current && currentPlatform.current === selectedPlatform) setError(cause.message || '操作失败，请重试');
-    } finally { if (mounted.current) setActing(false); }
+    } finally { manualAction.current = false; if (mounted.current) setActing(false); }
   };
 
   const sendText = () => {
@@ -197,12 +208,14 @@ export default function ServerBrowserConsole() {
   const restoreWindow = async () => {
     if (disabled || !hasLease.current) return;
     setActing(true);
+    manualAction.current = true;
     setError('');
     try {
+      if (frameRequest.current) await frameRequest.current.catch(() => {});
       await apiPost(`${ROOT}/restore-window`, { platform, clientId: clientId.current });
       await getFrame(platform);
     } catch (cause) { setError(cause.message || '未能恢复服务器浏览器窗口'); }
-    finally { if (mounted.current) setActing(false); }
+    finally { manualAction.current = false; if (mounted.current) setActing(false); }
   };
 
   if (!status?.enabled) return null;
@@ -215,7 +228,7 @@ export default function ServerBrowserConsole() {
         <Space wrap>
           <Select aria-label="招聘平台" value={platform} options={PLATFORMS} onChange={changePlatform} style={{ width: 160 }} disabled={connecting || acting} />
           <Tag color={leased ? 'success' : status?.lock?.held ? 'warning' : 'default'}>{leased ? '当前由你操作' : status?.lock?.held ? '其他同事正在操作' : '尚未连接'}</Tag>
-          {!leased && <Button loading={connecting} onClick={() => connect(platform)}>连接浏览器</Button>}
+          {!leased && <Button loading={connecting} disabled={connecting} onClick={() => connect(platform)}>连接浏览器</Button>}
           {leased && <Button disabled={disabled} loading={acting} onClick={restoreWindow}>
             恢复并最大化窗口
           </Button>}

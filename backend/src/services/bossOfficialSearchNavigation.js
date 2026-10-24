@@ -35,7 +35,25 @@ async function ensureOfficialSearchPage({ connect = connectOwnedBossPage,
     } else {
       await session.assertUsableRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
     }
-    await session.clickUnique({ selector: 'a[ka="menu-geek-search"]' });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await session.clickUnique({ selector: 'a[ka="menu-geek-search"]' });
+        break;
+      } catch (error) {
+        // The pre-click recheck has sent no mouse event. A menu shifting
+        // during layout may be read again, but an uncertain press must never
+        // be replayed.
+        const safelyUnsent = error.code === 'BOSS_CDP_TARGET_UNSTABLE' &&
+          error.stage === 'pre_click_recheck' && error.reason === 'position_moved';
+        if (!safelyUnsent || attempt === 2) throw error;
+        await wait(600 + attempt * 300);
+        if (await session.assertRecruiterReady() !== before) {
+          throw navigationError('BOSS_SEARCH_PAGE_REQUIRED',
+            'BOSS 招聘页面在搜索菜单稳定前发生变化，请确认页面后重试');
+        }
+        await session.assertUsableRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
+      }
+    }
     for (let attempt = 0; attempt < 20; attempt++) {
       await wait(500);
       const url = await session.assertRecruiterReady();

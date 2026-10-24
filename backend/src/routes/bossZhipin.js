@@ -16,10 +16,12 @@ let rawCollector = null;
 let rawTask = null;
 let rawStarting = false;
 let rawRequestedMode = 'recommended';
+let rawRunFilters = null;
 let io = null;
 let startupPromise = null;
 
-function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo = null) {
+function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo = null,
+  runFilters = null) {
   const state = status?.state || 'idle';
   const saved = status?.saved || 0;
   return {
@@ -60,7 +62,9 @@ function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo =
         : state === 'stopped' ? '用户已停止采集'
           : state === 'paused' ? status?.lastError || '平台页面需要人工确认' : ''),
     resumeAvailable: !!resumeInfo,
-    filters: resumeInfo?.filters || null,
+    // Keep the original job filter visible after an ordinary timeout, too.
+    // Operators can then request exactly the remaining new resumes from the UI.
+    filters: resumeInfo?.filters || runFilters,
     evaluationQueue: status?.evaluationQueue || null
   };
 }
@@ -412,6 +416,7 @@ router.post('/start-browsing', async (req, res) => {
         ? new BossRawSearchCollector() : new BossRawRecommendCollector();
     }
     rawRequestedMode = mode;
+    rawRunFilters = mode === 'search' ? {position:job.title} : null;
     const service = bossZhipinService;
     // Both paths verify their own official iframe before candidate actions.
     // Search checks the exact current keyword and official resume link;
@@ -568,7 +573,7 @@ router.get('/browsing-status', async (req, res) => {
   try {
     if (rawCollector) return res.json({success:true,
       data:rawStatusToBrowsing(rawCollector.getStatus(),rawRequestedMode,
-        rawCollector.getResumeInfo?.())});
+        rawCollector.getResumeInfo?.(),rawRunFilters)});
     if (!bossZhipinService) {
       return res.json({
         success: true,

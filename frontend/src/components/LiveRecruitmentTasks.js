@@ -48,6 +48,9 @@ function recoveryHint(source, status) {
   if (/ATTEMPT_LIMIT/.test(reason)) {
     return '本轮已达到安全尝试上限。请检查搜索结果、重复记录与平台状态，然后按剩余份数启动新一轮；不会清除已有简历。';
   }
+  if (/CDP_TIMEOUT|CDP_DISCONNECTED|TARGET_UNSTABLE/.test(reason)) {
+    return '浏览器读取暂时中断。先在“服务器浏览器”恢复并确认原页面稳定；若没有“续接上次任务”按钮，可一键填入尚差份数再启动新一轮，已入库简历自动去重。';
+  }
   if (/DOM|STRUCTURE|SELECTOR|PAGE/.test(reason)) {
     return '招聘平台页面结构可能变化；已保留入库结果。请在采集控制台查看提示并确认平台页面，再决定是否重试。';
   }
@@ -214,7 +217,9 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
           const taskTarget = Number(batch?.targetCount) || 0;
           const taskSaved = Number(source.key === 'qcwy' ? batch?.saved : batch?.collectedCount) || 0;
           const runLimit = source.key === 'qcwy' ? 50 : 200;
-          const sameJob = source.key === 'zlzp'
+          const sameJob = source.key === 'boss'
+            ? batch?.mode === 'search' && batch?.filters?.position === job.title
+            : source.key === 'zlzp'
             ? batch?.filters?.position === (job.searchKeywords || job.title)
             : source.key === 'qcwy' && String(job.searchKeywords || job.title)
               .split(/[,，、\n]/).map(value => value.trim()).includes(batch?.currentKeyword);

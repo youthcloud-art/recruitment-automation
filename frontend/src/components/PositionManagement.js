@@ -61,6 +61,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
   const [editForm] = Form.useForm();
   const [revisingJob, setRevisingJob] = useState(null);
   const [revisingMetadata, setRevisingMetadata] = useState(null);
+  const [revisingApplyTo, setRevisingApplyTo] = useState('all');
   const [revisingPositionId, setRevisingPositionId] = useState(null);
   const [activeJob, setActiveJob] = useState(null);
   const [platformJobs, setPlatformJobs] = useState({});
@@ -73,6 +74,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     setEditingPosition(null);
     setRevisingJob(null);
     setRevisingMetadata(null);
+    setRevisingApplyTo('all');
     setRevisingPositionId(null);
   }, [visible]);
 
@@ -378,6 +380,8 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
               setRevisingJob(record.jobCriteria);
               setRevisingMetadata({ department: record.department || '',
                 salary: record.salary || '' });
+              const scoped = activePlatforms(record);
+              setRevisingApplyTo(scoped.length === 1 ? scoped[0] : 'all');
             }}>
             {record.jobCriteria ? '修订' : '编辑'}
           </Button>
@@ -408,6 +412,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
       <PositionManagementContainer>
         <PositionCreationModal visible={Boolean(revisingJob)} initialJob={revisingJob}
           initialMetadata={revisingMetadata}
+          initialApplyTo={revisingApplyTo}
           revisingPositionId={revisingPositionId}
           onClose={() => { setRevisingJob(null); setRevisingMetadata(null);
             setRevisingPositionId(null); }} onCreated={result => {

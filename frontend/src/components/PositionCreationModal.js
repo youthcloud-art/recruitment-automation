@@ -7,7 +7,7 @@ import { notifyActiveJobChanged } from '../utils/activeJobEvents';
 const { Paragraph, Text } = Typography;
 
 export default function PositionCreationModal({ visible, onClose, onCreated, initialText = '', initialJob = null,
-  initialMetadata = null, revisingPositionId = null }) {
+  initialMetadata = null, initialApplyTo = 'all', revisingPositionId = null }) {
   const [job, setJob] = useState({ ...EMPTY_JOB });
   const [metadata, setMetadata] = useState({ department: '', salary: '' });
   const [applyTo, setApplyTo] = useState('all');
@@ -23,8 +23,8 @@ export default function PositionCreationModal({ visible, onClose, onCreated, ini
     setJob(initialJob ? { ...EMPTY_JOB, ...initialJob, updatedAt: null } : { ...EMPTY_JOB });
     setMetadata({ department: initialMetadata?.department || '',
       salary: initialMetadata?.salary || '' });
-    setApplyTo('all');
-  }, [visible, initialText, initialJob, initialMetadata]);
+    setApplyTo(initialApplyTo);
+  }, [visible, initialText, initialJob, initialMetadata, initialApplyTo]);
 
   const loadCurrent = async () => {
     try {

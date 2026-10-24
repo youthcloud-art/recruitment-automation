@@ -61,6 +61,19 @@ test('本地创建岗位同时生成可查看的 JD 并应用同一份三平台�
   assert.equal(result.job.searchKeywords, '项目经理主管，项目经理');
 }));
 
+test('创建并只应用到一个平台时，其他平台保持原条件，当前平台岗位不可归档', () =>
+  withService(async ({ service, activeJobService }) => {
+    const first = await service.createLocalPosition(initialJob);
+    const second = await service.createLocalPosition({ ...initialJob, title: 'IT网络运维',
+      jobRequirements: '负责网络设备维护和故障排查工作' }, {}, { applyTo: 'boss' });
+    assert.equal(activeJobService.current('boss').positionId, second.position.id);
+    assert.equal(activeJobService.current('zlzp').positionId, first.position.id);
+    assert.equal(activeJobService.current('qcwy').positionId, first.position.id);
+    assert.equal((await service.deletePosition(first.position.id)).success, false);
+    service.applyLocalPosition(second.position.id, { applyTo: 'all' });
+    assert.equal((await service.deletePosition(first.position.id)).success, true);
+  }));
+
 test('新建岗位前归档当前岗位，旧岗位仍可重新应用，重复创建不重复入库', () => withService(async ({ service, activeJobService, resumeModel }) => {
   const previous = activeJobService.save({
     title: '成本核算经理', jobRequirements: '熟悉制造业成本核算和 ERP 系统',

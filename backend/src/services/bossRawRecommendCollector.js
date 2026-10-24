@@ -1143,7 +1143,7 @@ class BossRawRecommendCollector {
       throw new Error('采集时间上限无效');
     }
     const runtimeLimitMs=Math.min(Math.max(maxRuntimeMs,1000),this.maxRuntimeCapMs);
-    const job = this.jobService.current();
+    const job = this.jobService.current('boss');
     const title = String(job?.title || '').trim();
     if (!title || !job.jobRequirements) throw fail('BOSS_JOB_REQUIRED',
       '请先保存岗位条件，再启动 BOSS 采集');

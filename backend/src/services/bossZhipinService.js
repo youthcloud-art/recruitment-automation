@@ -965,7 +965,7 @@ class BossZhipinService {
       }
       targetCount = Math.min(500, Math.max(1, Number.parseInt(targetCount, 10) || 3));
       try {
-        this.activeJobSnapshot = new ActiveJobService().current();
+        this.activeJobSnapshot = new ActiveJobService().current('boss');
       } catch (error) {
         logger.warn(`读取当前岗位配置失败，采集后自动评估将不可用: ${error.message}`);
         this.activeJobSnapshot = null;
@@ -4268,7 +4268,7 @@ class BossZhipinService {
         throw new Error('BOSS 已有采集或简历处理任务正在运行');
       }
       try {
-        this.activeJobSnapshot = new ActiveJobService().current();
+        this.activeJobSnapshot = new ActiveJobService().current('boss');
       } catch (error) {
         logger.warn(`读取当前岗位配置失败，采集后自动评估将不可用: ${error.message}`);
         this.activeJobSnapshot = null;

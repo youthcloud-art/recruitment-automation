@@ -761,7 +761,7 @@ class ZhilianService {
         throw new Error('用户尚未登录智联招聘');
       }
       try {
-        this.activeJobSnapshot = this.activeJobService.current();
+        this.activeJobSnapshot = this.activeJobService.current('zlzp');
       } catch (error) {
         this.activeJobSnapshot = null;
         logger.warn(`读取当前岗位条件失败，采集将继续但不自动评估: ${error.message}`);
@@ -5545,7 +5545,7 @@ class ZhilianService {
       // 验证和重置状态
       this.validateAndResetState();
       try {
-        this.activeJobSnapshot = this.activeJobService.current();
+        this.activeJobSnapshot = this.activeJobService.current('zlzp');
       } catch (error) {
         this.activeJobSnapshot = null;
         logger.warn(`读取当前岗位条件失败，采集将继续但不自动评估: ${error.message}`);

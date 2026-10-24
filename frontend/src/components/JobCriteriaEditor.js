@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { Alert, Button, Card, Col, Input, InputNumber, Row, Space, Tag, Typography, message } from 'antd';
 import { DownloadOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons';
 import { apiGet, apiPut, apiUpload } from '../utils/apiClient';
+import { notifyActiveJobChanged } from '../utils/activeJobEvents';
 
 const { Text } = Typography;
 export const EMPTY_JOB = {
@@ -12,6 +13,7 @@ export const EMPTY_JOB = {
 
 export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disabled = false,
   persistImport = true, showSave = true, showHelp = true,
+  platform = 'all',
   title = '岗位条件（采集前设置）' }) {
   const [busy, setBusy] = useState('');
   const fileInput = useRef(null);
@@ -21,9 +23,10 @@ export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disable
   const save = async () => {
     setBusy('save');
     try {
-      const result = await apiPut('/recruitment-pipeline/active-job', job);
+      const result = await apiPut('/recruitment-pipeline/active-job', { ...job, applyTo: platform });
       onChange(result.data);
-      message.success('岗位条件已保存在本机，三个平台将使用这份配置');
+      notifyActiveJobChanged(result.data, platform);
+      message.success(platform === 'all' ? '岗位条件已应用到三平台' : '岗位条件已应用到当前平台');
     } catch (error) { message.error('保存岗位条件失败：' + error.message); }
     finally { setBusy(''); }
   };
@@ -55,10 +58,12 @@ export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disable
     try {
       const body = new FormData();
       body.append('file', file);
+      body.append('applyTo', platform);
       const result = await apiUpload(persistImport
         ? '/recruitment-pipeline/active-job/import'
         : '/recruitment-pipeline/active-job/preview-import', body);
       onChange(persistImport ? result.data : { ...result.data, updatedAt: null });
+      if (persistImport) notifyActiveJobChanged(result.data, platform);
       message.success(persistImport ? '岗位条件已导入并保存，可在页面继续修改'
         : '岗位条件已读取，请检查后点击“创建并应用”');
     } catch (error) { message.error('导入岗位条件失败：' + error.message); }

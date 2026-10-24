@@ -6,6 +6,7 @@ import {
 import { apiGet, apiPost, apiPut } from '../utils/apiClient';
 import { API_ENDPOINTS } from '../config/api';
 import JobCriteriaEditor, { EMPTY_JOB } from './JobCriteriaEditor';
+import { ACTIVE_JOB_CHANGED, notifyActiveJobChanged } from '../utils/activeJobEvents';
 import CaptureTargetNotice from './CaptureTargetNotice';
 
 const { Title, Paragraph, Text } = Typography;
@@ -80,6 +81,23 @@ export default function WuyouControl() {
     }
   };
 
+  useEffect(() => {
+    const onJobChanged = event => {
+      if (!['all', 'qcwy'].includes(event.detail?.applyTo)) return;
+      const job = event.detail?.job;
+      if (!job?.title) return;
+      setJobCriteria(job);
+      setKeyword(job.searchKeywords || job.title || keywordFromJob(job.jobRequirements));
+      const mapped = mapJobEducation(job);
+      setEducation(mapped.value);
+      setEducationHint(mapped.hint);
+      setTargetCount(Number.isInteger(job.targetCount) && job.targetCount > 0
+        ? job.targetCount : 3);
+    };
+    window.addEventListener(ACTIVE_JOB_CHANGED, onJobChanged);
+    return () => window.removeEventListener(ACTIVE_JOB_CHANGED, onJobChanged);
+  }, []);
+
   const refreshStatus = useCallback(async () => {
     try {
       const result = await apiGet(API_ENDPOINTS.WUYOU.STATUS);
@@ -99,7 +117,7 @@ export default function WuyouControl() {
   }, [refreshStatus]);
 
   useEffect(() => {
-    apiGet('/recruitment-pipeline/active-job')
+    apiGet('/recruitment-pipeline/active-job', { platform: 'qcwy' })
       .then(result => {
         const job = result.data || EMPTY_JOB;
         setJobCriteria(job);
@@ -142,9 +160,11 @@ export default function WuyouControl() {
     }
     let savedJob;
     try {
-      const result = await apiPut('/recruitment-pipeline/active-job', jobCriteria);
+      const result = await apiPut('/recruitment-pipeline/active-job',
+        { ...jobCriteria, applyTo: 'qcwy' });
       savedJob = result.data;
       setJobCriteria(savedJob);
+      notifyActiveJobChanged(savedJob, 'qcwy');
     } catch (error) {
       return message.error('保存岗位条件失败：' + error.message);
     }
@@ -207,6 +227,7 @@ export default function WuyouControl() {
       </Card>
 
       <JobCriteriaEditor value={jobCriteria} onChange={handleJobCriteriaChange}
+        platform="qcwy"
         disabled={Boolean(batch.running)} />
       <CaptureTargetNotice job={jobCriteria} platform="wuyou" refreshKey={Boolean(batch.running)} />
       {educationHint && <Alert type="warning" showIcon style={{ marginBottom: 16 }}

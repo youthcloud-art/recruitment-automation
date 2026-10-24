@@ -3,6 +3,7 @@ import { Alert, Button, Card, Checkbox, Col, Input, InputNumber, Modal, Row, Sel
 import { DeleteOutlined, DownloadOutlined, InfoCircleOutlined, MailOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
 import { apiGet, apiPatch, apiPost, apiPut } from '../utils/apiClient';
 import JobCriteriaEditor, { EMPTY_JOB } from './JobCriteriaEditor';
+import { ACTIVE_JOB_CHANGED } from '../utils/activeJobEvents';
 import './RecruitmentPipeline.css';
 
 const { Text, Title } = Typography;
@@ -158,6 +159,18 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       })
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    const onJobChanged = event => {
+      const job = event.detail?.job;
+      if (!job?.title) return;
+      setJobCriteria(job);
+      setJobRequirements(job.jobRequirements || '');
+      setReportRevision(value => value + 1);
+      refresh();
+    };
+    window.addEventListener(ACTIVE_JOB_CHANGED, onJobChanged);
+    return () => window.removeEventListener(ACTIVE_JOB_CHANGED, onJobChanged);
+  }, [refresh]);
   useEffect(() => {
     apiGet('/recruitment-pipeline/email/config')
       .then(result => {

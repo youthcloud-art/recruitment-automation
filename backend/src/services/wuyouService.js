@@ -912,7 +912,7 @@ class WuyouService {
       parsed.expectedPosition = { ...(typeof parsed.expectedPosition === 'object' &&
         parsed.expectedPosition ? parsed.expectedPosition : {}), position: intentPosition };
     }
-    const activeJob = jobRequirements && this.activeJobService.current();
+    const activeJob = jobRequirements && this.activeJobService.current('qcwy');
     const result = await this.resumeStore.addResume({
       ...parsed,
       name: verifiedName || '未识别姓名',

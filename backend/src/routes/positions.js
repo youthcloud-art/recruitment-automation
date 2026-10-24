@@ -19,7 +19,7 @@ function localPositionAccess(req, res, next) {
 router.post('/create-local', localPositionAccess, async (req, res) => {
   try {
     const result = await PositionService.createLocalPosition(req.body?.job || req.body,
-      req.body?.metadata);
+      req.body?.metadata, { applyTo: req.body?.applyTo });
     res.status(result.reused ? 200 : 201).json({ success: true, ...result });
   } catch (error) {
     const validation = /岗位|关键词|工作地点|学历|经验|目标份数|无效|请填写|内容过长/.test(error.message);
@@ -37,14 +37,16 @@ router.post('/draft-local', localPositionAccess, (req, res) => {
 });
 
 router.post('/:id/apply-local', localPositionAccess, (req, res) => {
-  try { res.json({ success: true, ...PositionService.applyLocalPosition(req.params.id) }); }
+  try { res.json({ success: true, ...PositionService.applyLocalPosition(req.params.id,
+    { applyTo: req.body?.applyTo }) }); }
   catch (error) { res.status(/不存在/.test(error.message) ? 404 : 400)
     .json({ success: false, message: error.message }); }
 });
 
 router.post('/:id/revise-local', localPositionAccess, async (req, res) => {
   try {
-    const result = await PositionService.reviseLocalPosition(req.params.id, req.body?.job || req.body);
+    const result = await PositionService.reviseLocalPosition(req.params.id,
+      req.body?.job || req.body, req.body?.metadata, { applyTo: req.body?.applyTo });
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(/只能修订/.test(error.message) ? 404 : 400)

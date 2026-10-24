@@ -102,8 +102,8 @@ router.get('/analytics/report', async (req, res) => {
     }
   } catch (error) { fail(res, error); }
 });
-router.get('/active-job', (_req, res) => {
-  try { res.json({ success: true, data: service.activeJob() }); }
+router.get('/active-job', (req, res) => {
+  try { res.json({ success: true, data: service.activeJob(req.query.platform) }); }
   catch (error) { fail(res, error); }
 });
 
@@ -118,7 +118,8 @@ router.get('/active-job/template', (_req, res) => {
 
 router.put('/active-job', async (req, res) => {
   try {
-    const result = await positionService.createLocalPosition(req.body);
+    const result = await positionService.createLocalPosition(req.body, {},
+      { applyTo: req.body?.applyTo });
     res.json({ success: true, data: result.job });
   }
   catch (error) { res.status(400).json({ success: false, message: error.message }); }
@@ -132,7 +133,8 @@ router.post('/active-job/import', (req, res) => {
       return res.status(400).json({ success: false, message: '请选择 .xlsx 岗位条件模板' });
     }
     try {
-      const result = await positionService.createLocalPosition(parseJobTemplate(req.file.buffer));
+      const result = await positionService.createLocalPosition(parseJobTemplate(req.file.buffer), {},
+        { applyTo: req.body?.applyTo });
       res.json({ success: true, data: result.job });
     }
     catch (importError) { res.status(400).json({ success: false, message: importError.message }); }

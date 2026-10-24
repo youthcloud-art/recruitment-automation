@@ -156,8 +156,8 @@ class RecruitmentPipelineService {
     return result;
   }
 
-  activeJob() {
-    return this.activeJobService.current();
+  activeJob(platform) {
+    return this.activeJobService.current(platform);
   }
 
   deleteHistoricalCandidates({ ids, jobTitle } = {}) {

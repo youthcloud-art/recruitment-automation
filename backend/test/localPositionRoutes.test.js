@@ -6,9 +6,10 @@ const router = require('../src/routes/positions');
 
 test('本地岗位创建接口可用，跨站请求被拒绝', async () => {
   const previous = positionService.createLocalPosition;
-  positionService.createLocalPosition = async job => ({
+  positionService.createLocalPosition = async (job, _metadata, options) => ({
     position: { id: 'position_test', title: job.title },
-    job: { ...job, updatedAt: '2026-01-01T00:00:00Z' }, reused: false
+    job: { ...job, updatedAt: '2026-01-01T00:00:00Z' }, reused: false,
+    applyTo: options.applyTo
   });
   const app = express();
   app.use(express.json());
@@ -20,11 +21,13 @@ test('本地岗位创建接口可用，跨站请求被拒绝', async () => {
     const url = `http://127.0.0.1:${server.address().port}/api/positions/create-local`;
     const response = await fetch(url, { method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000' },
-      body: JSON.stringify({ job: { title: '项目经理主管', jobRequirements: '项目交付经验' } }) });
+      body: JSON.stringify({ job: { title: '项目经理主管', jobRequirements: '项目交付经验' },
+        applyTo: 'boss' }) });
     assert.equal(response.status, 201);
     const body = await response.json();
     assert.equal(body.success, true);
     assert.equal(body.position.title, '项目经理主管');
+    assert.equal(body.applyTo, 'boss');
     const denied = await fetch(url, { method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: 'https://another.example' },
       body: JSON.stringify({ job: { title: '恶意请求' } }) });

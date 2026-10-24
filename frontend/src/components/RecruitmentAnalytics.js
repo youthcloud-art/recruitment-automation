@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Alert, Button, Card, Col, Empty, Row, Select, Space, Spin, Typography, message } from 'antd';
 import { BarChartOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import { apiGet } from '../utils/apiClient';
+import { ACTIVE_JOB_CHANGED } from '../utils/activeJobEvents';
 import './RecruitmentAnalytics.css';
 
 const { Title, Text } = Typography;
@@ -64,6 +65,11 @@ function RecruitmentAnalytics() {
       if (!document.hidden) setReloadKey(value => value + 1);
     }, 30000);
     return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    const onJobChanged = () => setReloadKey(value => value + 1);
+    window.addEventListener(ACTIVE_JOB_CHANGED, onJobChanged);
+    return () => window.removeEventListener(ACTIVE_JOB_CHANGED, onJobChanged);
   }, []);
 
   const download = async format => {

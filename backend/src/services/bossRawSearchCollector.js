@@ -610,7 +610,7 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       if (this.windowRestoreUsed) throw fail('BOSS_CDP_WINDOW_MINIMIZED',
         'BOSS 专用 Chrome 本轮已自动恢复一次，再次最小化后已暂停；请手动恢复窗口并重新开始采集');
       if (!this.runIdentity || !this.lastCandidateWindow) throw error;
-      const currentJob=this.jobService.current();
+      const currentJob=this.jobService.current('boss');
       if (this.runIdentity.title!==title || this.runIdentity.chosenId!==id ||
           this.runIdentity.jobSignature!==jobResumeSignature(currentJob)) throw fail(
         'BOSS_CDP_WINDOW_RESTORE_UNAVAILABLE',

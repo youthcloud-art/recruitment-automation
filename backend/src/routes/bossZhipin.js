@@ -26,7 +26,7 @@ const runJournal = process.env.COMPANY_DEPLOYMENT === 'true'
 function savedRunStatus() {
   if (!runJournal) return null;
   try {
-    const job = new ActiveJobService().current();
+    const job = new ActiveJobService().current('boss');
     return runJournal.interruptedStatus({signature:job ? jobResumeSignature(job) : ''});
   } catch (error) {
     logger.warn(`读取 BOSS 上次采集进度失败: ${error.message}`);
@@ -393,7 +393,7 @@ router.post('/start-browsing', async (req, res) => {
       return res.status(422).json({success:false,
         message:'BOSS 官方搜索最长运行时间须为 1～180 分钟'});
     }
-    const job = new ActiveJobService().current();
+    const job = new ActiveJobService().current('boss');
     if (!job?.title || !job.jobRequirements) {
       return res.status(422).json({success:false,message:'请先保存岗位条件再开始采集'});
     }

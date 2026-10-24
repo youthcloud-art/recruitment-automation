@@ -121,7 +121,7 @@ export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disable
             onChange={number => setField('recommendationTargetCount', number)} />
         </Col>
         <Col xs={24} md={12}>
-          <Text>单次采集目标份数（按本次新入库自动停止，前程无忧最多 30）</Text>
+          <Text>单次采集目标份数（按本次新入库自动停止，前程无忧最多 50）</Text>
           <InputNumber min={1} max={200} precision={0} style={{ width: '100%' }}
             value={job.targetCount} disabled={disabled}
             onChange={number => setField('targetCount', number)} />

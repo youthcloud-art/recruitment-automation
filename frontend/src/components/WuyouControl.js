@@ -134,8 +134,8 @@ export default function WuyouControl() {
     if (!terms.length || terms.length > 10 || terms.some(term => term.length > 30)) {
       return message.warning('请输入 1 到 10 个岗位关键词，每个不超过 30 字');
     }
-    if (!Number.isInteger(targetCount) || targetCount < 1 || targetCount > 30) {
-      return message.warning('目标份数应为 1 到 30');
+    if (!Number.isInteger(targetCount) || targetCount < 1 || targetCount > 50) {
+      return message.warning('目标份数应为 1 到 50');
     }
     if (!jobCriteria.title || !jobCriteria.jobRequirements) {
       return message.warning('请先填写或导入岗位条件，并保存后开始采集');
@@ -211,8 +211,8 @@ export default function WuyouControl() {
       <CaptureTargetNotice job={jobCriteria} platform="wuyou" refreshKey={Boolean(batch.running)} />
       {educationHint && <Alert type="warning" showIcon style={{ marginBottom: 16 }}
         message={educationHint} />}
-      {targetCount > 30 && <Alert type="warning" showIcon style={{ marginBottom: 16 }}
-        message={`模板建议获取 ${targetCount} 份，前程无忧单次最多 30 份；请在下方将目标份数改为 30 或更少。`} />}
+      {targetCount > 50 && <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+        message={`模板建议获取 ${targetCount} 份，前程无忧单次最多 50 份；请在下方将目标份数改为 50 或更少。`} />}
 
       <Card title="按岗位自动获取简历" style={{ marginBottom: 16 }}>
         <Space wrap align="end">
@@ -225,7 +225,7 @@ export default function WuyouControl() {
           </div>
           <div>
             <Text>目标简历份数</Text>
-            <InputNumber min={1} max={30} precision={0} value={targetCount} onChange={setTargetCount}
+            <InputNumber min={1} max={50} precision={0} value={targetCount} onChange={setTargetCount}
               style={{ display: 'block', width: 150, marginTop: 6 }} disabled={Boolean(batch.running)} />
           </div>
           <div>

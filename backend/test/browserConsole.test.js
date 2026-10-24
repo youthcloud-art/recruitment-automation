@@ -17,6 +17,13 @@ function fakePage(calls, initialURL = 'https://www.zhipin.com/web/user/') {
   png.writeUInt32BE(720, 20);
   return {
     isClosed: () => false, url: () => url, changeURL: value => { url = value; },
+    context: () => ({ newCDPSession: async () => ({
+      send: async (method, args) => {
+        calls.push(['cdp', method, args]);
+        return method === 'Browser.getWindowForTarget' ? { windowId: 42 } : {};
+      },
+      detach: async () => calls.push(['cdp-detach'])
+    }) }),
     screenshot: async options => { calls.push(['screenshot', options]); return png; },
     mouse: {
       click: async (x, y, options) => calls.push(['click', x, y, options]),
@@ -156,6 +163,23 @@ test('running collections and stale or navigated frames cannot receive manual in
   app.advance(15001);
   assert.equal((await click()).status, 409);
   assert.deepEqual(app.calls.map(call => call[0]), ['screenshot', 'screenshot']);
+});
+
+test('operator can restore the existing official Chrome window only while collection is idle', async t => {
+  const app = await fixture(t);
+  assert.equal((await app.request('/restore-window', { platform: 'boss', clientId: CLIENT })).status, 409);
+  await acquire(app);
+  app.target.running = true;
+  assert.equal((await app.request('/restore-window', { platform: 'boss', clientId: CLIENT })).status, 409);
+  app.target.running = false;
+  const restored = await app.request('/restore-window', { platform: 'boss', clientId: CLIENT });
+  assert.equal(restored.status, 200);
+  assert.deepEqual(restored.body.data, { restored: true });
+  assert.deepEqual(app.calls, [
+    ['cdp', 'Browser.getWindowForTarget', undefined],
+    ['cdp', 'Browser.setWindowBounds', { windowId: 42, bounds: { windowState: 'maximized' } }],
+    ['cdp-detach']
+  ]);
 });
 
 test('login-only Chrome is attached through owned CDP without launching or navigation', async t => {

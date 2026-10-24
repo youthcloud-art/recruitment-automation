@@ -4,7 +4,7 @@ const { WuyouService } = require('../services/wuyouService');
 const router = express.Router();
 const service = new WuyouService();
 let batchStarting = false;
-const MAX_TARGET_COUNT = 30;
+const MAX_TARGET_COUNT = 50;
 const MAX_KEYWORDS = 10;
 
 function handleError(res, error) {
@@ -13,7 +13,7 @@ function handleError(res, error) {
   return res.status(status).json({ success: false, message });
 }
 
-function parseTargetCount(value, defaultValue = MAX_TARGET_COUNT) {
+function parseTargetCount(value, defaultValue = 30) {
   if (value === undefined) return defaultValue;
   if (value === null || value === '' || typeof value === 'boolean') return null;
   const count = Number(value);

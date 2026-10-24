@@ -1372,6 +1372,7 @@ function App() {
           onSelect={({ key }) => {
             if (key === '8') setPositionManagementVisible(true);
             else {
+              setPositionManagementVisible(false);
               if (key === '4') setPipelineSourceRequest(null);
               setSelectedMenuKey(key);
             }

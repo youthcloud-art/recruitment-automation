@@ -59,6 +59,13 @@ function RecruitmentAnalytics() {
     return () => controller.abort();
   }, [scope, threshold, reloadKey]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setReloadKey(value => value + 1);
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const download = async format => {
     setDownloading(format);
     try {

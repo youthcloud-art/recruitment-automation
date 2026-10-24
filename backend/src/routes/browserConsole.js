@@ -137,6 +137,32 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
     } catch (error) { errorResponse(res, error); }
   });
 
+  router.post('/restore-window', async (req, res) => {
+    try {
+      fields(req.body, ['platform', 'clientId']);
+      const { platform, clientId } = req.body;
+      requireLock(platform, clientId);
+      if (pending) fail(409, '浏览器正在处理其他操作，请稍后重试');
+      if (running(getTargets()[platform])) fail(409, '平台正在采集，请先暂停后恢复窗口');
+      pending = true;
+      try {
+        await withPage(platform, async (page, target) => {
+          requireLock(platform, clientId);
+          if (running(target)) fail(409, '平台正在采集，请先暂停后恢复窗口');
+          const session = await page.context().newCDPSession(page);
+          try {
+            const { windowId } = await session.send('Browser.getWindowForTarget');
+            await session.send('Browser.setWindowBounds', {
+              windowId, bounds: { windowState: 'maximized' }
+            });
+            if (owns(platform, clientId)) lock.expiresAt = now() + LOCK_MS;
+            respond(res, { restored: true });
+          } finally { await session.detach().catch(() => {}); }
+        });
+      } finally { pending = false; }
+    } catch (error) { errorResponse(res, error); }
+  });
+
   router.get('/screenshot', async (req, res) => {
     try {
       fields(req.query, ['platform', 'clientId']);

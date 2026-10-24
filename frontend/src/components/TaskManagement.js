@@ -232,10 +232,7 @@ const TaskManagement = ({ onOpenPipeline = () => {}, onOpenControl = () => {} })
     const configs = {
       '前程无忧': { color: 'green', icon: '🟢' },
       'BOSS直聘': { color: 'orange', icon: '🟠' },
-      '拉勾网': { color: 'purple', icon: '🟣' },
-      '猎聘网': { color: 'red', icon: '🔴' },
-      '脉脉': { color: 'cyan', icon: '🔷' },
-      'LinkedIn': { color: 'geekblue', icon: '🔶' }
+      '智联招聘': { color: 'blue', icon: '🔵' }
     };
     return configs[platform] || { color: 'default', icon: '🌍' };
   };

@@ -20,6 +20,12 @@ function collectorState(source, status) {
   if (status.status === 'paused' || ['verification_required', 'login_required'].includes(batch?.stopReason)) {
     return { label: '已暂停', color: 'warning' };
   }
+  if (batch?.stopReason && !['target_reached', 'stopped'].includes(batch.stopReason) &&
+      Number(batch.targetCount) > Number(batch.saved ?? batch.collectedCount ?? 0)) {
+    return { label: '目标未完成', color: 'warning' };
+  }
+  if (source === 'zlzp' && Number(status.targetCount) > Number(status.collectedCount) &&
+      status.status !== 'idle') return { label: '目标未完成', color: 'warning' };
   if (status.lastError || status.error) return { label: '需检查', color: 'error' };
   return { label: '当前未采集', color: 'default' };
 }
@@ -29,13 +35,19 @@ function recoveryHint(source, status) {
   const batch = source === 'qcwy' ? status.batch : status;
   const reason = String(status.lastFailureCode || batch?.stopReason || status.lastError || '').toUpperCase();
   if (/WINDOW_MINIMIZED|VIEWPORT_TOO_SMALL/.test(reason)) {
-    return '专用 Chrome 被最小化或窗口太小；在服务器桌面恢复为正常窗口后，点“续接上次任务”或重开一轮。';
+    return '专用 Chrome 被最小化或窗口太小；点页面顶部“服务器浏览器 → 恢复并最大化窗口”（或在服务器桌面恢复），再续接或重开一轮。';
   }
   if (/VERIFICATION|CAPTCHA|RATE_LIMIT/.test(reason) || batch?.pausedForVerification) {
     return '平台要求人工验证或暂时限流；在服务器浏览器按官方页面完成处理后再续采，不要反复请求验证码。';
   }
   if (/LOGIN/.test(reason)) return '登录已过期；在服务器专用浏览器完成登录，再启动本次采集。';
   if (/PERMISSION/.test(reason)) return '当前企业账号缺少该搜索权限，请先在招聘平台确认权限。';
+  if (/RESULTS_EXHAUSTED|NO_RESULTS/.test(reason)) {
+    return '当前关键词可访问结果已浏览完。已入库简历保留；可在岗位条件中增加相关关键词或调整平台筛选，再按剩余份数补采。';
+  }
+  if (/ATTEMPT_LIMIT/.test(reason)) {
+    return '本轮已达到安全尝试上限。请检查搜索结果、重复记录与平台状态，然后按剩余份数启动新一轮；不会清除已有简历。';
+  }
   if (/DOM|STRUCTURE|SELECTOR|PAGE/.test(reason)) {
     return '招聘平台页面结构可能变化；已保留入库结果。请在采集控制台查看提示并确认平台页面，再决定是否重试。';
   }
@@ -113,7 +125,7 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
         throw new Error('请先保存完整岗位要求，再启动采集');
       }
       const defaultTarget = Number(currentJob.targetCount) || 3;
-      const max = source.key === 'qcwy' ? 30 : 200;
+      const max = source.key === 'qcwy' ? 50 : 200;
       const requested = Number(perRunTargets[source.key] ?? Math.min(defaultTarget, max));
       if (!Number.isInteger(requested) || requested < 1 || requested > max) {
         throw new Error(`${source.label}本次新增份数需为 1～${max}`);
@@ -201,7 +213,13 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
           const batch = source.key === 'qcwy' ? status?.batch : status;
           const taskTarget = Number(batch?.targetCount) || 0;
           const taskSaved = Number(source.key === 'qcwy' ? batch?.saved : batch?.collectedCount) || 0;
-          const runLimit = source.key === 'qcwy' ? 30 : 200;
+          const runLimit = source.key === 'qcwy' ? 50 : 200;
+          const sameJob = source.key === 'zlzp'
+            ? batch?.filters?.position === (job.searchKeywords || job.title)
+            : source.key === 'qcwy' && String(job.searchKeywords || job.title)
+              .split(/[,，、\n]/).map(value => value.trim()).includes(batch?.currentKeyword);
+          const remaining = sameJob && taskTarget > taskSaved && taskTarget <= runLimit
+            ? taskTarget - taskSaved : 0;
           const runTarget = perRunTargets[source.key] ?? Math.min(target || 3, runLimit);
           const hint = recoveryHint(source.key, status);
           return <Col xs={24} md={8} key={source.key}>
@@ -211,6 +229,11 @@ export default function LiveRecruitmentTasks({ onOpenPipeline, onOpenControl, re
                 <div><Text type="warning">待核实：姓名 {counts.nameNeedsReview || 0} 份，求职岗位 {counts.positionNeedsReview || 0} 份，结构化解析 {counts.parseNeedsReview || 0} 份。平台匿名展示时系统不会编造姓名。</Text></div>}
               {taskTarget > 0 && <Progress percent={Math.min(100, Math.round(taskSaved / taskTarget * 100))}
                 format={() => `上次任务 ${taskSaved}/${taskTarget}`} style={{ marginTop: 8 }} />}
+              {remaining > 0 && state.label !== '采集中' &&
+                <Button size="small" style={{ marginTop: 8 }}
+                  onClick={() => setPerRunTargets(previous => ({ ...previous, [source.key]: remaining }))}>
+                  将本次新增设为尚差 {remaining} 份
+                </Button>}
               {hint && (state.color === 'warning' || state.color === 'error') &&
                 <Alert type="warning" showIcon style={{ marginTop: 8 }} message={hint} />}
               {actionError[source.key] && <Alert type="error" showIcon style={{ marginTop: 8 }}

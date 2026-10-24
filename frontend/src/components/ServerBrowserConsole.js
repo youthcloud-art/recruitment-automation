@@ -194,6 +194,17 @@ export default function ServerBrowserConsole() {
     action({ action: 'type', text: value });
   };
 
+  const restoreWindow = async () => {
+    if (disabled || !hasLease.current) return;
+    setActing(true);
+    setError('');
+    try {
+      await apiPost(`${ROOT}/restore-window`, { platform, clientId: clientId.current });
+      await getFrame(platform);
+    } catch (cause) { setError(cause.message || '未能恢复服务器浏览器窗口'); }
+    finally { if (mounted.current) setActing(false); }
+  };
+
   if (!status?.enabled) return null;
 
   return <>
@@ -205,6 +216,9 @@ export default function ServerBrowserConsole() {
           <Select aria-label="招聘平台" value={platform} options={PLATFORMS} onChange={changePlatform} style={{ width: 160 }} disabled={connecting || acting} />
           <Tag color={leased ? 'success' : status?.lock?.held ? 'warning' : 'default'}>{leased ? '当前由你操作' : status?.lock?.held ? '其他同事正在操作' : '尚未连接'}</Tag>
           {!leased && <Button loading={connecting} onClick={() => connect(platform)}>连接浏览器</Button>}
+          {leased && <Button disabled={disabled} loading={acting} onClick={restoreWindow}>
+            恢复并最大化窗口
+          </Button>}
         </Space>
         {selected?.running && <Alert type="warning" showIcon message="此平台正在采集简历，画面可查看。请先停止采集再手动操作浏览器。" />}
         {selected && !selected.available && <Alert type="info" showIcon message="请先在此平台的采集页面启动或初始化浏览器，再点击连接浏览器。" />}

@@ -79,6 +79,31 @@ test('前程无忧从同一岗位条件按本次份数采集并复用服务器�
   expect(apiPost).toHaveBeenCalledWith('/wuyou/start', {});
 });
 
+test('前程无忧接受岗位模板设定的单次新增 34 份', async () => {
+  const base = apiGet.getMockImplementation();
+  apiGet.mockImplementation(url => url === '/recruitment-pipeline/active-job'
+    ? Promise.resolve({ success: true, data: { ...job, targetCount: 34 } }) : base(url));
+  render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
+  expect((await screen.findByRole('spinbutton', { name: '前程无忧本次新增份数' })).value).toBe('34');
+  fireEvent.click((await screen.findAllByRole('button', { name: '启动本次采集' }))[2]);
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/wuyou/keyword-batch', {
+    keywords: [job.title], targetCount: 34,
+    jobRequirements: job.jobRequirements, education: '不限'
+  }));
+});
+
+test('前程无忧结果不足时显示原因，并能一键把下次目标设为剩余份数', async () => {
+  const base = apiGet.getMockImplementation();
+  apiGet.mockImplementation(url => url === '/wuyou/status?readOnly=1'
+    ? Promise.resolve({ success: true, data: { status: 'ready', isLoggedIn: true,
+      batch: { running: false, targetCount: 34, saved: 7,
+        currentKeyword: job.title, stopReason: 'results_exhausted' } } }) : base(url));
+  render(<LiveRecruitmentTasks onOpenPipeline={() => {}} onOpenControl={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: '将本次新增设为尚差 27 份' }));
+  expect(screen.getByRole('spinbutton', { name: '前程无忧本次新增份数' }).value).toBe('27');
+  expect(screen.getByText(/当前关键词可访问结果已浏览完/)).toBeTruthy();
+});
+
 test('智联从已保存岗位读取多个搜索关键词，便于结果不足时自行补采', async () => {
   const base = apiGet.getMockImplementation();
   apiGet.mockImplementation(url => url === '/recruitment-pipeline/active-job'

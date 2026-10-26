@@ -711,8 +711,35 @@ test('a single obscured card can be skipped after read-only checks and the next 
   assert.equal(store.records.length,1);
 });
 
-test('five consecutive candidate processing failures pause before consuming a large list', async () => {
-  const cards=Array.from({length:12},(_,index)=>`候选卡 ${index} 成本核算经历`);
+test('five incomplete candidates do not stop the next complete BOSS resume', async () => {
+  const cards=Array.from({length:6},(_,index)=>`候选卡 ${index} 成本核算经历`);
+  const {session,state,store}=fakeSession({cardTexts:cards});
+  const collector=new BossRawRecommendCollector({
+    connect:async()=>session,store,queue:{enqueue() {}},
+    jobService:{current:()=>({title:TITLE,jobRequirements:'本科，三年以上成本核算经验'})},
+    wait:async()=>{}
+  });
+  const extract=collector.extractResume.bind(collector);
+  let calls=0;
+  collector.extractResume=async(...args)=>{
+    if (++calls<=5) {
+      const error=new Error('invalid resume content');
+      error.code='BOSS_RESUME_CONTENT_INVALID';
+      throw error;
+    }
+    return extract(...args);
+  };
+  const result=await collector.collect({targetCount:1});
+  assert.equal(result.state,'completed');
+  assert.equal(result.attempted,6);
+  assert.equal(result.skipped,5);
+  assert.equal(result.saved,1);
+  assert.equal(state.openCount,6);
+  assert.equal(store.records.length,1);
+});
+
+test('twenty consecutive incomplete candidates pause a likely page or OCR regression', async () => {
+  const cards=Array.from({length:25},(_,index)=>`候选卡 ${index} 成本核算经历`);
   const {session,state,store}=fakeSession({cardTexts:cards});
   const collector=new BossRawRecommendCollector({
     connect:async()=>session,store,queue:{enqueue() {}},
@@ -727,10 +754,10 @@ test('five consecutive candidate processing failures pause before consuming a la
   const result=await collector.collect({targetCount:1});
   assert.equal(result.state,'paused');
   assert.equal(result.lastFailureCode,'BOSS_RESUME_CONTENT_INVALID');
-  assert.equal(result.attempted,5);
-  assert.equal(result.skipped,4);
+  assert.equal(result.attempted,20);
+  assert.equal(result.skipped,19);
   assert.equal(result.saved,0);
-  assert.equal(state.openCount,5);
+  assert.equal(state.openCount,20);
   assert.equal(store.records.length,0);
 });
 

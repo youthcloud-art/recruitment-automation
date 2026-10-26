@@ -1200,6 +1200,7 @@ class BossRawRecommendCollector {
     let targetUnavailableStreak = 0;
     let targetUnavailableWithoutSave = 0;
     let candidateErrorStreak = 0;
+    let incompleteCandidateStreak = 0;
     try {
       this.session = await this.connect();
       if (typeof this.session.assertOrRestoreInitialRecruiterWindow === 'function') {
@@ -1382,6 +1383,7 @@ class BossRawRecommendCollector {
             this.completedCardFingerprints.add(identity);
             blankCanvasStreak = 0;
             candidateErrorStreak = 0;
+            incompleteCandidateStreak = 0;
             if (saved.created) {
               targetUnavailableWithoutSave = 0;
               this.progress({saved:this.status.saved+1});
@@ -1436,6 +1438,20 @@ class BossRawRecommendCollector {
             }
             blankCanvasStreak = 0;
             if (/^BOSS_(VERIFICATION|RATE_LIMITED|LOGIN|PAGE|SEARCH_|RECOMMENDED_JOB|RESUME_DIALOG|CANDIDATE_TIMEOUT|CARD_IDENTITY|STORAGE|CDP_(?!TARGET_UNAVAILABLE))/.test(error.code || '')) throw error;
+            if (['BOSS_RESUME_CONTENT_INVALID', 'BOSS_PLATFORM_ID_UNAVAILABLE'].includes(error.code)) {
+              // These describe one candidate, not a broken recruiter page.
+              // Keep searching for a complete, identifiable resume; still
+              // bound a run of bad cards so an OCR/layout regression is visible.
+              incompleteCandidateStreak++;
+              candidateErrorStreak = 0;
+              if (incompleteCandidateStreak >= 20) {
+                error.message = `连续 ${incompleteCandidateStreak} 张 BOSS 候选卡缺少完整正文或平台记录号，已暂停采集；请检查招聘页面`;
+                throw error;
+              }
+              this.progress({skipped:this.status.skipped+1,
+                lastFailureCode:error.code,lastError:error.message});
+              continue;
+            }
             candidateErrorStreak++;
             if (candidateErrorStreak >= 5) {
               error.message = `连续 ${candidateErrorStreak} 张 BOSS 候选卡处理失败，已暂停采集；请检查招聘页面状态`;

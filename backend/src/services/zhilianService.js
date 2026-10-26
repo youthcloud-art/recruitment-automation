@@ -8,6 +8,20 @@ const { saveBrowserSession } = require('./browserSessionStore');
 const { openVisibleChromeCdp, launchVisibleChromeCdp, getCdpTabs } = require('./visibleChromeCdp');
 const { createHash } = require('node:crypto');
 const ZHILIAN_LOGIN_URL = 'https://passport.zhaopin.com/org/login?bkurl=https%3A%2F%2Frd6.zhaopin.com%2F';
+const ZHILIAN_EMPLOYER_HOSTS = new Set(['passport.zhaopin.com', 'rd.zhaopin.com', 'rd6.zhaopin.com']);
+
+function isZhilianEmployerTab(tab) {
+  try {
+    const url = new URL(tab?.url);
+    return url.protocol === 'https:' && ZHILIAN_EMPLOYER_HOSTS.has(url.hostname);
+  } catch { return false; }
+}
+
+function preferredZhilianEmployerTab(tabs) {
+  const official = tabs.filter(isZhilianEmployerTab);
+  return official.find(tab => /^https:\/\/rd6?\.zhaopin\.com\//.test(tab.url) &&
+    !/(?:^|\/)(?:login|passport|sso)(?:\/|$)/i.test(new URL(tab.url).pathname)) || official[0];
+}
 const SEARCH_CANDIDATE_SELECTORS = [
   'div.search-resume-item.resume-item-exp', '.search-resume-item',
   '.resume-item', '.resume-card', '.candidate-item',
@@ -130,14 +144,14 @@ class ZhilianService {
     const opened = await openVisibleChromeCdp({
       profileName: 'zhilian', initialUrl: ZHILIAN_LOGIN_URL, port: this.cdpPort
     });
-    const tab = opened.tabs.find(item => {
-      try {
-        const url = new URL(item.url);
-        return url.protocol === 'https:' &&
-          ['passport.zhaopin.com', 'rd.zhaopin.com', 'rd6.zhaopin.com'].includes(url.hostname) &&
-          /智联|招聘|登录/.test(item.title || '');
-      } catch { return false; }
-    });
+    // Browser tab titles change after login and can be empty while an SPA is
+    // loading. The official origin, not its presentation title, identifies the
+    // employer tab; prefer a dashboard when both login and dashboard are open.
+    let tab = preferredZhilianEmployerTab(opened.tabs);
+    for (let attempt = 0; !tab && attempt < 3; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 750));
+      tab = preferredZhilianEmployerTab(await getCdpTabs({ profileName: 'zhilian', port: this.cdpPort }));
+    }
     if (!tab) throw new Error('智联招聘企业登录页未正常显示；请检查 Chrome 窗口和网络连接');
     this.chromeWindowOpened = true;
     this.chromeTabUrl = tab.url.split(/[?#]/)[0];
@@ -7248,3 +7262,5 @@ class ZhilianService {
 }
 
 module.exports = ZhilianService;
+module.exports.isZhilianEmployerTab = isZhilianEmployerTab;
+module.exports.preferredZhilianEmployerTab = preferredZhilianEmployerTab;

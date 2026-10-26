@@ -3,6 +3,17 @@ const assert = require('node:assert/strict');
 const BossZhipinService = require('../src/services/bossZhipinService');
 const ZhilianService = require('../src/services/zhilianService');
 
+test('智联 recognizes employer tabs by official URL even when the title changes', () => {
+  const { isZhilianEmployerTab, preferredZhilianEmployerTab } = ZhilianService;
+  const login = { url: 'https://passport.zhaopin.com/org/login', title: '' };
+  const dashboard = { url: 'https://rd6.zhaopin.com/', title: '工作台' };
+  assert.equal(isZhilianEmployerTab(login), true);
+  assert.equal(isZhilianEmployerTab(dashboard), true);
+  assert.equal(preferredZhilianEmployerTab([login, dashboard]), dashboard);
+  assert.equal(isZhilianEmployerTab({ url: 'https://rd6.zhaopin.com.evil.example/' }), false);
+  assert.equal(isZhilianEmployerTab({ url: 'about:blank' }), false);
+});
+
 test('BOSS start preserves a visible login page without navigating again', async () => {
   const service = new BossZhipinService();
   let navigations = 0;

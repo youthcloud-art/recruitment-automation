@@ -28,7 +28,9 @@ test('detail loads one ID through indexed store method without reading full libr
   const body = await response.json();
   assert.deepEqual(body, { success: true, data: { id: 'boss-1', source: 'boss',
     name: '候选人甲', originalText: '仅甲的完整简历',
-    hiringJobTitle: '招聘岗位待核实' } });
+    hiringJobTitle: '招聘岗位待核实',
+    platformRecordId: '', platformRecordKind: '',
+    platformLocatorStatus: 'unavailable', platformRecordUrl: '' } });
   assert.deepEqual(calls, ['boss-1']);
   assert.doesNotMatch(JSON.stringify(body), /候选人乙/);
 });

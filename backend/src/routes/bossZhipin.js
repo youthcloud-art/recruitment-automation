@@ -9,6 +9,7 @@ const { connectOwnedBossPage } = require('../services/bossRawCdp');
 const { ensureOfficialSearchPage } = require('../services/bossOfficialSearchNavigation');
 const { getCdpTabs } = require('../services/visibleChromeCdp');
 const { ActiveJobService } = require('../services/activeJobService');
+const { bossCardId } = require('../utils/platformLocator');
 const logger = require('../utils/logger');
 
 // 创建 Boss 直聘服务实例
@@ -227,6 +228,51 @@ router.get('/canvas-health', async (_req, res) => {
   } finally {
     try { session?.close(); } catch (_) { /* Keep the dedicated Chrome open. */ }
   }
+});
+
+// Structural identity audit for the official result list. No candidate text,
+// identifier value, link, or resume content leaves this route.
+router.get('/platform-id-health', async (_req, res) => {
+  if (process.env.COMPANY_DEPLOYMENT !== 'true') return res.status(404).json({success:false});
+  if (rawStarting || rawTask) return res.status(409).json({success:false,
+    message:'采集运行中，请在任务空闲时检查平台编号'});
+  let session;
+  try {
+    session = await connectOwnedBossPage();
+    await session.assertRecruiterReady();
+    const result = await session.evaluate(`(() => {
+      const selectors=[
+        ['search','iframe[src*="/web/frame/search/"]','li.geek-info-card'],
+        ['recommend','iframe[src*="/web/frame/recommend/"]','li.card-item']];
+      for (const [mode,frameSelector,cardSelector] of selectors) {
+        const doc=document.querySelector(frameSelector)?.contentDocument;
+        if (!doc) continue;
+        const cards=[...doc.querySelectorAll(cardSelector)].slice(0,100);
+        return {mode,totalCards:doc.querySelectorAll(cardSelector).length,
+          cards:cards.map(card=>{
+            const link=card.querySelector(':scope > a[ka="search_click_open_resume"]');
+            const raw=link?.getAttribute('data-expect') || link?.getAttribute('data-geek-id') || '';
+            let hrefPath='',hrefKeys=[];
+            try {const url=new URL(link?.href);hrefPath=url.pathname;hrefKeys=[...url.searchParams.keys()];}
+            catch (_) {}
+            return {raw,hrefPath,hrefKeys};
+          })};
+      }
+      return {mode:'no_result_frame',totalCards:0,cards:[]};
+    })()`, {timeoutMs:8000});
+    const ids = result.cards.map(card => bossCardId(card.raw)).filter(Boolean);
+    const first = result.cards[0];
+    res.set('Cache-Control','no-store');
+    return res.json({success:true,data:{mode:result.mode,totalCards:result.totalCards,
+      sampledCards:result.cards.length,withPlatformId:ids.length,
+      uniquePlatformIds:new Set(ids).size,
+      firstAttributeShape:first?.raw ? first.raw.startsWith('{') ? 'json' :
+        /^[A-Za-z0-9_-]+$/.test(first.raw) ? 'token' : 'other' : 'absent',
+      firstAttributeLength:first?.raw?.length || 0,
+      firstLinkPath:first?.hrefPath || '',firstLinkQueryKeys:first?.hrefKeys || []}});
+  } catch (_) {
+    return res.status(503).json({success:false,message:'当前 BOSS 候选卡结构不可读取'});
+  } finally { try { session?.close(); } catch (_) {} }
 });
 
 /**

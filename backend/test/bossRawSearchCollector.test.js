@@ -532,7 +532,8 @@ test('search cards read one official name and the second expected-job field',()=
   const role={textContent:'IT网络运维'};
   const row={textContent:'期望 上海 IT网络运维',querySelectorAll:selector=>
     selector==='span.render-two' ? [city,role] : []};
-  const link={textContent:'张三 期望 上海 IT网络运维'};
+  const link={textContent:'张三 期望 上海 IT网络运维',
+    getAttribute:name=>name==='data-expect' ? 'expect-verified-123' : null};
   const name={textContent:'张三'};
   const card={textContent:link.textContent,querySelectorAll:selector=>
     selector===':scope > a[ka="search_click_open_resume"][data-expect]' ? [link]
@@ -547,6 +548,7 @@ test('search cards read one official name and the second expected-job field',()=
   assert.equal(result.cards[0].displayName,'张三');
   assert.equal(result.cards[0].expectedPosition,'IT网络运维');
   assert.equal(result.cards[0].clickText,link.textContent);
+  assert.equal(result.cards[0].sourceCardIdHint,'expect-verified-123');
   assert.equal(result.cards[0].index,0);
   row.querySelectorAll=()=>[city];
   assert.equal(vm.runInNewContext(SEARCH_CARDS,{document}).cards[0].expectedPosition,'',

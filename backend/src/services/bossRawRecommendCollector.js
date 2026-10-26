@@ -2,6 +2,7 @@
 // Playwright to the recruiter tab has caused repeated reloads in practice;
 // this collector uses one raw CDP connection and deliberately never navigates.
 const crypto = require('node:crypto');
+const { bossCardId } = require('../utils/platformLocator');
 const { connectOwnedBossPage } = require('./bossRawCdp');
 const { ActiveJobService } = require('./activeJobService');
 const resumeModel = require('../models/resumeModel');
@@ -191,6 +192,9 @@ function buildExpressions(frameSelector, cardSelector, cardWindowStart = 0) { re
           clickText:resumeLinks.length === 1
             ? (resumeLinks[0].textContent || '').replace(/\\s+/g,' ').trim() : '',
           displayName:names.length === 1 ? (names[0].textContent || '').trim() : '',
+          sourceCardIdHint:resumeLinks.length === 1
+            ? (resumeLinks[0].getAttribute?.('data-expect') ||
+              resumeLinks[0].getAttribute?.('data-geek-id') || '') : '',
           expectedPosition:expected.length === 2
             ? (expected[1].textContent || '').trim() : ''};
       })
@@ -1037,13 +1041,18 @@ class BossRawRecommendCollector {
     parsed.expectedPosition = {...(parsed.expectedPosition || {}),
       position:cardPosition || ocrPosition || null};
     const sourceFingerprint = hashText(captured.text);
-    const sourceCandidateId = candidateIdFromUrl(captured.url);
+    const urlCandidateId = candidateIdFromUrl(captured.url);
+    const sourceCandidateId = urlCandidateId ||
+      bossCardId(cardMeta.sourceCardIdHint);
+    if (!sourceCandidateId) throw fail('BOSS_PLATFORM_ID_UNAVAILABLE',
+      'BOSS 官方详情和候选卡均未提供可验证的平台记录号，本份简历未入库；请在平台核查该候选人');
     let result;
     try {
       result = await this.store.addResume({
         ...parsed,
         source:'boss',platform:'BOSS直聘',sourceUrl:captured.url.href,
-        sourceCandidateId,sourceFingerprint,sourceCardFingerprint,
+        sourceCandidateId,sourceCandidateIdSource:urlCandidateId ? 'official_url' : 'platform_card',
+        sourceFingerprint,sourceCardFingerprint,
         nameSource:cardName ? `boss_${this.pageSegment}_card` : ocrName ? 'ocr' : 'unverified',
         platformAlias:cardAlias?.value || null,
         platformAliasType:cardAlias?.type || null,
@@ -1240,13 +1249,18 @@ class BossRawRecommendCollector {
         }
         this.rememberCandidateWindow(cards);
         const cardCounts = new Map();
+        const platformIdCounts = new Map();
         for (const card of cards) {
           const key = hashText(`${chosen.value}\n${card.text}`);
           cardCounts.set(key,(cardCounts.get(key) || 0)+1);
+          const platformId=bossCardId(card.sourceCardIdHint);
+          if (platformId) platformIdCounts.set(platformId,(platformIdCounts.get(platformId) || 0)+1);
         }
         let attemptedThisRound = 0;
         const savedBeforeRound = this.status.saved;
         for (const card of cards) {
+          const platformId=bossCardId(card.sourceCardIdHint);
+          if (platformId && platformIdCounts.get(platformId) > 1) card.sourceCardIdHint='';
           if (this.stopRequested || signal?.aborted || this.status.saved >= targetCount) break;
           // Cards have no stable DOM ID. Scope their normalized full-text
           // fingerprint to the exact posted job selected in this run.

@@ -4,6 +4,7 @@ const resumeModel = require('../models/resumeModel');
 const logger = require('../utils/logger');
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
 const { postCaptureEvaluationQueue } = require('./postCaptureEvaluationQueue');
+const { idFromOfficialUrl } = require('../utils/platformLocator');
 
 const DETAIL_SELECTORS = [
   '.new-shortcut-resume__modal .new-resume-detail--inner',
@@ -44,6 +45,8 @@ class ZhilianResumeCollector {
       return this.resumeStore.findDuplicateResume(candidate);
     }
     return this.resumeStore.getResumes().find(item =>
+      (candidate.sourceCandidateId && item.source === candidate.source &&
+        item.sourceCandidateId === candidate.sourceCandidateId) ||
       isSameZhilianResume(item, candidate)) || null;
   }
 
@@ -51,7 +54,7 @@ class ZhilianResumeCollector {
     if (existing?.parseStatus !== 'needs_review' || candidate.parseMethod !== 'llm' ||
         existing.sourceFingerprint !== candidate.sourceFingerprint ||
         typeof this.resumeStore.updateCandidateMetadata !== 'function') return existing;
-    const fields = ['name', 'age', 'workYears', 'education', 'currentStatus', 'phone',
+    const fields = ['sourceCandidateId', 'name', 'age', 'workYears', 'education', 'currentStatus', 'phone',
       'email', 'selfIntroduction', 'expectedPosition', 'position', 'workExperience',
       'educationExperience', 'skills', 'certificates', 'parseMethod', 'parseStatus', 'nameSource'];
     return await this.resumeStore.updateCandidateMetadata(existing.id,
@@ -78,10 +81,23 @@ class ZhilianResumeCollector {
   }
 
   async save(captured, activeJob = null) {
+    const sourceCandidateId = idFromOfficialUrl('zlzp', captured.url);
+    if (!sourceCandidateId) {
+      throw new Error('智联当前简历未提供可验证的 resumeNumber，未入库；请在平台打开该候选人的完整详情后重试');
+    }
     const fingerprint = crypto.createHash('sha256').update(captured.text).digest('hex');
-    const duplicate = this.findExisting({ source: 'zlzp', sourceFingerprint: fingerprint });
+    const duplicate = this.findExisting({ source: 'zlzp', sourceCandidateId,
+      sourceFingerprint: fingerprint });
     if (duplicate?.parseStatus !== 'needs_review') {
-      if (duplicate) return { saved: false, duplicate: true, resume: duplicate };
+      if (duplicate) {
+        if (duplicate.sourceCandidateId && duplicate.sourceCandidateId !== sourceCandidateId) {
+          throw new Error('智联相同简历正文对应不同平台简历号，已暂停该记录以避免误关联');
+        }
+        const resume = !duplicate.sourceCandidateId &&
+          typeof this.resumeStore.updateCandidateMetadata === 'function'
+          ? await this.resumeStore.updateCandidateMetadata(duplicate.id, { sourceCandidateId }) : duplicate;
+        return { saved: false, duplicate: true, resume };
+      }
     }
     let parsed = {};
     let parseMethod = 'raw_fallback';
@@ -130,6 +146,8 @@ class ZhilianResumeCollector {
       source: 'zlzp',
       platform: '智联招聘',
       sourceUrl: captured.url,
+      sourceCandidateId,
+      sourceCandidateIdSource: 'official_url',
       sourceTitle: captured.title,
       sourceFingerprint: fingerprint,
       originalText: captured.text,

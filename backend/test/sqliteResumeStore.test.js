@@ -51,6 +51,31 @@ test('SQLite migration retains legacy JSON, deduplicates and updates a single ca
   assert.equal(model.getResumes().length, 2);
 });
 
+test('legacy official URLs backfill platform IDs, support search and keep distinct resumes', async t => {
+  const resumes = [
+    { id: 'zl-old', source: 'zlzp', sourceFingerprint: 'shared',
+      sourceUrl: 'https://rd.zhaopin.com/app/search?resumeNumber=zl-001', originalText: '相同正文' },
+    { id: 'qc-old', source: 'qcwy', sourceFingerprint: 'qc-old-fp',
+      sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=qc-001',
+      originalText: '前程无忧正文' },
+    { id: 'boss-old', source: 'boss', sourceFingerprint: 'boss-old-fp',
+      sourceUrl: 'https://www.zhipin.com/web/frame/c-resume/?source=search',
+      originalText: 'BOSS 正文' }
+  ];
+  const { libraryDir, cleanup } = fixture(t, { resumes, positions: [], categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  assert.equal(model.getResumeById('zl-old').sourceCandidateId, 'zl-001');
+  assert.equal(model.getResumeById('qc-old').sourceCandidateId, 'qc-001');
+  assert.equal(model.getResumeById('boss-old').sourceCandidateId, undefined);
+  assert.equal(model.getResumesPage({ keyword: 'qc-001' }).total, 1);
+  assert.equal(model.getResumesPage({ keyword: 'zl-001' }).total, 1);
+  const distinct = await model.addResume({ source: 'zlzp', sourceCandidateId: 'zl-002',
+    sourceFingerprint: 'shared', originalText: '相同正文' }, { returnStatus: true });
+  assert.equal(distinct.created, true);
+  assert.equal(model.getResumes().length, 4);
+});
+
 test('三平台岗位筛选与评分排序在 SQLite 全部结果分页前执行', t => {
   const resumes = [
     { id: 'a', source: 'boss', captureJobTitle: '网络运维', matchScore: 60 },

@@ -491,6 +491,13 @@ const ResumeDetailModal = ({ visible, onClose, resume, readOnly = false }) => {
         <BaseCard>
           <div style={{ padding: '12px 20px' }}>
             招聘岗位：{resume.hiringJobTitle || '招聘岗位待核实'}
+            {['boss', 'zlzp', 'qcwy'].includes(resume.source) &&
+              <div style={{ marginTop: 8, wordBreak: 'break-all' }}>
+                {resume.platformRecordKind || '平台记录号'}：
+                {resume.platformRecordId || '平台未提供可验证编号'}
+                {resume.platformRecordUrl && <span> · <a href={resume.platformRecordUrl}
+                  target="_blank" rel="noreferrer">打开官方来源页面</a></span>}
+              </div>}
             {resume.nameSource === 'qcwy_card' &&
               <div style={{ color: '#8c8c8c' }}>候选人称呼来自前程无忧搜索卡片，完整姓名请在平台核实。</div>}
             {resume.source === 'boss' && resume.parseMethod === 'ocr' &&

@@ -215,6 +215,7 @@ test('独立初筛报告用前程无忧稳定记录 ID 代替误采的通知标�
   const requirements = '岗位名称：IT网络运维\n必需技能：网络故障排查';
   const item = store.records[2];
   Object.assign(item, { name: '通知', position: '通知', sourceRecordKey: 'c'.repeat(64),
+    sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=official-123',
     originalText: '通知\n工作经历：网络故障排查', matchScore: 80,
     matchEvaluation: { jobRequirements: requirements, method: 'llm', evaluationVersion: 1,
       evaluatedAt: '2026-10-20T00:00:00.000Z', summary: '有相关证据' } });
@@ -222,7 +223,7 @@ test('独立初筛报告用前程无忧稳定记录 ID 代替误采的通知标�
     activeJobService: { current: () => ({ title: 'IT网络运维', jobRequirements: requirements,
       updatedAt: '2026-10-20T00:00:00.000Z' }) } });
   const report = service.report({ source: 'qcwy', minScore: 70 });
-  assert.match(report, /匿名候选人（前程无忧记录 ID：cccccccccccccccc）/);
+  assert.match(report, /匿名候选人（前程无忧记录 ID：official-123）/);
   assert.match(report, /求职岗位待核实/);
   assert.doesNotMatch(report, /通知/);
   assert.equal(item.originalText, '通知\n工作经历：网络故障排查');

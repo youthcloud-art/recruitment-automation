@@ -7,6 +7,7 @@ const { sameBossNearDuplicate,
   chooseBossNearDuplicate } = require('../utils/bossResumeIdentity');
 const { SqliteResumeStore, resumeJobState } = require('./sqliteResumeStore');
 const { hiringJobTitle } = require('../utils/candidateDisplay');
+const { platformLocator } = require('../utils/platformLocator');
 
 // 简历数据缓存，TTL为5分钟
 const resumeCache = new NodeCache({ stdTTL: 300 });
@@ -26,8 +27,14 @@ function exactDuplicateInArray(resumes, incoming) {
         incoming.sourceCandidateId !== item.sourceCandidateId));
     return compatible.length === 1 ? compatible[0] : null;
   }
+  if (incoming.sourceCandidateId) {
+    const byId = sameSource.find(item => item.sourceCandidateId === incoming.sourceCandidateId);
+    if (byId) return byId;
+  }
   return sameSource.find(item =>
-    (incoming.sourceFingerprint && item.sourceFingerprint === incoming.sourceFingerprint) ||
+    (incoming.sourceFingerprint && item.sourceFingerprint === incoming.sourceFingerprint &&
+      !(incoming.sourceCandidateId && item.sourceCandidateId &&
+        incoming.sourceCandidateId !== item.sourceCandidateId)) ||
     isSameZhilianResume(item, incoming)) || null;
 }
 
@@ -421,6 +428,8 @@ class ResumeModel {
     if (this.sqliteStore) return this.sqliteStore.findWuyouDuplicate(incoming, { hasStableId });
     const normalized = incoming.originalText?.replace(/\s+/g, ' ').trim().toLowerCase();
     return this.getResumes().find(item => item.source === 'qcwy' &&
+      !(platformLocator(incoming).id && platformLocator(item).id &&
+        platformLocator(incoming).id !== platformLocator(item).id) &&
       ((incoming.sourceRecordKey && item.sourceRecordKey === incoming.sourceRecordKey) ||
         (hasStableId && incoming.sourceUrl && item.sourceUrl === incoming.sourceUrl) ||
         (incoming.sourceFingerprint && item.sourceFingerprint === incoming.sourceFingerprint) ||

@@ -108,6 +108,8 @@ function searchCardsExpression(cardWindowStart = 0) { return `(() => { /* bossRa
         clickText:links.length===1
           ? (links[0].textContent||'').replace(/\\s+/g,' ').trim() : '',
         displayName:names.length===1 ? (names[0].textContent||'').trim() : '',
+        sourceCardIdHint:links.length===1
+          ? (links[0].getAttribute?.('data-expect') || '') : '',
         expectedPosition:roles.length===2 ? (roles[1].textContent||'').trim() : ''};
     }).filter(item=>item.text)};
 })()`; }

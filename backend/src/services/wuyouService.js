@@ -3,6 +3,7 @@ const fs = require('fs');
 const { chromium } = require('playwright');
 const resumeModel = require('../models/resumeModel');
 const resumeParserService = require('./resumeParserService');
+const { idFromOfficialUrl, platformLocator } = require('../utils/platformLocator');
 const { RecruitmentPipelineService } = require('./recruitmentPipelineService');
 const { loadBrowserSession, saveBrowserSession } = require('./browserSessionStore');
 const { launchVisibleChromeCdp } = require('./visibleChromeCdp');
@@ -853,6 +854,10 @@ class WuyouService {
     const normalizedText = resume.text.replace(/\s+/g, ' ').trim().toLowerCase();
     const fingerprint = crypto.createHash('sha256').update(normalizedText).digest('hex');
     const sourceUrl = safeResumeUrl(resume.url);
+    const sourceCandidateId = idFromOfficialUrl('qcwy', sourceUrl);
+    if (!sourceCandidateId) {
+      throw new Error('前程无忧详情页未提供可验证的 resumeId，未入库；请在平台打开完整候选人详情后重试');
+    }
     const canonical = new URL(sourceUrl);
     const hasStableId = canonical.searchParams.size > 0 ||
       /\/(?:resume|candidate)\/detail\/[\w-]{4,}/i.test(canonical.pathname);
@@ -866,7 +871,10 @@ class WuyouService {
     const existing = typeof this.resumeStore.findWuyouDuplicate === 'function'
       ? this.resumeStore.findWuyouDuplicate(identity, { hasStableId })
       : this.resumeStore.getResumes().find(item =>
-        item.source === 'qcwy' && (item.sourceRecordKey === sourceRecordKey ||
+        item.source === 'qcwy' &&
+        !(sourceCandidateId && platformLocator(item).id &&
+          sourceCandidateId !== platformLocator(item).id) &&
+        (item.sourceRecordKey === sourceRecordKey ||
           (hasStableId && item.sourceUrl === sourceUrl) ||
           item.sourceFingerprint === fingerprint ||
           item.originalText?.replace(/\s+/g, ' ').trim().toLowerCase() === normalizedText));
@@ -878,9 +886,13 @@ class WuyouService {
     const nameSource = detailName ? 'qcwy_detail' : cardName ? 'qcwy_card' :
       detailAlias ? 'qcwy_detail_alias' : 'unverified';
     if (existing) {
+      if (existing.sourceCandidateId && existing.sourceCandidateId !== sourceCandidateId) {
+        throw new Error('前程无忧相同简历内容对应不同平台简历 ID，已暂停该记录以避免误关联');
+      }
       const needsName = !validName(existing.name);
       const jobTitle = jobTitleFromRequirements(jobRequirements);
       const changes = {};
+      if (!existing.sourceCandidateId) changes.sourceCandidateId = sourceCandidateId;
       if (needsName && verifiedName) {
         changes.name = verifiedName;
         changes.nameSource = nameSource;
@@ -920,6 +932,8 @@ class WuyouService {
       source: 'qcwy',
       platform: '前程无忧',
       sourceUrl,
+      sourceCandidateId,
+      sourceCandidateIdSource: 'official_url',
       sourceRecordKey,
       sourceFingerprint: fingerprint,
       sourceTitle: resume.title,

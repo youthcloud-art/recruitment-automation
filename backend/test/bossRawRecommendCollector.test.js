@@ -18,6 +18,24 @@ const RESUME = [
   '专业技能：熟悉 ERP 系统、标准成本制定、预算分析、财务报表编制。'
 ].join('\n');
 const LONG_CARD = '候选人甲在制造企业担任成本核算经理，负责标准成本、差异分析和月度结账。'.repeat(9);
+
+test('BOSS official card record ID is stored when generic resume iframe has no ID', async () => {
+  const records = [];
+  const collector = new BossRawRecommendCollector({
+    store: { addResume: async record => {
+      records.push(record); return { resume: record, created: true };
+    } }, queue: { enqueue: () => ({ queued: true }) }
+  });
+  const captured = { text: RESUME,
+    url: new URL('https://www.zhipin.com/web/frame/c-resume/?source=search'), method: 'dom' };
+  await collector.saveResume(captured, { title: TITLE, jobRequirements: '本科及以上' },
+    '', { sourceCardIdHint: 'expect-verified-123' });
+  assert.equal(records[0].sourceCandidateId, 'expect-verified-123');
+  await assert.rejects(collector.saveResume(captured,
+    { title: TITLE, jobRequirements: '本科及以上' }),
+  error => error.code === 'BOSS_PLATFORM_ID_UNAVAILABLE');
+  assert.equal(records.length, 1);
+});
 const TITLELESS_OCR_PAGES = new Map([
   [0,'2020年3月-2024年9月，某制造公司成本核算经理，负责产品成本归集与月度结账，管理多工厂的材料耗用核对，制定成本差异分析流程，协调仓库和生产团队逐月核验出入库单据，完成经营报表。针对材料价格波动建立月度追踪台账，汇总产品单位成本变化，向财务负责人说明异常项目并跟进整改。'],
   [700,'2018年6月-2020年2月，某工业集团财务主管，参与年度预算和标准成本制定，实施 ERP 成本模块上线，优化成本中心分摊口径，协助业务部门复核库存和采购数据，持续分析毛利变化。每季度与供应链团队核对采购价格和生产损耗，编制管理层需要的分析材料，追踪预算执行情况。'],

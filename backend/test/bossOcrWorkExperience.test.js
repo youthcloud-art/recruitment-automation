@@ -62,7 +62,8 @@ test('the BOSS collector persists evidence-backed OCR history with the resume',a
   });
   await collector.saveResume({text:history,method:'ocr',
     url:new URL('https://www.zhipin.com/web/frame/c-resume/?uid=example')},
-  {title:'销售工程师',jobRequirements:'有客户服务经历'});
+  {title:'销售工程师',jobRequirements:'有客户服务经历'}, '',
+  {sourceCardIdHint:'verified-expect-123'});
   assert.equal(saved.source,'boss');
   assert.equal(saved.workExperience[0].company,'星海设备有限公司');
   assert.equal(saved.workExperience[0].verificationStatus,'ocr_needs_review');

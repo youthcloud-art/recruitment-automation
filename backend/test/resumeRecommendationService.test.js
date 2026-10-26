@@ -94,12 +94,13 @@ test('错误的分数、份数或平台参数会被拒绝', () => {
 test('历史前程无忧页面导航文字不会显示成候选人姓名或求职岗位', () => {
   const key = 'b'.repeat(64);
   const item = candidate('qcwy-ui', 'qcwy', 82, {
-    name: '通知', position: '通知', sourceRecordKey: key
+    name: '通知', position: '通知', sourceRecordKey: key,
+    sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=official-123'
   });
   const result = service([item]).recommend();
   assert.equal(result.qualifiedCount, 1);
   assert.equal(result.recommendations[0].name,
-    `匿名候选人（前程无忧记录 ID：${key.slice(0, 16)}）`);
+    '匿名候选人（前程无忧记录 ID：official-123）');
   assert.equal(result.recommendations[0].position, '求职岗位待核实');
   assert.equal(item.name, '通知');
 });

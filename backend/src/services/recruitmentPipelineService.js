@@ -6,6 +6,7 @@ const { ActiveJobService } = require('./activeJobService');
 const { isVettedEvaluation } = require('./resumeRecommendationService');
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
 const { candidateName, candidatePosition, hiringJobTitle } = require('../utils/candidateDisplay');
+const { platformLocator } = require('../utils/platformLocator');
 const { hasTrackedActiveJob } = require('../utils/activeJobScope');
 
 const SOURCES = ['boss', 'zlzp', 'qcwy'];
@@ -80,6 +81,7 @@ class RecruitmentPipelineService {
       (!jobGroup || !item.jobGroup || item.jobGroup === jobGroup) &&
       (!status || (item.workflowStatus || 'new') === status) &&
       (!term || [item.name, item.position, item.expectedPosition?.position,
+        platformLocator(item).id, item.sourceUrl,
         typeof item.expectedPosition === 'string' ? item.expectedPosition : '',
         ...(Array.isArray(item.skills) ? item.skills : [])]
         .some(value => String(value || '').toLowerCase().includes(term)));
@@ -308,6 +310,7 @@ class RecruitmentPipelineService {
       group.forEach((item, candidateIndex) => lines.push(
         `#### ${candidateIndex + 1}. ${line(candidateName(item))}`, '',
         `- 平台：${LABELS[item.source]}`,
+        `- 平台记录号：${line(platformLocator(item).id) || '平台未提供可核实编号'}`,
         `- 求职岗位：${line(candidatePosition(item))}`,
         `- 匹配分：${item.matchScore}/100`,
         `- 跟进状态：${line(item.workflowStatus || 'new')}`,
@@ -315,7 +318,7 @@ class RecruitmentPipelineService {
         `- 相关优势：${line(item.matchEvaluation?.strengths?.join('；')) || '暂无'}`,
         `- 待核实：${line(item.matchEvaluation?.gaps?.join('；')) || '暂无'}`,
         `- 备注：${line(item.candidateNotes) || '暂无'}`,
-        item.sourceUrl ? `- 来源页面：${line(item.sourceUrl)}` : '', ''));
+        platformLocator(item).url ? `- 可定位的来源页面：${line(platformLocator(item).url)}` : '', ''));
     });
     lines.push('> 不同岗位条件版本的匹配分不能直接横向比较；最终判断需人工复核。', '');
     return lines.join('\n');
@@ -397,6 +400,7 @@ class RecruitmentPipelineService {
     candidates.forEach((item, index) => {
       lines.push(`### ${index + 1}. ${line(candidateName(item))}`, '',
         `- 平台：${LABELS[item.source]}`,
+        `- 平台记录号：${line(platformLocator(item).id) || '平台未提供可核实编号'}`,
         `- 岗位：${line(candidatePosition(item))}`,
         `- 匹配分：${Number.isFinite(item.matchScore) ? `${item.matchScore}/100` : '未评估'}`,
         `- 跟进状态：${line(item.workflowStatus || 'new')}`,
@@ -405,7 +409,7 @@ class RecruitmentPipelineService {
         `- 相关优势：${line(item.matchEvaluation?.strengths?.join('；')) || '暂无'}`,
         `- 待核实：${line(item.matchEvaluation?.gaps?.join('；')) || '暂无'}`,
         `- 备注：${line(item.candidateNotes) || '暂无'}`,
-        item.sourceUrl ? `- 来源页面：${line(item.sourceUrl)}` : '', '');
+        platformLocator(item).url ? `- 可定位的来源页面：${line(platformLocator(item).url)}` : '', '');
     });
     lines.push('', '> 岗位匹配分仅供人工复核，不代表自动录用或淘汰决定。', '');
     return lines.join('\n');

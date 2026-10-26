@@ -6,16 +6,18 @@ const { candidateName, candidatePosition, sourceRecordId, publicCandidate,
 
 test('51job page chrome is shown as an anonymous stable source record, without changing the record', () => {
   const item = { id: 'local-id', source: 'qcwy', name: '通知', position: '通知',
-    sourceRecordKey: 'a'.repeat(64), originalText: '通知\n工作经历：网络运维' };
+    sourceRecordKey: 'a'.repeat(64),
+    sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=official-123',
+    originalText: '通知\n工作经历：网络运维' };
   const snapshot = JSON.stringify(item);
-  assert.equal(sourceRecordId(item), 'a'.repeat(16));
-  assert.equal(candidateName(item), `匿名候选人（前程无忧记录 ID：${'a'.repeat(16)}）`);
+  assert.equal(sourceRecordId(item), 'official-123');
+  assert.equal(candidateName(item), '匿名候选人（前程无忧记录 ID：official-123）');
   assert.equal(candidatePosition(item), '求职岗位待核实');
   const publicView = publicCandidate(item);
   assert.equal(publicView.name, '姓名待核实');
   assert.equal(publicView.position, '求职岗位待核实');
   assert.equal(publicView.originalText, item.originalText);
-  assert.equal(publicView.platformRecordId, 'a'.repeat(16));
+  assert.equal(publicView.platformRecordId, 'official-123');
   assert.equal(JSON.stringify(item), snapshot);
 });
 
@@ -26,7 +28,7 @@ test('a genuine desired position is preferred over corrupted page chrome', () =>
   assert.equal(candidateName({ source: 'qcwy', name: '董先生', nameSource: 'qcwy_card' }),
     '董先生（平台称呼）');
   assert.equal(candidateName({ source: 'qcwy', id: 'fallback-id', name: '未识别姓名' }),
-    '匿名候选人（前程无忧记录 ID：fallback-id）');
+    '姓名待核实');
   const parsed = { source: 'qcwy', id: 'fallback-id', name: '未识别姓名',
     position: '通知', expectedPosition: { position: '通知', city: '上海' } };
   const displayed = publicCandidate(parsed);

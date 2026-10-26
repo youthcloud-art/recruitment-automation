@@ -5,6 +5,7 @@ const os = require('os');
 const { bossNameKey, sameBossNearDuplicate,
   chooseBossNearDuplicate } = require('../utils/bossResumeIdentity');
 const { hiringJobTitle } = require('../utils/candidateDisplay');
+const { idFromOfficialUrl, platformLocator } = require('../utils/platformLocator');
 
 const BASE_SNAPSHOT = Symbol('sqlite-resume-read-snapshot');
 
@@ -298,6 +299,27 @@ class SqliteResumeStore {
         throw error;
       }
     }
+    const locatorBackfilled = this.db.prepare(`SELECT value FROM library_metadata
+      WHERE key = 'official_platform_ids_backfilled_v1'`).get();
+    if (!locatorBackfilled) {
+      const legacy = this.db.prepare(`SELECT id, source, payload FROM candidate_resumes
+        WHERE source IN ('zlzp', 'qcwy') AND source_candidate_id IS NULL`).all();
+      const update = this.db.prepare(`UPDATE candidate_resumes
+        SET source_candidate_id = ?, payload = ? WHERE id = ?`);
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const row of legacy) {
+          const resume = JSON.parse(row.payload);
+          const officialId = idFromOfficialUrl(row.source, resume.sourceUrl);
+          if (!officialId || resume.sourceCandidateId && resume.sourceCandidateId !== officialId) continue;
+          resume.sourceCandidateId = officialId;
+          update.run(officialId, JSON.stringify(resume), row.id);
+        }
+        this.db.prepare(`INSERT INTO library_metadata (key, value) VALUES
+          ('official_platform_ids_backfilled_v1', 'true')`).run();
+        this.db.exec('COMMIT');
+      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    }
     const cardBackfilled = this.db.prepare(`SELECT value FROM library_metadata
       WHERE key = 'boss_card_fingerprint_backfilled'`).get();
     if (!cardBackfilled) {
@@ -365,7 +387,12 @@ class SqliteResumeStore {
            capture_position_id, job_state,
            workflow_status, created_at, payload)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        for (const resume of library.resumes) insert.run(...SqliteResumeStore.values(resume));
+        for (const resume of library.resumes) {
+          const officialId = idFromOfficialUrl(resume.source, resume.sourceUrl);
+          const normalized = officialId && !resume.sourceCandidateId
+            ? { ...resume, sourceCandidateId: officialId } : resume;
+          insert.run(...SqliteResumeStore.values(normalized));
+        }
         const meta = staging.prepare('INSERT INTO library_metadata (key, value) VALUES (?, ?)');
         meta.run('positions', JSON.stringify(library.positions));
         meta.run('categories', JSON.stringify(library.categories));
@@ -581,6 +608,7 @@ class SqliteResumeStore {
       // result and count stay in SQLite; only the selected page reaches React.
       const fields = [
         'candidate_name', 'position', 'hiring_job_title',
+        'source_candidate_id', 'source_url',
         "json_extract(payload, '$.expectedPosition.position')",
         "json_extract(payload, '$.expectedPosition')",
         "json_extract(payload, '$.skills')",
@@ -651,10 +679,10 @@ class SqliteResumeStore {
   findDuplicate(incoming) {
     const source = incoming.source;
     if (!source) return null;
-    if (source === 'boss' && incoming.sourceCandidateId) {
+    if (incoming.sourceCandidateId) {
       const row = this.db.prepare(`SELECT payload FROM candidate_resumes
-        WHERE source = 'boss' AND source_candidate_id = ? LIMIT 1`)
-        .get(incoming.sourceCandidateId);
+        WHERE source = ? AND source_candidate_id = ? LIMIT 1`)
+        .get(source, incoming.sourceCandidateId);
       if (row) return JSON.parse(row.payload);
     }
     if (incoming.sourceFingerprint) {
@@ -672,10 +700,13 @@ class SqliteResumeStore {
         if (compatible.length === 1) return compatible[0];
         if (compatible.length > 1) return null;
       } else {
-        const row = this.db.prepare(`SELECT payload FROM candidate_resumes
-          WHERE source = ? AND source_fingerprint = ? LIMIT 1`)
-          .get(source, incoming.sourceFingerprint);
-        if (row) return JSON.parse(row.payload);
+        const rows = this.db.prepare(`SELECT payload FROM candidate_resumes
+          WHERE source = ? AND source_fingerprint = ? LIMIT 50`)
+          .all(source, incoming.sourceFingerprint);
+        const compatible = rows.map(row => JSON.parse(row.payload)).filter(existing =>
+          !(incoming.sourceCandidateId && existing.sourceCandidateId &&
+            incoming.sourceCandidateId !== existing.sourceCandidateId));
+        if (compatible.length === 1) return compatible[0];
       }
     }
     if (source === 'boss') {
@@ -714,17 +745,29 @@ class SqliteResumeStore {
   }
 
   findWuyouDuplicate(incoming, { hasStableId = false } = {}) {
-    if (incoming.sourceFingerprint) {
+    const incomingId = platformLocator(incoming).id;
+    const compatible = row => {
+      const item = JSON.parse(row.payload);
+      const existingId = platformLocator(item).id;
+      return !incomingId || !existingId || incomingId === existingId ? item : null;
+    };
+    if (incomingId) {
       const row = this.db.prepare(`SELECT payload FROM candidate_resumes
-        WHERE source = 'qcwy' AND source_fingerprint = ? LIMIT 1`)
-        .get(incoming.sourceFingerprint);
+        WHERE source = 'qcwy' AND source_candidate_id = ? LIMIT 1`).get(incomingId);
       if (row) return JSON.parse(row.payload);
+    }
+    if (incoming.sourceFingerprint) {
+      const rows = this.db.prepare(`SELECT payload FROM candidate_resumes
+        WHERE source = 'qcwy' AND source_fingerprint = ? LIMIT 50`)
+        .all(incoming.sourceFingerprint);
+      const match = rows.map(compatible).find(Boolean);
+      if (match) return match;
     }
     if (hasStableId && incoming.sourceUrl) {
       const row = this.db.prepare(`SELECT payload FROM candidate_resumes
         WHERE source = 'qcwy' AND source_url = ? LIMIT 1`)
         .get(incoming.sourceUrl);
-      if (row) return JSON.parse(row.payload);
+      if (row) return compatible(row);
     }
     // Historical imported records may predate sourceFingerprint. Preserve
     // their content-based dedup without scanning every modern candidate.
@@ -732,7 +775,8 @@ class SqliteResumeStore {
     const normalized = incoming.originalText.replace(/\s+/g, ' ').trim().toLowerCase();
     for (const row of this.db.prepare(`SELECT payload FROM candidate_resumes
       WHERE source = 'qcwy' AND (source_fingerprint IS NULL OR source_fingerprint = '')`).all()) {
-      const existing = JSON.parse(row.payload);
+      const existing = compatible(row);
+      if (!existing) continue;
       if (existing.originalText?.replace(/\s+/g, ' ').trim().toLowerCase() === normalized) {
         return existing;
       }

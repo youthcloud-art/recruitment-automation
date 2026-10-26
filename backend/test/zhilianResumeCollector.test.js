@@ -24,13 +24,14 @@ test('visible 智联简历弹窗 can be parsed, saved and deduplicated', async (
       contentType: 'text/html',
       body: '<meta charset="utf-8"><body><div class="search-resume-item">候选人列表</div><div class="km-modal__wrapper new-shortcut-resume__modal"><div class="new-resume-detail--inner"><h1>测试候选人</h1><p>工作经历：软件开发三年，负责系统设计、代码评审和交付，持续维护多个业务系统。</p><p>教育经历：计算机科学本科，学习数据库与程序设计，完成毕业项目。</p><p>技能特长：JavaScript、SQL 和自动化测试，熟悉团队协作流程。</p></div></div></body>'
     }));
-    await page.goto('https://rd.zhaopin.com/search');
+    await page.goto('https://rd.zhaopin.com/app/search?resumeNumber=test-001');
     const captured = await collector.captureVisibleResume(page);
     assert.match(captured.text, /工作经历/);
     const first = await collector.save(captured);
     assert.equal(first.saved, true);
     assert.equal(first.resume.id, 'generated-id');
     assert.equal(first.resume.source, 'zlzp');
+    assert.equal(first.resume.sourceCandidateId, 'test-001');
     assert.deepEqual(first.resume.workExperience, []);
     assert.deepEqual(first.resume.skills, ['SQL']);
     assert.equal((await collector.save(captured)).duplicate, true);
@@ -38,6 +39,14 @@ test('visible 智联简历弹窗 can be parsed, saved and deduplicated', async (
   } finally {
     await browser.close();
   }
+});
+
+test('智联没有平台简历号时不把本机记录号当作候选人身份', async () => {
+  const collector = new ZhilianResumeCollector({ resumeStore: {
+    addResume: () => { throw new Error('must not save'); }
+  } });
+  await assert.rejects(collector.save({ text: '完整工作经历和教育经历。'.repeat(10),
+    url: 'https://rd.zhaopin.com/app/search', title: '简历详情' }), /resumeNumber.*未入库/);
 });
 
 test('智联再次采集同一候选人的页面动态文字变动不会新增简历', async () => {
@@ -59,7 +68,7 @@ test('智联再次采集同一候选人的页面动态文字变动不会新增�
   });
   const body = ('工作经历：负责成本核算和财务报表。教育经历：财务专业本科。').repeat(30);
   const first = { text: `测试候选人\n浏览标识：12\n${body}`,
-    url: 'https://rd.zhaopin.com/search', title: '测试页面' };
+    url: 'https://rd.zhaopin.com/app/search?resumeNumber=test-001', title: '测试页面' };
   const second = { ...first, text: `测试候选人\n浏览标识：13\n${body}` };
   assert.equal((await collector.save(first)).saved, true);
   const result = await collector.save(second);
@@ -67,7 +76,7 @@ test('智联再次采集同一候选人的页面动态文字变动不会新增�
   assert.equal(result.duplicate, true);
   assert.equal(result.resume.id, 'synthetic-1');
   assert.equal(saved.length, 1);
-  assert.equal(llmCalls, 2);
+  assert.equal(llmCalls, 1, 'verified platform ID avoids a second AI parse');
 });
 
 test('智联 AI 临时不可用时保存原文，恢复后可补齐结构化字段', async () => {
@@ -93,7 +102,7 @@ test('智联 AI 临时不可用时保存原文，恢复后可补齐结构化字�
     evaluationQueue: { enqueue: () => ({ queued: true }) }
   });
   const captured = { text: '测试候选人\n' + '个人信息和完整工作经历、教育经历、项目经历。'.repeat(10),
-    url: 'https://rd.zhaopin.com/search', title: '智联招聘' };
+    url: 'https://rd.zhaopin.com/app/search?resumeNumber=test-001', title: '智联招聘' };
   const first = await collector.save(captured,
     { jobRequirements: '项目经理主管：五年以上项目管理经验' });
   assert.equal(first.saved, true);
@@ -121,7 +130,7 @@ test('智联 AI 返回页面中不存在的名字或编号时不写成候选人�
     } }, evaluationQueue: { enqueue: () => ({ queued: true }) }
   });
   const captured = { text: '工作经历：从事磁轴销售三年。\n教育经历：大专。'.repeat(10),
-    url: 'https://rd.zhaopin.com/search', title: '简历详情' };
+    url: 'https://rd.zhaopin.com/app/search?resumeNumber=test-001', title: '简历详情' };
   const result = await collector.save(captured);
   assert.equal(result.resume.name, '未识别姓名');
   assert.equal(result.resume.nameSource, 'unverified');
@@ -142,7 +151,7 @@ test('智联 AI 解析超时有上限，完整原文仍入库', async () => {
     }, evaluationQueue: { enqueue: () => ({ queued: true }) }
   });
   const record = await collector.save({ text: '完整工作经历和教育经历。'.repeat(10),
-    url: 'https://rd.zhaopin.com/search', title: '简历详情' });
+    url: 'https://rd.zhaopin.com/app/search?resumeNumber=test-001', title: '简历详情' });
   assert.equal(record.saved, true);
   assert.equal(record.resume.parseStatus, 'needs_review');
   assert.equal(saved.length, 1);
@@ -161,7 +170,7 @@ test('智联候选人卡片打开简历后保存并关闭弹窗', async () => {
         </div><script>document.addEventListener('keydown', event => { if (event.key === 'Escape') document.querySelector('.new-shortcut-resume__modal').style.display='none'; });</script>
       </body>`
     }));
-    await page.goto('https://rd.zhaopin.com/search');
+    await page.goto('https://rd.zhaopin.com/app/search?resumeNumber=test-001');
     const service = new ZhilianService();
     service.page = page;
     service.resumeCollector = new ZhilianResumeCollector({

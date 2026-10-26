@@ -126,7 +126,7 @@ test('智联 collector only queues a newly created resume', async () => {
     evaluationQueue: { enqueue: (resume, job) => enqueued.push([resume.id, job.jobRequirements]) }
   });
   const captured = { text: '候选人甲：从事制造业成本核算五年，负责预算与财务分析。',
-    url: 'https://rd.zhaopin.com/resumepreview', title: '智联招聘' };
+    url: 'https://rd.zhaopin.com/app/search?resumeNumber=test-001', title: '智联招聘' };
   assert.equal((await collector.save(captured, JOB)).saved, true);
   assert.equal((await collector.save(captured, JOB)).duplicate, true);
   assert.deepEqual(enqueued, [['new-1', JOB.jobRequirements]]);
@@ -142,7 +142,7 @@ test('智联保存成功后队列故障不会使采集失败', async () => {
     evaluationQueue: { enqueue: () => { throw new Error('queue unavailable'); } }
   });
   const result = await collector.save({ text: '候选人乙：负责制造业成本核算。',
-    url: 'https://rd.zhaopin.com/resumepreview', title: '智联招聘' }, JOB);
+    url: 'https://rd.zhaopin.com/app/search?resumeNumber=test-002', title: '智联招聘' }, JOB);
   assert.equal(result.saved, true);
   assert.equal(result.resume.id, 'new-2');
 });

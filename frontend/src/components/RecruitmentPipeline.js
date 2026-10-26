@@ -468,6 +468,11 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       const needsReview = /未识别|待核实|平台脱敏|平台称呼/.test(label);
       return <span>{label}{needsReview && <Tag color="gold" style={{ marginLeft: 5 }}>待核实</Tag>}</span>;
     } },
+    { title: '平台记录号', dataIndex: 'platformRecordId', width: 190,
+      render: (value, row) => value
+        ? <Text copyable={{ text: value }} ellipsis={{ tooltip: value }} style={{ maxWidth: 150 }}>
+            {value}</Text>
+        : <Tag color="gold" title="本机简历号或文本指纹不能代替招聘平台的唯一编号">待平台核实</Tag> },
     { title: '招聘岗位', dataIndex: 'hiringJobTitle', width: 175,
       render: value => value && value !== '招聘岗位待核实' ? value :
         <Tag color="gold">招聘岗位待核实</Tag> },
@@ -533,7 +538,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
           options={[{ value: 'createdAt', label: '按入库时间' },
             { value: 'scoreDesc', label: '匹配分从高到低' },
             { value: 'scoreAsc', label: '匹配分从低到高' }]} />
-        <Input.Search placeholder="搜索姓名、岗位、技能" allowClear style={{ width: 245 }}
+        <Input.Search placeholder="搜索姓名、岗位、平台记录号" allowClear style={{ width: 245 }}
           onSearch={value => { setKeyword(value); setPage(1); }}
           onChange={event => { if (!event.target.value && keyword) { setKeyword(''); setPage(1); } }} />
         <Button icon={<ReloadOutlined />} onClick={() => {
@@ -584,7 +589,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             : '报告按所选岗位、平台、状态和搜索关键词生成；默认排除人工标记为“不合适”的简历。'}
         </Text></div>
       </Card>
-      <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 1250 }}
+      <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 1440 }}
         rowSelection={viewJobGroup === 'historical' && viewJobTitle ? {
           selectedRowKeys: selectedHistoryIds,
           onChange: keys => setSelectedHistoryIds(keys),
@@ -729,6 +734,12 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         {selected && <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div><Text>招聘岗位：{selected.hiringJobTitle || '招聘岗位待核实'}</Text>
             {selected.name === '姓名待核实' && <Text type="warning"> · 平台未提供可核实姓名，请在原始页面确认</Text>}</div>
+          <div><Text strong>{selected.platformRecordKind || '平台记录号'}：</Text>
+            {selected.platformRecordId
+              ? <Text copyable={{ text: selected.platformRecordId }}>{selected.platformRecordId}</Text>
+              : <Text type="warning">平台未提供可验证编号；本机简历号不能用于平台查找</Text>}
+            {selected.platformLocatorStatus === 'platform_card' &&
+              <div><Text type="secondary">编号来自平台候选卡，尚无经验证的个人详情直达链接；请在官方招聘端核对。</Text></div>}</div>
           {selected.jobGroup === 'historical' && <Alert type="info" showIcon
             message="历史/已删除岗位简历已单独保留"
             description="可查看、记录跟进或单独删除；重新评估前请先在岗位管理中恢复并应用原岗位。" />}
@@ -751,7 +762,9 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             <Text strong>相关优势：</Text><p>{selected.matchEvaluation.strengths?.join('；') || '暂无'}</p>
             <Text strong>待核实：</Text><p>{selected.matchEvaluation.gaps?.join('；') || '暂无'}</p>
           </Card>}
-          {selected.sourceUrl && <a href={selected.sourceUrl} target="_blank" rel="noreferrer">在招聘平台查看原始页面</a>}
+          {selected.platformRecordUrl
+            ? <a href={selected.platformRecordUrl} target="_blank" rel="noreferrer">按平台记录号打开官方来源页面</a>
+            : <Text type="secondary">当前来源地址无法精准定位该候选人，已隐藏通用链接。</Text>}
         </Space>}
       </Modal>
     </div>

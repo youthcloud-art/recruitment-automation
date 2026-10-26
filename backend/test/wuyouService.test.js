@@ -792,7 +792,7 @@ test('identical visible cards without stable IDs are processed as separate candi
   }
 });
 
-test('the same 51Job resume is deduplicated by content across URLs and by URL across content changes', async () => {
+test('51Job preserves distinct official resume IDs and deduplicates the same ID after content changes', async () => {
   const saved = [];
   const service = new WuyouService({
     parser: { parseResumeText: text => ({ name: '测试候选人', skills: ['成本核算'], rawText: text }) },
@@ -815,13 +815,14 @@ test('the same 51Job resume is deduplicated by content across URLs and by URL ac
   assert.equal(saved[0].sourceUrl,
     'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=one');
   assert.equal(saved[0].parseMethod, 'local');
+  assert.equal(saved[0].sourceCandidateId, 'one');
 
   capture = { ...capture, url: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=two' };
-  assert.equal((await service.collectPage({})).duplicate, true);
+  assert.equal((await service.collectPage({})).saved, true);
   capture = { ...capture, text: capture.text + '\n项目经历：ERP 成本模块上线。',
     url: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=one' };
   assert.equal((await service.collectPage({})).duplicate, true);
-  assert.equal(saved.length, 1);
+  assert.equal(saved.length, 2);
 });
 
 test('51Job page chrome cannot populate new name, position or desired position metadata', async () => {

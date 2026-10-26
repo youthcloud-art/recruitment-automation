@@ -17,10 +17,6 @@ if (-not (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq
 Assert-CompanyNetwork $Network
 $current = @([string[]]$config.allowedNetworks | ForEach-Object { ConvertTo-CanonicalFirewallNetwork $_ })
 $network = ConvertTo-CanonicalFirewallNetwork $Network
-if ($current -contains $network) {
-    Write-Host "NETWORK_ALREADY_ALLOWED: $network. Check the Unionwell VLAN route or wireless client isolation."
-    return
-}
 
 # Do not change an unexpected firewall rule. The Windows filter and gateway
 # environment must agree.
@@ -36,6 +32,10 @@ if ($rule.Enabled -ne 'True' -or $rule.Direction -ne 'Inbound' -or $rule.Action 
     [string]$application.Program -ine [string]$config.nodePath -or
     (($firewallNetworks | Sort-Object) -join ',') -cne (($current | Sort-Object) -join ',')) {
     throw 'The company firewall rule differs from the saved installation. No changes were made.'
+}
+if ($current -contains $network) {
+    Write-Host "NETWORK_ALREADY_ALLOWED: $network. Check the Unionwell VLAN route or wireless client isolation."
+    return
 }
 
 $next = @($current + $network | Sort-Object -Unique)

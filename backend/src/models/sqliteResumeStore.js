@@ -300,7 +300,7 @@ class SqliteResumeStore {
       }
     }
     const locatorBackfilled = this.db.prepare(`SELECT value FROM library_metadata
-      WHERE key = 'official_platform_ids_backfilled_v1'`).get();
+      WHERE key = 'official_platform_ids_backfilled_v2'`).get();
     if (!locatorBackfilled) {
       const legacy = this.db.prepare(`SELECT id, source, payload FROM candidate_resumes
         WHERE source IN ('zlzp', 'qcwy') AND source_candidate_id IS NULL`).all();
@@ -316,7 +316,7 @@ class SqliteResumeStore {
           update.run(officialId, JSON.stringify(resume), row.id);
         }
         this.db.prepare(`INSERT INTO library_metadata (key, value) VALUES
-          ('official_platform_ids_backfilled_v1', 'true')`).run();
+          ('official_platform_ids_backfilled_v2', 'true')`).run();
         this.db.exec('COMMIT');
       } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     }

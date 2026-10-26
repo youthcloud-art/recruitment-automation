@@ -76,6 +76,26 @@ test('legacy official URLs backfill platform IDs, support search and keep distin
   assert.equal(model.getResumes().length, 4);
 });
 
+test('an earlier narrow ID backfill is rerun for real Zhilian numbers with parentheses', t => {
+  const opaqueId = 'abcdefghijklmnopqr)stuvwxyz12345';
+  const sourceUrl = `https://rd.zhaopin.com/app/search?resumeNumber=${encodeURIComponent(opaqueId)}`;
+  const { libraryDir, cleanup } = fixture(t, { resumes: [{ id: 'zl-legacy',
+    source: 'zlzp', sourceUrl, originalText: '历史智联简历' }], positions: [], categories: [] });
+  const first = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  const legacy = first.getResumeById('zl-legacy');
+  delete legacy.sourceCandidateId;
+  first.sqliteStore.db.prepare(`UPDATE candidate_resumes SET source_candidate_id = NULL,
+    payload = ? WHERE id = 'zl-legacy'`).run(JSON.stringify(legacy));
+  first.sqliteStore.db.exec(`DELETE FROM library_metadata WHERE key = 'official_platform_ids_backfilled_v2';
+    INSERT OR REPLACE INTO library_metadata (key, value)
+    VALUES ('official_platform_ids_backfilled_v1', 'true');`);
+  first.sqliteStore.close();
+  const upgraded = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { upgraded.sqliteStore.close(); cleanup(); });
+  assert.equal(upgraded.getResumeById('zl-legacy').sourceCandidateId, opaqueId);
+  assert.equal(upgraded.getResumesPage({ keyword: opaqueId }).total, 1);
+});
+
 test('三平台岗位筛选与评分排序在 SQLite 全部结果分页前执行', t => {
   const resumes = [
     { id: 'a', source: 'boss', captureJobTitle: '网络运维', matchScore: 60 },

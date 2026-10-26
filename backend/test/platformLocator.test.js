@@ -9,6 +9,9 @@ test('only complete identifiers in official platform URLs become locators', () =
   const wy = { source: 'qcwy', sourceUrl:
     'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=1042857719' };
   assert.equal(platformLocator(zl).id, 'ZL_2026-abc123');
+  assert.equal(idFromOfficialUrl('zlzp',
+    'https://rd.zhaopin.com/app/search?resumeNumber=abcdefghijklmnopqr%29stuvwxyz12345'),
+  'abcdefghijklmnopqr)stuvwxyz12345');
   assert.equal(platformLocator(wy).id, '1042857719');
   assert.equal(platformLocator(zl).status, 'official_url');
   assert.equal(idFromOfficialUrl('boss',

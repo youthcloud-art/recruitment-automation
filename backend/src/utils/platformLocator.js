@@ -3,7 +3,9 @@
 // A local resume ID, OCR fingerprint, or card-text hash is not a platform ID.
 // Only identifiers present in an official candidate URL or an official card
 // identity attribute are eligible for a platform locator.
-const ID = /^[A-Za-z0-9_-]{1,256}$/;
+// Zhilian's official resumeNumber can contain parentheses inside its
+// 32-character opaque token. Keep the accepted alphabet narrow otherwise.
+const ID = /^[A-Za-z0-9_()\-]{1,256}$/;
 const CARD_ID = /^[A-Za-z0-9_-]{4,256}$/;
 
 function officialUrl(value, domain) {

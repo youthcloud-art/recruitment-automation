@@ -2,7 +2,7 @@
 // Playwright to the recruiter tab has caused repeated reloads in practice;
 // this collector uses one raw CDP connection and deliberately never navigates.
 const crypto = require('node:crypto');
-const { bossCardId } = require('../utils/platformLocator');
+const { bossCardId, platformLocator } = require('../utils/platformLocator');
 const { connectOwnedBossPage } = require('./bossRawCdp');
 const { ActiveJobService } = require('./activeJobService');
 const resumeModel = require('../models/resumeModel');
@@ -1071,6 +1071,18 @@ class BossRawRecommendCollector {
       }
       throw error;
     }
+    // Historical BOSS captures predate platform-card IDs. Revisit the exact
+    // resume/card once and attach the observed official ID only when stored
+    // content or a previously verified unique card fingerprint matches.
+    if (!result.created && result.resume?.id && !result.resume.sourceCandidateId &&
+        (result.resume.sourceFingerprint === sourceFingerprint ||
+          (sourceCardFingerprint && result.resume.sourceCardFingerprint === sourceCardFingerprint)) &&
+        typeof this.store.updateCandidateMetadata === 'function') {
+      const updated = await this.store.updateCandidateMetadata(result.resume.id, {
+        sourceCandidateId, sourceCandidateIdSource: urlCandidateId ? 'official_url' : 'platform_card'
+      });
+      if (updated) result.resume = updated;
+    }
     // Existing records created before card fingerprints were introduced are
     // still fully OCRed once. Only bind the new card to a duplicate when the
     // full resume hash or official candidate ID proves it is the same record.
@@ -1288,7 +1300,7 @@ class BossRawRecommendCollector {
             let prior = await this.store.findBossCardMatch(identity);
             const capturedAt = Date.parse(prior?.createdAt || '');
             const ageMs = this.now() - capturedAt;
-            if (prior?.source === 'boss' &&
+            if (prior?.source === 'boss' && (!platformId || platformLocator(prior).id) &&
                 prior.sourceCardFingerprint === identity &&
                 prior.parseStatus === 'completed' && prior.sourceFingerprint &&
                 String(prior.originalText || '').length >= 100 &&

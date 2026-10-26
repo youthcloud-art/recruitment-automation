@@ -1071,7 +1071,24 @@ class ZhilianService {
   async clearInheritedSearchFilters(filters = {}) {
     const clear = this.page.locator('a[zp-stat-id="talent_search_clear_all"]').first();
     if (await clear.isVisible().catch(() => false)) {
-      await clear.click({ timeout: 5000 });
+      try {
+        await clear.click({ timeout: 5000 });
+      } catch (error) {
+        // The site's sticky keyword panel and chat widget can cover its own
+        // clear-all anchor. Trigger that exact official anchor only when every
+        // reported blocker is one of those two known page elements. An unknown
+        // overlay (including a verification prompt) remains a hard failure.
+        const interceptors = String(error.message || '').split('\n')
+          .filter(line => line.includes('intercepts pointer events'));
+        if (!interceptors.length || interceptors.some(line =>
+          !/keyword-panel|im-widget/.test(line))) throw error;
+        await clear.evaluate(element => {
+          if (!element.isConnected || element.getAttribute('zp-stat-id') !== 'talent_search_clear_all') {
+            throw new Error('智联清除筛选按钮已变化');
+          }
+          element.click();
+        });
+      }
       await this.page.waitForTimeout(500);
     }
     if (filters.location && filters.location !== '不限') return;

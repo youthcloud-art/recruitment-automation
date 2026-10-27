@@ -82,6 +82,9 @@ function bossJobProbe(title) {
     if (live.origin!=='https://www.zhipin.com' ||
         live.pathname.replace(/\/$/,'')!=='/web/frame/recommend')
       return {state:'frame_changed'};
+    if (doc.querySelector('.dialog-wrap.active') ||
+        document.querySelector('div[data-type="boss-dialog"].active'))
+      return {state:'dialog_open'};
     const normalize=value=>String(value||'').normalize('NFKC')
       .split(/\s*[_＿]\s*/)[0].replace(/\s+/g,' ').trim();
     const selected=normalize(doc.querySelector('.ui-dropmenu-label')?.textContent);

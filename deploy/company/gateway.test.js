@@ -2,12 +2,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const http = require('node:http');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const { EventEmitter } = require('node:events');
 const { createGateway, readConfig, boundaryError, isServerBrowser } = require('./gateway');
+const { CompanyAuth } = require('./auth');
 
 const PUBLIC_ORIGIN = 'http://192.168.1.24:4000';
 const PUBLIC_HOST = '192.168.1.24:4000';
@@ -245,8 +248,9 @@ test('company login guards APIs and sockets, persists Mark, and invalidates logo
   })).status, 201);
 });
 
-test('failed logins are limited and expired cookies do not reach candidate data', async t => {
+test('failed logins are limited and an active browser renews its persistent login', async t => {
   let time = 1_800_000_000_000;
+  const day = 24 * 60 * 60 * 1000;
   const app = await fixture(t, { authEnabled: true, gatewayOptions: { authNow: () => time } });
   const password = 'Example-password-2026!';
   const setup = await jsonRequest(app.port, '/api/auth/setup', { adminPassword: password });
@@ -263,11 +267,56 @@ test('failed logins are limited and expired cookies do not reach candidate data'
   assert.equal((await jsonRequest(app.port, '/api/auth/login', {
     username: 'Mark', password
   })).status, 200);
-  time += 12 * 60 * 60 * 1000;
+  time += 13 * 60 * 60 * 1000;
+  assert.equal((await request(app.port, '/api/recruitment-pipeline/candidates', {
+    headers: { cookie }
+  })).status, 201);
+  assert.equal((await request(app.port, '/api/auth/session', { headers: { cookie } })).headers['set-cookie'], undefined);
+  time += 336 * day;
+  const renewal = await request(app.port, '/api/auth/session', { headers: { cookie } });
+  assert.equal(renewal.status, 200);
+  const renewedCookie = renewal.headers['set-cookie'][0].split(';')[0];
+  assert.match(renewal.headers['set-cookie'][0], /Max-Age=31536000/);
+  time += 30 * day;
   assert.equal((await request(app.port, '/api/recruitment-pipeline/candidates', {
     headers: { cookie }
   })).status, 401);
-  assert.equal(app.requests.length, 0);
+  assert.equal((await request(app.port, '/api/recruitment-pipeline/candidates', {
+    headers: { cookie: renewedCookie }
+  })).status, 201);
+});
+
+test('a year-long session does not overflow the socket expiry timer', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-auth-timer-test-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const time = 1_800_000_000_000;
+  const auth = new CompanyAuth(path.join(directory, 'users.json'), { now: () => time });
+  const socket = new EventEmitter();
+  socket.destroyed = false;
+  socket.destroy = () => { socket.destroyed = true; socket.emit('close'); };
+  auth.trackSocket({ name: 'Mark', expiresAt: time + 365 * 24 * 60 * 60 * 1000 }, socket);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(socket.destroyed, false);
+  socket.destroy();
+});
+
+test('an existing twelve-hour login is renewed without asking for a password', async t => {
+  const time = 1_800_000_000_000;
+  const app = await fixture(t, { authEnabled: true, gatewayOptions: { authNow: () => time } });
+  assert.equal((await jsonRequest(app.port, '/api/auth/setup', {
+    adminPassword: 'Migration-test-password-2026!'
+  })).status, 200);
+  const state = JSON.parse(await fs.readFile(app.authFile, 'utf8'));
+  const payload = Buffer.from(JSON.stringify({ name: 'Mark', version: 1,
+    issuedAt: time - 60 * 60 * 1000, expiresAt: time + 11 * 60 * 60 * 1000,
+    nonce: 'existing-browser' })).toString('base64url');
+  const signature = crypto.createHmac('sha256', Buffer.from(state.secret, 'base64'))
+    .update(payload).digest('base64url');
+  const oldCookie = `hiresmart_session=${payload}.${signature}`;
+  const response = await request(app.port, '/api/auth/session', { headers: { cookie: oldCookie } });
+  assert.equal(response.status, 200);
+  assert.equal(JSON.parse(response.body).data.authenticated, true);
+  assert.match(response.headers['set-cookie'][0], /Max-Age=31536000/);
 });
 
 test('setup is server-local and password change revokes the old session', async t => {

@@ -820,6 +820,7 @@ function App({ companyAuth = null }) {
     return () => {
       // console.log('清理Socket.IO连接');
       if (newSocket) {
+        newSocket.removeAllListeners();
         newSocket.disconnect();
       }
     };

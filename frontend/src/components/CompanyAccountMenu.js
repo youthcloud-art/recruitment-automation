@@ -20,12 +20,12 @@ export default function CompanyAccountMenu({ auth }) {
   const open = value => { form.resetFields(); setDialog(value); };
   return <>
     <Dropdown menu={{ items: [
-      { key: 'profile', label: <span>{auth.user.name} · 管理员</span>, disabled: true },
+      { key: 'profile', label: <span>管理员账户</span>, disabled: true },
       { key: 'password', label: '修改我的密码', onClick: () => open('password') },
       { type: 'divider' },
       { key: 'logout', label: '退出登录', onClick: auth.logout }
     ] }} placement="bottomRight">
-      <Button icon={<UserOutlined />}>{auth.user.name} · 管理员</Button>
+      <Button icon={<UserOutlined />} aria-label="账户设置">账户</Button>
     </Dropdown>
     <Modal title="修改我的密码"
       open={Boolean(dialog)} onCancel={() => setDialog('')} footer={null} destroyOnClose>

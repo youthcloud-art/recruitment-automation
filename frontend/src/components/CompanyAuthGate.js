@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Form, Input, Spin, Typography, message } from 'antd';
+import { Alert, Button, Form, Input, Spin, message } from 'antd';
 import App from '../App';
-
-const { Title, Text } = Typography;
+import campusImage from '../assets/unionwell-campus.jpg';
+import './CompanyAuthGate.css';
 
 async function authRequest(path, body) {
   const response = await fetch(`/api/auth/${path}`, {
@@ -19,9 +19,6 @@ async function authRequest(path, body) {
   }
   return result.data || {};
 }
-
-const shell = { minHeight: '100vh', display: 'grid', placeItems: 'center',
-  padding: 20, background: 'linear-gradient(145deg,#edf5ff,#f6f8fc 55%,#e9f3ff)' };
 
 export default function CompanyAuthGate({ onUnsupported = null }) {
   const [session, setSession] = useState(null);
@@ -68,6 +65,7 @@ export default function CompanyAuthGate({ onUnsupported = null }) {
     try {
       await authRequest('logout', {});
       setSession({ authenticated: false, setupRequired: false });
+      message.destroy();
     } catch {
       message.error('退出失败，请检查连接后重试');
     }
@@ -75,14 +73,29 @@ export default function CompanyAuthGate({ onUnsupported = null }) {
   const changePassword = async (values) => {
     await authRequest('password', values);
     setSession({ authenticated: false, setupRequired: false });
+    message.destroy();
   };
   if (session?.authenticated && session.user) {
     return <App companyAuth={{ user: session.user, logout, changePassword }} />;
   }
-  return <div style={shell}>
-    <Card style={{ width: 'min(100%, 440px)', borderRadius: 16, boxShadow: '0 18px 55px #18416d20' }}>
-      <Title level={3} style={{ marginBottom: 4 }}>AI招聘</Title>
-      <Text type="secondary">公司招聘助手 · 账号登录</Text>
+  return <div className="company-auth-shell">
+    <div className="company-auth-frame">
+      <aside className="company-auth-visual" aria-label="公司园区">
+        <img src={campusImage} alt="" aria-hidden="true" />
+        <div className="company-auth-visual-content">
+          <span className="company-auth-visual-label">UNIONWELL · HIRESMART</span>
+          <div>
+            <h2>让合适的人才<br />与机会相遇</h2>
+            <p>以清晰的流程，连接岗位与候选人。</p>
+          </div>
+        </div>
+      </aside>
+      <main className="company-auth-panel">
+        <div className="company-auth-panel-inner">
+          <div className="company-auth-brand"><span className="company-auth-brand-mark">H</span><span>HireSmart</span></div>
+          <h1>{session?.setupRequired ? '设置管理员账号' : '欢迎回来'}</h1>
+          <p className="company-auth-intro">登录 AI 招聘工作台，继续管理岗位、候选人与招聘任务。</p>
+          <div className="company-auth-form-card">
       {error && <Alert type="error" showIcon message={error} style={{ marginTop: 20 }} />}
       {!session && !error && <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>}
       {!session && error && <Button onClick={refresh} style={{ marginTop: 20 }}>重试连接</Button>}
@@ -110,19 +123,20 @@ export default function CompanyAuthGate({ onUnsupported = null }) {
           <Button type="primary" htmlType="submit" loading={busy} block>创建管理员账号并进入系统</Button>
         </Form>
       </>}
-      {session && !session.setupRequired && <Form layout="vertical" style={{ marginTop: 24 }}
-        initialValues={{ username: 'Mark' }} onFinish={values => submit('login', values)}>
+      {session && !session.setupRequired && <Form layout="vertical"
+        onFinish={values => submit('login', values)}>
         <Form.Item name="username" label="账号" rules={[{ required: true }]}>
-          <Input autoComplete="username" />
+          <Input autoComplete="username" placeholder="请输入账号" />
         </Form.Item>
         <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-          <Input.Password autoComplete="current-password" />
+          <Input.Password autoComplete="current-password" placeholder="请输入密码" />
         </Form.Item>
         <Button type="primary" htmlType="submit" loading={busy} block>登录</Button>
-        <Text type="secondary" style={{ display: 'block', marginTop: 16 }}>
-          登录有效期为 12 小时；退出后该账号的其他已登录窗口也会退出。
-        </Text>
       </Form>}
-    </Card>
+          </div>
+          <p className="company-auth-footnote">公司内部招聘工作台</p>
+        </div>
+      </main>
+    </div>
   </div>;
 }

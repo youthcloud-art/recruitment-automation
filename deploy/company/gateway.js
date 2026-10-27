@@ -461,11 +461,13 @@ function createGateway(options = {}) {
       };
       try {
         if (pathname === '/api/auth/session' && req.method === 'GET') {
+          const renewed = auth.renew(current);
           json(res, 200, { success: true, data: {
             authenticated: Boolean(current), setupRequired: auth.setupRequired,
             canSetup: auth.setupRequired && serverBrowser(req),
-            user: current ? { name: current.name, role: current.role, expiresAt: current.expiresAt } : null
-          } });
+            user: current ? { name: current.name, role: current.role,
+              expiresAt: renewed?.expiresAt || current.expiresAt } : null
+          } }, renewed ? { 'Set-Cookie': auth.cookie(renewed.token, secureCookie) } : {});
           return;
         }
         if (pathname === '/api/auth/setup' && req.method === 'POST') {

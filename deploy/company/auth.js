@@ -5,7 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const COOKIE = 'hiresmart_session';
-const SESSION_MS = 12 * 60 * 60 * 1000;
+// Keep a trusted browser signed in across restarts. An active browser renews
+// its cookie before it expires; logout and password changes still revoke it.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const SESSION_MS = 365 * DAY_MS;
+const RENEW_WINDOW_MS = 30 * DAY_MS;
+const MAX_TIMER_MS = 2 ** 31 - 1;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 5;
 const USER_NAME = 'Mark';
@@ -99,6 +104,11 @@ class CompanyAuth {
     return `${payload}.${signature}`;
   }
 
+  renew(user) {
+    if (!user || user.expiresAt - this.now() > RENEW_WINDOW_MS) return null;
+    return { token: this.issue(user.name), expiresAt: this.now() + SESSION_MS };
+  }
+
   current(req) {
     if (!this.state) return null;
     const token = parseCookie(req.headers.cookie);
@@ -189,8 +199,16 @@ class CompanyAuth {
     const sockets = this.sockets.get(user.name) || new Set();
     sockets.add(socket);
     this.sockets.set(user.name, sockets);
-    const timeout = setTimeout(() => socket.destroy(), Math.max(1, user.expiresAt - this.now()));
-    timeout.unref?.();
+    // Node timers cannot represent a year-long delay. Re-arm in bounded
+    // intervals so a persistent login does not close sockets immediately.
+    let timeout;
+    const expire = () => {
+      const remaining = user.expiresAt - this.now();
+      if (remaining <= 0) { socket.destroy(); return; }
+      timeout = setTimeout(expire, Math.min(remaining, MAX_TIMER_MS));
+      timeout.unref?.();
+    };
+    expire();
     socket.on('close', () => {
       clearTimeout(timeout);
       sockets.delete(socket);

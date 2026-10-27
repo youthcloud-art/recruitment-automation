@@ -60,6 +60,7 @@ function identity(platform, clientId) {
 
 function createBrowserConsoleRouter({ environment = process.env, getTargets = defaultTargets,
   now = Date.now,
+  disconnectTimeoutMs = 5000,
   attachExisting = options => require('../services/visibleChromeCdp').attachExistingVisibleChromeCdp(options),
   readOwnedTabs = options => require('../services/visibleChromeCdp').getCdpTabs(options) } = {}) {
   const router = express.Router();
@@ -130,7 +131,17 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
     } finally {
       // connectOverCDP browser.close disconnects this temporary attachment. It
       // does not close the externally launched dedicated Chrome process.
-      if (attached) await attached.browser.close().catch(() => {});
+      if (attached) {
+        // A stalled CDP disconnect must not keep the global manual-control
+        // lock busy forever after an otherwise completed lookup/screenshot.
+        let timer;
+        try {
+          await Promise.race([
+            attached.browser.close().catch(() => {}),
+            new Promise(resolve => { timer = setTimeout(resolve, disconnectTimeoutMs); })
+          ]);
+        } finally { clearTimeout(timer); }
+      }
     }
   }
 

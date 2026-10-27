@@ -227,3 +227,20 @@ test('after a backend restart the console reconnects an existing owned platform 
   page.changeURL('https://other.example/');
   assert.equal((await app.request('/status')).body.data.platforms[0].available, false);
 });
+
+test('a stalled owned-browser disconnect releases console control', async t => {
+  const calls=[];
+  const page=fakePage(calls);
+  const app=await fixture(t,{
+    disconnectTimeoutMs:20,
+    getTargets:()=>({boss:{service:{page:null,chromeWindowOpened:true}}}),
+    readOwnedTabs:async()=>[{url:page.url()}],
+    attachExisting:async()=>({context:{pages:()=>[page]},
+      browser:{close:async()=>new Promise(()=>{})}})
+  });
+  await acquire(app);
+  assert.equal((await screenshot(app)).status,200);
+  await new Promise(resolve=>setTimeout(resolve,40));
+  assert.equal((await screenshot(app)).status,200);
+  assert.equal(calls.filter(call=>call[0]==='screenshot').length,2);
+});

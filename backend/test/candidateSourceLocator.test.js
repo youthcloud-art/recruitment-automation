@@ -219,7 +219,7 @@ test('智联当前官方简历号与可见详情一致时直接核实',async()=>
       ? {evaluateAll:async()=>[]} : {first:()=>({waitFor:async()=>{}})}};
   assert.equal((await locateOfficialCandidate(page,candidate)).verified,'official_detail');
   current='https://rd6.zhaopin.com/app/search?resumeNumber=other';
-  await assert.rejects(locateOfficialCandidate(page,candidate),/不在当前已加载/);
+  await assert.rejects(locateOfficialCandidate(page,candidate),/当前打开的是另一份简历/);
 });
 
 test('智联仅打开带简历号的搜索地址不能冒充已核实详情或重置搜索页',async()=>{
@@ -241,11 +241,68 @@ test('智联只点击官方列表中编号完全一致的唯一候选卡',async(
     locator:selector=>selector.startsWith('div.search-resume-item')
       ? {evaluateAll:async()=>[2],nth:index=>{
         assert.equal(index,2);
-        return {locator:()=>({count:async()=>1,nth:()=>({
-          getAttribute:async()=>url,click:async()=>{opened=true;}})})};
+        return {click:async()=>{opened=true;}};
       }} : {first:()=>({waitFor:async()=>{if(!opened) throw new Error('not open');}})}
   };
   const result=await locateOfficialCandidate(page,candidate);
   assert.equal(result.verified,'exact_card');
   assert.equal(navigated,false);
+});
+
+test('智联卡片不显示编号时按唯一姓名与两段公司经历定位，详情编号必须一致',async()=>{
+  const id='XevrLIqHU6t4wDMqb6)yt9PUL0fFDpih';
+  const url=`https://rd6.zhaopin.com/app/search?resumeNumber=${encodeURIComponent(id)}`;
+  const candidate={source:'zlzp',name:'涂先生',sourceUrl:url,sourceCandidateId:id,
+    workExperience:[{company:'上海帝森克罗德电力技术有限公司'},
+      {company:'深圳市泰永电气科技有限公司'}]};
+  let opened=false,escaped=false;
+  const cards=[{textContent:'涂先生 帝森克罗德电力技术 泰永电气科技 销售工程师'},
+    {textContent:'涂先生 其他企业 销售工程师'}];
+  const page={
+    url:()=>opened?url:'https://rd6.zhaopin.com/app/search',
+    goto:async()=>{throw new Error('must not navigate');},
+    keyboard:{press:async()=>{escaped=true;}},
+    locator:selector=>selector.startsWith('div.search-resume-item')
+      ? {evaluateAll:async(fn,arg)=>typeof arg==='string'?[]:fn(cards,arg),
+        nth:index=>({click:async()=>{assert.equal(index,0);opened=true;}})}
+      : {first:()=>({waitFor:async()=>{if(!opened)throw new Error('not open');}})}
+  };
+  assert.equal((await locateOfficialCandidate(page,candidate)).verified,'exact_card');
+  assert.equal(escaped,false);
+});
+
+test('智联经历证据相似但详情编号不同则关闭弹窗并拒绝定位',async()=>{
+  const candidate={source:'zlzp',name:'涂先生',sourceCandidateId:'target-id',
+    sourceUrl:'https://rd6.zhaopin.com/app/search?resumeNumber=target-id',
+    workExperience:[{company:'上海帝森克罗德电力技术有限公司'},
+      {company:'深圳市泰永电气科技有限公司'}]};
+  let opened=false,escaped=false;
+  const cards=[{textContent:'涂先生 帝森克罗德电力技术 泰永电气科技'}];
+  const page={url:()=>opened?'https://rd6.zhaopin.com/app/search?resumeNumber=other-id':
+    'https://rd6.zhaopin.com/app/search',
+    keyboard:{press:async key=>{assert.equal(key,'Escape');escaped=true;}},
+    locator:selector=>selector.startsWith('div.search-resume-item')
+      ? {evaluateAll:async(fn,arg)=>typeof arg==='string'?[]:fn(cards,arg),
+        nth:()=>({click:async()=>{opened=true;}})}
+      : {first:()=>({waitFor:async()=>{if(!opened)throw new Error('not open');}})}
+  };
+  await assert.rejects(locateOfficialCandidate(page,candidate),/未能核实对应编号/);
+  assert.equal(escaped,true);
+});
+
+test('智联相似经历匹配多张卡片时不点击任何人',async()=>{
+  const candidate={source:'zlzp',name:'涂先生',sourceCandidateId:'target-id',
+    sourceUrl:'https://rd6.zhaopin.com/app/search?resumeNumber=target-id',
+    workExperience:[{company:'上海帝森克罗德电力技术有限公司'},
+      {company:'深圳市泰永电气科技有限公司'}]};
+  let clicked=false;
+  const cards=Array(2).fill({textContent:'涂先生 帝森克罗德电力技术 泰永电气科技'});
+  const page={url:()=> 'https://rd6.zhaopin.com/app/search',
+    locator:selector=>selector.startsWith('div.search-resume-item')
+      ? {evaluateAll:async(fn,arg)=>typeof arg==='string'?[]:fn(cards,arg),
+        nth:()=>({click:async()=>{clicked=true;}})}
+      : {first:()=>({waitFor:async()=>{throw new Error('not open');}})}
+  };
+  await assert.rejects(locateOfficialCandidate(page,candidate),/多个经历相似/);
+  assert.equal(clicked,false);
 });

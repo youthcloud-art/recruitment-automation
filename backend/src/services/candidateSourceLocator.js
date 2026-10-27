@@ -293,33 +293,22 @@ async function locateOfficialCandidate(page, candidate) {
     if (idFromOfficialUrl('zlzp',current)===locator.id &&
         await waitForZhilianDetail(page,1000))
       return {platform:'zlzp',recordId:locator.id,verified:'official_detail'};
+    if (await waitForZhilianDetail(page,500))
+      throw locatorError(409,'智联当前打开的是另一份简历；请先关闭该弹窗后再定位');
     const found=await findZhilianCard(page,locator.id);
     if (found==='ambiguous')
       throw locatorError(409,'智联当前结果中有重复的简历号，未执行定位；请在平台人工核对');
-    if (Number.isInteger(found)) {
-      const card=page.locator('div.search-resume-item.resume-item-exp').nth(found);
-      const links=card.locator('a[href]');
-      const count=await links.count();
-      if (!count || count>20)
-        throw locatorError(409,'智联已找到目标候选卡，但没有唯一可核对的官方简历链接');
-      let selected=-1;
-      for (let index=0;index<count;index++) {
-        const href=await links.nth(index).getAttribute('href');
-        try {
-          if (idFromOfficialUrl('zlzp',new URL(href,page.url()).href)===locator.id) {
-            if (selected!==-1)
-              throw locatorError(409,'智联候选卡出现多个相同编号链接，未执行定位');
-            selected=index;
-          }
-        } catch (error) { if (error.publicStatus) throw error; }
-      }
-      if (selected===-1 && count!==1)
-        throw locatorError(409,'智联候选卡有多个操作链接且无法确定简历入口，未执行定位');
-      const link=links.nth(selected===-1?0:selected);
-      await link.click({timeout:10000});
-      if (idFromOfficialUrl('zlzp',page.url())!==locator.id ||
-          !await waitForZhilianDetail(page,12000))
+    const evidenceFound=found==null?await findZhilianCardByEvidence(page,candidate):found;
+    if (evidenceFound==='ambiguous')
+      throw locatorError(409,'智联当前结果中有多个经历相似的候选人，未执行定位；请在平台人工核对');
+    if (Number.isInteger(evidenceFound)) {
+      const card=page.locator('div.search-resume-item.resume-item-exp').nth(evidenceFound);
+      await card.click({timeout:10000});
+      const detailVisible=await waitForZhilianDetail(page,12000);
+      if (!detailVisible || idFromOfficialUrl('zlzp',page.url())!==locator.id) {
+        await page.keyboard.press('Escape').catch(()=>{});
         throw locatorError(409,'智联候选卡已打开，但未能核实对应编号的详情；请在官方页面人工核对');
+      }
       return {platform:'zlzp',recordId:locator.id,verified:'exact_card'};
     }
     throw locatorError(409,'智联原候选卡不在当前已加载的搜索结果中；请在官方页面打开原岗位结果后重试。完整简历号不能直接作为普通关键词搜索');
@@ -332,6 +321,34 @@ async function locateOfficialCandidate(page, candidate) {
       throw locatorError(409,'智联搜索地址已打开，但未恢复目标简历详情；请在官方搜索结果加载该候选卡后重试定位');
   }
   return {platform:candidate.source,recordId:locator.id,verified:'official_url'};
+}
+
+async function findZhilianCardByEvidence(page,candidate) {
+  const name=String(candidate?.name||candidate?.platformAlias||'').normalize('NFKC').trim();
+  const companies=[...new Set((Array.isArray(candidate?.workExperience)?candidate.workExperience:[])
+    .map(item=>String(item?.company||'').normalize('NFKC')
+      .replace(/(?:股份)?有限公司|有限责任公司|公司$/g,'')
+      .replace(/[^\p{Script=Han}A-Za-z0-9]/gu,''))
+    .filter(value=>value.length>=6))].slice(0,5);
+  if (!/^[\p{Script=Han}]{1,4}(?:先生|女士)$/u.test(name) || companies.length<2)
+    return null;
+  const matches=await page.locator('div.search-resume-item.resume-item-exp')
+    .evaluateAll((elements,evidence)=>{
+      if (elements.length>300) return [];
+      const clean=value=>String(value||'').normalize('NFKC')
+        .replace(/[^\p{Script=Han}A-Za-z0-9]/gu,'');
+      return elements.flatMap((card,index)=>{
+        const text=clean(card.textContent);
+        if (!text.includes(evidence.name)) return [];
+        const distinct=evidence.companies.filter(company=>{
+          for(let i=0;i<=company.length-6;i++)
+            if(text.includes(company.slice(i,i+6))) return true;
+          return false;
+        });
+        return distinct.length>=2?[index]:[];
+      });
+    },{name,companies}).catch(()=>[]);
+  return matches.length>1?'ambiguous':matches.length===1?matches[0]:null;
 }
 
 async function waitForZhilianDetail(page,timeout) {

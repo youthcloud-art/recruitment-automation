@@ -24,6 +24,7 @@ import { apiGet, apiPost } from './utils/apiClient';
 import CapabilityCards from './components/CapabilityCards';
 import TaskManagement from './components/TaskManagement';
 import ServerBrowserConsole from './components/ServerBrowserConsole';
+import CompanyAccountMenu from './components/CompanyAccountMenu';
 import KnowledgeSearchResult from './components/KnowledgeSearchResult';
 // 公司搜索组件已删除
 
@@ -447,7 +448,7 @@ const CombinedMessage = ({ thinkingContent, finalContent, isThinkingComplete = f
   );
 };
 
-function App() {
+function App({ companyAuth = null }) {
   const [socket, setSocket] = useState(null);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
@@ -1452,7 +1453,10 @@ function App() {
           <HeaderTitle level={3}>
             <RobotOutlined /> Hi，我是HireSmart
           </HeaderTitle>
-          <div style={{ marginLeft: 'auto', position: 'relative', zIndex: 2 }}><ServerBrowserConsole /></div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center', position: 'relative', zIndex: 2 }}>
+            <ServerBrowserConsole />
+            <CompanyAccountMenu auth={companyAuth} />
+          </div>
         </StyledHeader>
         <StyledContent hasModal={hasAnyModal}>
           <React.Suspense fallback={<div style={{ padding: 24 }}>页面加载中…</div>}>

@@ -55,7 +55,7 @@ foreach ($relative in @('.local','backend\storage','backend\uploads','backend\.e
     if (Test-Path -LiteralPath (Join-Path $release $relative)) { throw "The code archive contains forbidden runtime state: $relative" }
 }
 $previous = @{}
-$buildEnvironment = @{ REACT_APP_API_BASE_URL=''; REACT_APP_SOCKET_URL=''; NODE_ENV='production'; CI='false'; GENERATE_SOURCEMAP='false' }
+$buildEnvironment = @{ REACT_APP_API_BASE_URL=''; REACT_APP_SOCKET_URL=''; REACT_APP_COMPANY_AUTH='true'; NODE_ENV='production'; CI='false'; GENERATE_SOURCEMAP='false' }
 try {
     foreach ($variable in Get-ChildItem Env: | Where-Object { $_.Name -like 'REACT_APP_*' }) {
         $previous[$variable.Name] = $variable.Value

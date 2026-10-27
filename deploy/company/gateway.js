@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { promisify } = require('node:util');
+const { CompanyAuth } = require('./auth');
 
 const gzip = promisify(zlib.gzip);
 const brotliCompress = promisify(zlib.brotliCompress);
@@ -57,6 +58,12 @@ function installedNetworkConfigFile() {
   return path.resolve(releaseRoot, '../..', 'delivery/config.json');
 }
 
+function installedAuthFile() {
+  const releaseRoot = path.resolve(__dirname, '../..');
+  if (path.basename(path.dirname(releaseRoot)).toLowerCase() !== 'releases') return null;
+  return path.resolve(releaseRoot, '../..', 'shared/auth/users.json');
+}
+
 function refreshNetworkAccess(config, force = false) {
   if (!config.networkConfigFile) return;
   const now = Date.now();
@@ -104,9 +111,13 @@ function readConfig(options = {}) {
     .map(value => String(value).trim()).filter(Boolean);
   const cidrs = allowedNetworkStrings.map(parseCidr);
   const networkConfigFile = options.networkConfigFile ?? environment.LAN_ALLOW_CONFIG_FILE ?? installedNetworkConfigFile();
+  const authFile = options.authFile === null ? null :
+    (options.authFile ?? environment.COMPANY_AUTH_FILE ?? installedAuthFile());
   const config = {
     host, port, backendPort, publicOrigin, origins, cidrs, allowedNetworkStrings,
     networkConfigFile: networkConfigFile ? path.resolve(networkConfigFile) : null,
+    authFile: authFile ? path.resolve(authFile) : null,
+    authEnabled: Boolean(authFile),
     networkCheckIntervalMs: options.networkCheckIntervalMs ?? 2000,
     nextNetworkCheckAt: 0, networkConfigLoaded: false, networkReloadError: null,
     allowedHosts: new Set([...origins].map(origin => new URL(origin).host.toLowerCase())),
@@ -191,7 +202,7 @@ function safeHeaders(headers, upgrade = false) {
 }
 
 function upstreamHeaders(req, config, upgrade = false) {
-  return {
+  const headers = {
     ...safeHeaders(req.headers, upgrade),
     host: `127.0.0.1:${config.backendPort}`,
     // Local position and email routes only accept the launcher's port-3000
@@ -199,14 +210,19 @@ function upstreamHeaders(req, config, upgrade = false) {
     origin: 'http://127.0.0.1:3000',
     'sec-fetch-site': 'same-origin'
   };
+  // The company session belongs to the public gateway only. The loopback
+  // recruitment backend has no reason to receive it or log it.
+  delete headers.cookie;
+  return headers;
 }
 
-function json(res, status, value) {
+function json(res, status, value, extraHeaders = {}) {
   if (res.destroyed || res.writableEnded) return;
   const data = Buffer.from(JSON.stringify(value));
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8', 'Content-Length': data.length,
-    'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'
+    'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders
   });
   res.end(data);
 }
@@ -269,7 +285,7 @@ function proxyHttp(req, res, config) {
     hostname: '127.0.0.1', port: config.backendPort, method: req.method, path: req.url,
     headers: upstreamHeaders(req, config), timeout: 300000
   }, response => {
-    res.writeHead(response.statusCode, safeHeaders(response.headers));
+    res.writeHead(response.statusCode, { ...safeHeaders(response.headers), 'cache-control': 'no-store' });
     response.on('error', () => res.destroy());
     response.pipe(res);
   });
@@ -359,6 +375,8 @@ function compressible(filename, size) {
 
 function createGateway(options = {}) {
   const config = readConfig(options);
+  const auth = new CompanyAuth(config.authEnabled ? config.authFile : null,
+    { now: options.authNow });
   const checkBackend = options.backendHealthy || backendHealthy;
   const serverBrowser = options.isServerBrowser || isServerBrowser;
   // Cache only public build assets, never proxied API responses or resumes.
@@ -426,6 +444,73 @@ function createGateway(options = {}) {
       } });
       return;
     }
+    if (auth.enabled && pathname.startsWith('/api/auth/')) {
+      const secureCookie = config.publicOrigin.startsWith('https:');
+      const current = auth.current(req);
+      const readBody = async () => {
+        if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('application/json')) {
+          throw Object.assign(new Error('请使用 JSON 请求'), { status: 415 });
+        }
+        let body = '';
+        for await (const chunk of req) {
+          body += chunk.toString('utf8');
+          if (body.length > 4096) throw Object.assign(new Error('请求内容过大'), { status: 413 });
+        }
+        try { return JSON.parse(body || '{}'); }
+        catch { throw Object.assign(new Error('请求内容不是有效 JSON'), { status: 400 }); }
+      };
+      try {
+        if (pathname === '/api/auth/session' && req.method === 'GET') {
+          json(res, 200, { success: true, data: {
+            authenticated: Boolean(current), setupRequired: auth.setupRequired,
+            canSetup: auth.setupRequired && serverBrowser(req),
+            user: current ? { name: current.name, role: current.role, expiresAt: current.expiresAt } : null
+          } });
+          return;
+        }
+        if (pathname === '/api/auth/setup' && req.method === 'POST') {
+          if (!serverBrowser(req)) { json(res, 403, { success: false, message: '初始账号只能在公司服务器浏览器中设置' }); return; }
+          if (!auth.setupRequired) { json(res, 409, { success: false, message: '账号已经设置' }); return; }
+          const input = await readBody();
+          const token = auth.setup(input.adminPassword);
+          json(res, 200, { success: true, data: { user: { name: 'Mark', role: 'admin' } } },
+            { 'Set-Cookie': auth.cookie(token, secureCookie) });
+          return;
+        }
+        if (pathname === '/api/auth/login' && req.method === 'POST') {
+          if (auth.setupRequired) { json(res, 409, { success: false, message: '请先在公司服务器完成账号初始化' }); return; }
+          const input = await readBody();
+          const result = auth.login(input.username, input.password, remoteAddress(req));
+          if (result.rateLimited) { json(res, 429, { success: false, message: '尝试次数过多，请稍后再试' }); return; }
+          if (result.invalid) { json(res, 401, { success: false, message: '用户名或密码错误' }); return; }
+          json(res, 200, { success: true, data: { user: result.user } },
+            { 'Set-Cookie': auth.cookie(result.token, secureCookie) });
+          return;
+        }
+        if (pathname === '/api/auth/logout' && req.method === 'POST') {
+          if (current) auth.logout(current.name);
+          json(res, 200, { success: true }, { 'Set-Cookie': auth.clearCookie(secureCookie) });
+          return;
+        }
+        if (!current) { json(res, 401, { success: false, message: '请先登录' }); return; }
+        if (pathname === '/api/auth/password' && req.method === 'POST') {
+          const input = await readBody();
+          auth.updatePassword(current.name, input.currentPassword, input.newPassword);
+          json(res, 200, { success: true, message: '密码已修改，请重新登录' },
+            { 'Set-Cookie': auth.clearCookie(secureCookie) });
+          return;
+        }
+        json(res, 404, { success: false, message: '账号接口不存在' });
+      } catch (error) {
+        json(res, error.status || 400, { success: false, message: error.message });
+      }
+      return;
+    }
+    const currentUser = auth.enabled ? auth.current(req) : null;
+    if (auth.enabled && isProxyPath(pathname) && !currentUser) {
+      json(res, 401, { success: false, message: auth.setupRequired ? '请先在服务器设置账号' : '请先登录' });
+      return;
+    }
     if (pathname === '/api/model-config/access' && req.method === 'GET') {
       json(res, 200, { success: true, data: { canEdit: serverBrowser(req) } });
       return;
@@ -486,10 +571,13 @@ function createGateway(options = {}) {
     catch { socketResponse(socket, 400, '无效请求路径'); return; }
     const denied = boundaryError(req, config, pathname);
     if (denied) { socketResponse(socket, 403, denied); return; }
+    const currentUser = auth.enabled ? auth.current(req) : null;
+    if (auth.enabled && !currentUser) { socketResponse(socket, 401, '请先登录'); return; }
     if (!(pathname === '/socket.io' || pathname.startsWith('/socket.io/')) ||
         String(req.headers.upgrade || '').toLowerCase() !== 'websocket') {
       socketResponse(socket, 404, 'WebSocket 地址不可用'); return;
     }
+    auth.trackSocket(currentUser, socket);
     proxyWebSocket(req, socket, head, config);
   });
   server.on('clientError', (_error, socket) => socketResponse(socket, 400, '无效 HTTP 请求'));

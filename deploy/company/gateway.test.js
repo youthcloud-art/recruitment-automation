@@ -60,7 +60,9 @@ async function fixture(t, options = {}) {
   const backendPort = await listen(backend);
   const gateway = createGateway({
     environment: {}, host: '192.168.1.24', publicOrigin: PUBLIC_ORIGIN, backendPort,
-    frontendBuildDir: build, healthTimeoutMs: 100, ...options.gatewayOptions
+    frontendBuildDir: build, healthTimeoutMs: 100,
+    authFile: options.authEnabled ? path.join(directory, 'shared', 'auth', 'users.json') : null,
+    ...options.gatewayOptions
   });
   gateway.on('connection', socket => {
     sockets.add(socket);
@@ -72,7 +74,14 @@ async function fixture(t, options = {}) {
     await Promise.all([gateway, backend].map(server => new Promise(resolve => server.close(resolve))));
     await fs.rm(directory, { recursive: true, force: true });
   });
-  return { port, directory, build, requests, upgrades, backend, backendPort };
+  return { port, directory, build, requests, upgrades, backend, backendPort,
+    authFile: path.join(directory, 'shared', 'auth', 'users.json') };
+}
+
+function jsonRequest(port, url, body, headers = {}) {
+  return request(port, url, { method: 'POST', headers: {
+    origin: PUBLIC_ORIGIN, 'content-type': 'application/json', ...headers
+  }, chunks: [Buffer.from(JSON.stringify(body))] });
 }
 
 function request(port, url = '/', options = {}) {
@@ -172,11 +181,137 @@ test('installed release locates the shared deployment network config', async t =
   await fs.mkdir(path.dirname(code), { recursive: true });
   await fs.mkdir(path.join(install, 'delivery'), { recursive: true });
   await fs.copyFile(path.join(__dirname, 'gateway.js'), code);
+  await fs.copyFile(path.join(__dirname, 'auth.js'), path.join(path.dirname(code), 'auth.js'));
   await fs.writeFile(path.join(install, 'delivery', 'config.json'),
     JSON.stringify({ allowedNetworks: ['192.168.1.0/24', '192.168.69.0/24'] }));
   const installed = require(code).readConfig({ environment: {} });
   assert.equal(boundaryError(syntheticRequest('192.168.69.230'), installed, '/healthz'), null);
   assert.equal(installed.networkConfigFile, path.join(install, 'delivery', 'config.json'));
+  assert.equal(installed.authFile, path.join(install, 'shared', 'auth', 'users.json'));
+});
+
+test('company login guards APIs and sockets, persists Mark, and invalidates logout', async t => {
+  const app = await fixture(t, { authEnabled: true });
+  assert.equal((await request(app.port, '/healthz')).status, 200);
+  assert.equal((await request(app.port, '/api/positions')).status, 401);
+  assert.equal((await request(app.port, '/socket.io/?EIO=4&transport=polling')).status, 401);
+  assert.equal((await upgrade(app.port)).status, 401);
+  assert.equal((await request(app.port, '/api/auth/session')).status, 200);
+  const setupState = JSON.parse((await request(app.port, '/api/auth/session')).body).data;
+  assert.equal(setupState.setupRequired, true);
+  assert.equal(setupState.canSetup, true);
+  const password = 'Test-only-password-2026!';
+  const setup = await jsonRequest(app.port, '/api/auth/setup', { adminPassword: password });
+  assert.equal(setup.status, 200);
+  assert.match(setup.headers['set-cookie'][0], /HttpOnly; Path=\/; SameSite=Strict/);
+  assert.doesNotMatch(await fs.readFile(app.authFile, 'utf8'), /Test-only-password/);
+  const cookie = setup.headers['set-cookie'][0].split(';')[0];
+  const current = JSON.parse((await request(app.port, '/api/auth/session', { headers: { cookie } })).body).data;
+  assert.equal(current.user.name, 'Mark');
+  assert.equal(current.user.role, 'admin');
+  assert.equal(current.authenticated, true);
+  const proxied = await request(app.port, '/api/positions', { headers: { cookie } });
+  assert.equal(proxied.status, 201);
+  assert.equal(app.requests.at(-1).headers.cookie, undefined);
+  for (const route of ['/api/boss-zhipin/start-browsing', '/api/zhilian/start-browsing',
+    '/api/wuyou/collect-batch']) {
+    const started = await jsonRequest(app.port, route, { fixture: true }, { cookie });
+    assert.equal(started.status, 201, route);
+    assert.equal(app.requests.at(-1).url, route);
+  }
+  const model = await request(app.port, '/api/model-config', { method: 'PUT',
+    headers: { cookie, origin: PUBLIC_ORIGIN, 'content-type': 'application/json' },
+    chunks: [Buffer.from('{"model":"deepseek-chat"}')] });
+  assert.equal(model.status, 201);
+  const upload = await request(app.port, '/api/resume-library/delete-all', {
+    method: 'DELETE', headers: { cookie, origin: PUBLIC_ORIGIN }
+  });
+  assert.equal(upload.status, 201);
+  const upgraded = await upgrade(app.port, { cookie });
+  assert.equal(upgraded.status, 101);
+  upgraded.socket.on('error', () => {});
+  upgraded.socket.destroy();
+  const logout = await jsonRequest(app.port, '/api/auth/logout', {}, { cookie });
+  assert.equal(logout.status, 200);
+  assert.equal((await request(app.port, '/api/positions', { headers: { cookie } })).status, 401);
+  assert.equal((await upgrade(app.port, { cookie })).status, 401);
+  assert.equal((await jsonRequest(app.port, '/api/auth/login', {
+    username: 'HRwang', password
+  })).status, 401);
+  const login = await jsonRequest(app.port, '/api/auth/login', { username: 'Mark', password });
+  assert.equal(login.status, 200);
+  assert.equal((await request(app.port, '/api/positions', {
+    headers: { cookie: login.headers['set-cookie'][0].split(';')[0] }
+  })).status, 201);
+});
+
+test('failed logins are limited and expired cookies do not reach candidate data', async t => {
+  let time = 1_800_000_000_000;
+  const app = await fixture(t, { authEnabled: true, gatewayOptions: { authNow: () => time } });
+  const password = 'Example-password-2026!';
+  const setup = await jsonRequest(app.port, '/api/auth/setup', { adminPassword: password });
+  const cookie = setup.headers['set-cookie'][0].split(';')[0];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    assert.equal((await jsonRequest(app.port, '/api/auth/login', {
+      username: 'Mark', password: 'incorrect-password'
+    })).status, 401);
+  }
+  assert.equal((await jsonRequest(app.port, '/api/auth/login', {
+    username: 'Mark', password
+  })).status, 429);
+  time += 16 * 60 * 1000;
+  assert.equal((await jsonRequest(app.port, '/api/auth/login', {
+    username: 'Mark', password
+  })).status, 200);
+  time += 12 * 60 * 60 * 1000;
+  assert.equal((await request(app.port, '/api/recruitment-pipeline/candidates', {
+    headers: { cookie }
+  })).status, 401);
+  assert.equal(app.requests.length, 0);
+});
+
+test('setup is server-local and password change revokes the old session', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-auth-test-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const authFile = path.join(directory, 'users.json');
+  const remote = await fixture(t, { gatewayOptions: { authFile, isServerBrowser: () => false } });
+  assert.equal((await jsonRequest(remote.port, '/api/auth/setup', {
+    adminPassword: 'Example-password-2026!'
+  })).status, 403);
+  assert.equal(JSON.parse((await request(remote.port, '/api/auth/session')).body).data.canSetup, false);
+  const local = await fixture(t, { gatewayOptions: { authFile, isServerBrowser: () => true } });
+  const setup = await jsonRequest(local.port, '/api/auth/setup', { adminPassword: 'Example-password-2026!' });
+  assert.equal(setup.status, 200);
+  const cookie = setup.headers['set-cookie'][0].split(';')[0];
+  assert.equal((await jsonRequest(local.port, '/api/auth/password', {
+    currentPassword: 'wrong', newPassword: 'Another-password-2026!'
+  }, { cookie })).status, 400);
+  assert.equal((await jsonRequest(local.port, '/api/auth/password', {
+    currentPassword: 'Example-password-2026!', newPassword: 'Another-password-2026!'
+  }, { cookie })).status, 200);
+  assert.equal((await request(local.port, '/api/positions', { headers: { cookie } })).status, 401);
+  assert.equal((await jsonRequest(local.port, '/api/auth/login', {
+    username: 'Mark', password: 'Example-password-2026!'
+  })).status, 401);
+  const renewed = await jsonRequest(local.port, '/api/auth/login', {
+    username: 'Mark', password: 'Another-password-2026!'
+  });
+  assert.equal(renewed.status, 200);
+  // A new gateway process reads the shared account file and accepts its session.
+  const restarted = await fixture(t, { gatewayOptions: { authFile } });
+  assert.equal((await request(restarted.port, '/api/positions', {
+    headers: { cookie: renewed.headers['set-cookie'][0].split(';')[0] }
+  })).status, 201);
+  const remoteAfterSetup = await fixture(t, { gatewayOptions: {
+    authFile, isServerBrowser: () => false
+  } });
+  const renewedCookie = renewed.headers['set-cookie'][0].split(';')[0];
+  assert.equal((await request(remoteAfterSetup.port, '/api/positions', {
+    headers: { cookie: renewedCookie }
+  })).status, 201);
+  assert.equal((await request(remoteAfterSetup.port, '/api/model-config', { method: 'PUT',
+    headers: { cookie: renewedCookie, origin: PUBLIC_ORIGIN }
+  })).status, 403);
 });
 
 test('模型配置只认本机 TCP 连接，转发头和 Host 不能伪装为服务器', async t => {

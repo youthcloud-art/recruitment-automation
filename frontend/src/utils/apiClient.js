@@ -16,6 +16,7 @@ export const apiCall = async (endpoint, options = {}) => {
   const config = {
     ...REQUEST_CONFIG,
     ...options,
+    credentials: 'same-origin',
     headers: {
       ...REQUEST_CONFIG.headers,
       ...options.headers
@@ -44,6 +45,9 @@ export const apiCall = async (endpoint, options = {}) => {
     }
     
     if (!response.ok) {
+      if (response.status === 401 && process.env.REACT_APP_COMPANY_AUTH === 'true') {
+        window.dispatchEvent(new Event('hiresmart:unauthorized'));
+      }
       const errorBody = await response.clone().json().catch(() => null);
       throw new Error(errorBody?.message || errorBody?.error || `HTTP ${response.status}: ${response.statusText}`);
     }

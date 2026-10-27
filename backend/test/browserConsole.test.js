@@ -46,7 +46,7 @@ async function fixture(t, options = {}) {
   app.use(express.json());
   app.use('/api/browser-console', createBrowserConsoleRouter({
     environment: { COMPANY_DEPLOYMENT: 'true' }, getTargets: () => ({ boss: target }),
-    now: () => time, ...options
+    now: () => time, readOwnedTabs: async () => [], ...options
   }));
   const server = await new Promise(resolve => {
     const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
@@ -205,4 +205,25 @@ test('login-only Chrome is attached through owned CDP without launching or navig
   assert.equal((await screenshot(app)).status, 409);
   assert.equal(disconnected, 2);
   assert.equal(calls.filter(call => call[0] === 'screenshot').length, 1);
+});
+
+test('after a backend restart the console reconnects an existing owned platform window', async t => {
+  const calls = [];
+  const page = fakePage(calls, 'https://www.zhipin.com/web/chat/search');
+  const app = await fixture(t, {
+    readOwnedTabs: async options => {
+      assert.equal(options.profileName, 'boss');
+      return [{ url: page.url() }];
+    },
+    attachExisting: async () => ({ context: { pages: () => [page] },
+      browser: { close: async () => calls.push(['disconnect']) } })
+  });
+  app.target.service.page = null;
+  app.target.service.chromeWindowOpened = false;
+  assert.equal((await app.request('/status')).body.data.platforms[0].available, true);
+  assert.equal((await acquire(app)).status, 200);
+  assert.equal((await screenshot(app)).status, 200);
+  assert.deepEqual(calls.map(call => call[0]), ['screenshot', 'disconnect']);
+  page.changeURL('https://other.example/');
+  assert.equal((await app.request('/status')).body.data.platforms[0].available, false);
 });

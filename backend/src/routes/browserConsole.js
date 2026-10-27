@@ -59,12 +59,26 @@ function identity(platform, clientId) {
 }
 
 function createBrowserConsoleRouter({ environment = process.env, getTargets = defaultTargets,
-  now = Date.now, attachExisting = options => require('../services/visibleChromeCdp').attachExistingVisibleChromeCdp(options) } = {}) {
+  now = Date.now,
+  attachExisting = options => require('../services/visibleChromeCdp').attachExistingVisibleChromeCdp(options),
+  readOwnedTabs = options => require('../services/visibleChromeCdp').getCdpTabs(options) } = {}) {
   const router = express.Router();
   let lock = null;
   let pending = false;
   const frames = new Map();
   const currentLock = () => lock && lock.expiresAt > now() ? lock : null;
+  const ownedAvailable = async (platform, target) => {
+    if (available(target)) return true;
+    try {
+      const tabs = await readOwnedTabs(PLATFORMS[platform]);
+      return tabs.some(tab => {
+        const url = new URL(tab.url);
+        const domain = PLATFORMS[platform].domain;
+        return url.protocol === 'https:' &&
+          (url.hostname === domain || url.hostname.endsWith(`.${domain}`));
+      });
+    } catch { return false; }
+  };
   const owns = (platform, clientId) => currentLock()?.clientId === clientId && currentLock()?.platform === platform;
   const requireLock = (platform, clientId) => {
     identity(platform, clientId);
@@ -99,7 +113,8 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
 
   async function withPage(platform, callback) {
     const target = getTargets()[platform];
-    if (!available(target)) fail(409, '请先在对应招聘平台页面启动浏览器，再打开服务器画面');
+    if (!await ownedAvailable(platform, target))
+      fail(409, '请先在对应招聘平台页面启动浏览器，再打开服务器画面');
     let attached;
     try {
       let page = target.service.page;
@@ -137,7 +152,8 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
       pending = true;
       try {
         const target = getTargets()[platform];
-        if (!available(target)) fail(409, '请先在采集页面启动对应平台的服务器浏览器');
+      if (!await ownedAvailable(platform, target))
+        fail(409, '请先在采集页面启动对应平台的服务器浏览器');
         let result;
         if (platform === 'boss') {
           const session = await require('../services/bossRawCdp').connectOwnedBossPage();
@@ -174,28 +190,31 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
     }
   });
 
-  router.get('/status', (_req, res) => {
+  router.get('/status', async (_req, res) => {
     try {
       const targets = getTargets();
       const active = currentLock();
+      const platforms = await Promise.all(Object.entries(PLATFORMS).map(async ([id, metadata]) => ({
+        id, label: metadata.label, available: await ownedAvailable(id, targets[id]),
+        running: running(targets[id])
+      })));
       respond(res, {
         enabled: true,
-        platforms: Object.entries(PLATFORMS).map(([id, metadata]) => ({
-          id, label: metadata.label, available: available(targets[id]), running: running(targets[id])
-        })),
+        platforms,
         lock: { held: Boolean(active), expiresAt: active?.expiresAt || null }
       });
     } catch (error) { errorResponse(res, error); }
   });
 
-  router.post('/session', (req, res) => {
+  router.post('/session', async (req, res) => {
     try {
       fields(req.body, ['platform', 'clientId']);
       const { platform, clientId } = req.body;
       identity(platform, clientId);
       if (pending) fail(409, '正在核对候选人，请稍后再获取浏览器操作权');
       if (currentLock() && lock.clientId !== clientId) fail(409, '其他同事正在操作服务器浏览器，请稍后重试');
-      if (!available(getTargets()[platform])) fail(409, '请先在对应招聘平台页面启动浏览器');
+      if (!await ownedAvailable(platform, getTargets()[platform]))
+        fail(409, '请先在对应招聘平台页面启动浏览器');
       lock = { platform, clientId, expiresAt: now() + LOCK_MS };
       respond(res, { platform, expiresAt: lock.expiresAt });
     } catch (error) { errorResponse(res, error); }

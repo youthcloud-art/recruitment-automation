@@ -69,7 +69,10 @@ try {
         Copy-Item -LiteralPath $deliveryCommon -Destination $backup -ErrorAction Stop
         $temporary = $deliveryCommon + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
         try {
-            [IO.File]::WriteAllText($temporary, $updated, [Text.UTF8Encoding]::new($false))
+            # Windows PowerShell 5.1 decodes BOM-less .ps1 files using the
+            # system code page. Common.ps1 contains Chinese strings, so the
+            # temporary file must retain a UTF-8 BOM before parsing it.
+            [IO.File]::WriteAllText($temporary, $updated, [Text.UTF8Encoding]::new($true))
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($temporary, [ref]$tokens, [ref]$errors) | Out-Null

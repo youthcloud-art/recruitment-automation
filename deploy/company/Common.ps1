@@ -72,7 +72,10 @@ function Get-CompanyResponseText([string]$Url) {
     } finally { $response.Close() }
 }
 
-function Wait-CompanyHealth([string]$Url, [int]$TimeoutSeconds = 90) {
+# Loading the shared resume store after a release switch can take several
+# minutes on the company server. Keep the health predicate strict, but allow
+# cold startup to finish before rolling a healthy release back.
+function Wait-CompanyHealth([string]$Url, [int]$TimeoutSeconds = 600) {
     $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
         if (Test-CompanyHealth $Url) { return }

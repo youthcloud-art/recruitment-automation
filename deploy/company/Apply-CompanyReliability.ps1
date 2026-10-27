@@ -72,7 +72,7 @@ try {
     Stop-CompanyRuntime $config
     Start-CompanyRuntime $config
     $health = 'http://' + $config.companyHost + ':' + $config.gatewayPort + '/healthz'
-    Wait-CompanyHealth $health -TimeoutSeconds 60
+    Wait-CompanyHealth $health -TimeoutSeconds 600
     $existing = Get-ScheduledTask -TaskName $watchName -ErrorAction SilentlyContinue
     $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
         -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $watchPath +
@@ -115,7 +115,7 @@ try {
             }
             if ($runtimeStopped) {
                 Start-CompanyRuntime $config
-                Wait-CompanyHealth ('http://' + $config.companyHost + ':' + $config.gatewayPort + '/healthz') -TimeoutSeconds 60
+                Wait-CompanyHealth ('http://' + $config.companyHost + ':' + $config.gatewayPort + '/healthz') -TimeoutSeconds 600
             }
         } catch { Write-Warning "Rollback failed: $($_.Exception.Message)" }
     }

@@ -55,6 +55,8 @@ $commit = '<已核对的40位提交SHA>'
 
 确认它是受信任的公司网段、存在到服务器的路由后，在服务器管理员 PowerShell 从**当前 release** 执行 `Add-CompanyNetwork.ps1 -Network '<该 Wi-Fi 的准确 IPv4 CIDR>'`。脚本核实本机服务器身份、当前网关支持动态加载和专用防火墙规则，暂缓镜像部署，再同时修改 `delivery/config.json` 与该规则的来源地址；待运行中的网关报告已加载新名单且健康检查通过后结束，失败时回滚。它不重启采集后端、网关或招聘平台 Chrome，也不暂停正在运行的采集。成功后必须再从该 Wi-Fi 的电脑访问 `/healthz` 和页面验证。若脚本输出 `NETWORK_ALREADY_ALLOWED` 但仍超时，应由公司网络管理员检查 Wi-Fi/VLAN 的互访策略；本项目不能绕过网络设备的隔离规则。不要改成 `Any` 或向所有来源开放端口。
 
+若服务器仍运行旧网关而新版已进入 `source`，管理员可运行 `source\deploy\company\Enable-CompanyNetwork.ps1 -ExpectedCommit <完整提交> -Network <准确 CIDR>`。它先将交付脚本的发布健康等待从 90 秒修正为 600 秒，等待新版真正通过健康检查，再调用上面的热加载脚本。公司数据量增长后实测后端冷启动约 4 分钟，原 90 秒等待会错误回滚。修正等待时间本身不重启当前服务；正式发布切换仍可能短暂不可用。
+
 把服务器 `delivery\gitee-readonly-ed25519.pub` 的**公钥**添加到 Gitee 仓库的只读部署公钥。私钥留在服务器，仅 SYSTEM 和管理员可读。
 
 如果初次报告未识别旧服务任务，运行 `Inspect-Deployment.ps1` 补充检查。它把报告写到桌面 `AutoRecru-Deployment-Check.json`，列出 4000/5001/19501 的进程父链、确实存在的启动文件路径、非 Microsoft 任务、关联 Windows 服务及新版本构建情况；不输出完整命令行、配置或密钥，也不停止进程或修改部署。19501 仅作为待选后端端口，检查本身不会改变当前端口配置；须在切换前按实际占用结果调整。

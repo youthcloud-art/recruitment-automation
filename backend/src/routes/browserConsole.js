@@ -74,6 +74,21 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
   const errorResponse = (res, error) => res.status(error.publicStatus || 503)
     .json({ success: false, message: error.publicStatus ? error.message : '平台画面暂不可用，请确认服务器浏览器已打开后重试' });
 
+  // Raw CDP failures have deliberately terse internal messages. Give the
+  // operator a safe recovery action instead of hiding every locator failure
+  // behind the same generic screenshot error.
+  const bossLocatorRecovery = {
+    BOSS_CDP_PAGE_UNAVAILABLE: 'BOSS 专用浏览器未找到唯一的招聘后台标签页；请保留一个已登录的“搜索牛人”页后重试',
+    BOSS_CDP_WINDOW_MINIMIZED: 'BOSS 专用 Chrome 已最小化；请恢复并最大化窗口后重试定位',
+    BOSS_CDP_WINDOW_UNAVAILABLE: 'BOSS 招聘窗口或结果区域暂不可用；请恢复窗口并等待岗位结果卡片显示后重试',
+    BOSS_CDP_VIEWPORT_TOO_SMALL: 'BOSS 招聘窗口显示区域不足；请最大化专用 Chrome 后重试定位',
+    BOSS_VERIFICATION_REQUIRED: 'BOSS 需要在官方页面完成人工安全验证；完成后回到岗位结果页重试',
+    BOSS_LOGIN_REQUIRED: 'BOSS 登录已失效；请在专用 Chrome 正常登录后重试',
+    BOSS_PAGE_UNAVAILABLE: 'BOSS 当前不在可用的招聘结果页；请打开对应岗位的“搜索牛人”结果后重试',
+    BOSS_CDP_TIMEOUT: 'BOSS 页面响应超时；请确认官方结果卡片已加载，稍后重试',
+    BOSS_CDP_DISCONNECTED: 'BOSS 浏览器连接中断；请确认专用 Chrome 仍打开后重试'
+  };
+
   router.use((_req, res, next) => {
     res.set('Cache-Control', 'no-store, private');
     res.set('Pragma', 'no-cache');
@@ -150,7 +165,13 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
         }
         respond(res, result);
       } finally { pending = false; }
-    } catch (error) { errorResponse(res, error); }
+    } catch (error) {
+      if (!error.publicStatus && Object.hasOwn(bossLocatorRecovery, error.code)) {
+        error.publicStatus = 409;
+        error.message = bossLocatorRecovery[error.code];
+      }
+      errorResponse(res, error);
+    }
   });
 
   router.get('/status', (_req, res) => {

@@ -802,9 +802,11 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             <Text strong>相关优势：</Text><p>{selected.matchEvaluation.strengths?.join('；') || '暂无'}</p>
             <Text strong>待核实：</Text><p>{selected.matchEvaluation.gaps?.join('；') || '暂无'}</p>
           </Card>}
-          {selected.platformRecordUrl
-            ? <a href={selected.platformRecordUrl} target="_blank" rel="noreferrer">在当前电脑打开官方来源页面</a>
-            : <Text type="secondary">当前来源地址无法精准定位该候选人，已隐藏通用链接。</Text>}
+          {selected.source === 'zlzp'
+            ? <Text type="secondary">智联详情依赖官方搜索结果；直接打开保存的地址不会自动恢复原候选人弹窗。请使用上方的服务器浏览器定位，并以详情简历号核对。</Text>
+            : selected.platformRecordUrl
+              ? <a href={selected.platformRecordUrl} target="_blank" rel="noreferrer">在当前电脑打开官方来源页面</a>
+              : <Text type="secondary">当前来源地址无法精准定位该候选人，已隐藏通用链接。</Text>}
         </Space>}
       </Modal>
     </div>

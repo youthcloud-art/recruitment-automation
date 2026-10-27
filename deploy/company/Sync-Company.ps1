@@ -34,8 +34,14 @@ try {
                 exit 0
             }
         } else { throw 'The first deployment must be activated explicitly with reviewed legacy task and directory parameters.' }
-        & $config.gitPath @gitArguments -C $source reset --hard $commit
-        if ($LASTEXITCODE -ne 0) { throw 'The delivery checkout could not be updated.' }
+        $checkedOutCommit = (& $config.gitPath @gitArguments -C $source rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0 -or $checkedOutCommit -notmatch '^[a-f0-9]{40}$') { throw 'The delivery checkout HEAD could not be read.' }
+        if ($checkedOutCommit -ne $commit) {
+            $resetOutput = @(& $config.gitPath @gitArguments -C $source reset --hard $commit 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                throw ('The delivery checkout could not be updated: ' + (($resetOutput | ForEach-Object { [string]$_ }) -join ' | '))
+            }
+        }
     } finally { $ErrorActionPreference = $savedPreference }
     # Avoid a costly build while a long collection is already in progress.
     # Switch-Release checks again under a drain barrier before stopping runtime.

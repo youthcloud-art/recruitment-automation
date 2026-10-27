@@ -9,6 +9,7 @@ const { ActiveJobService } = require('./activeJobService');
 const { postCaptureEvaluationQueue } = require('./postCaptureEvaluationQueue');
 const { BossCollectionCheckpoint, taskSignature } = require('./bossCollectionCheckpoint');
 const { assessBossResumeText, isTrustedBossResumeSource } = require('./bossResumeQuality');
+const { bossCardId } = require('../utils/platformLocator');
 
 const SEARCH_CARD_SELECTORS = [
   'li.geek-info-card', 'li.card-item', 'div.card-container',
@@ -4494,13 +4495,19 @@ class BossZhipinService {
    * 保存简历到数据库
    */
   async saveResumeToDatabase(candidate, content, qualityScore, { returnStatus = false } = {}) {
+    candidate = candidate || {};
+    const sourceCandidateId = bossCardId(candidate.sourceCandidateId);
+    if (!sourceCandidateId) {
+      const error = new Error('BOSS 官方候选卡未提供可核实的平台记录号，本份简历未入库');
+      error.code = 'BOSS_PLATFORM_ID_UNAVAILABLE';
+      throw error;
+    }
     const quality = assessBossResumeText(content);
     if (!quality.valid) {
       const error = new Error(`BOSS 简历内容不符合入库条件: ${quality.reason}`);
       error.code = 'RESUME_CONTENT_INVALID';
       throw error;
     }
-    candidate = candidate || {};
     const fingerprint = resumeFingerprint(content);
     const parsed = resumeParserService.parseResumeText(content);
     const result = await resumeModel.addResume({
@@ -4510,7 +4517,8 @@ class BossZhipinService {
       source: 'boss',
       platform: 'BOSS直聘',
       sourceUrl: this.page?.url() || '',
-      sourceCandidateId: candidate.sourceCandidateId || '',
+      sourceCandidateId,
+      sourceCandidateIdSource: 'platform_card',
       sourceFingerprint: fingerprint,
       originalText: content,
       qualityScore: qualityScore ?? parsed.qualityScore,

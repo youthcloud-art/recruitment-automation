@@ -51,6 +51,37 @@ function parseCidr(value) {
   return { mask, network: (network & mask) >>> 0 };
 }
 
+function installedNetworkConfigFile() {
+  const releaseRoot = path.resolve(__dirname, '../..');
+  if (path.basename(path.dirname(releaseRoot)).toLowerCase() !== 'releases') return null;
+  return path.resolve(releaseRoot, '../..', 'delivery/config.json');
+}
+
+function refreshNetworkAccess(config, force = false) {
+  if (!config.networkConfigFile) return;
+  const now = Date.now();
+  if (!force && now < config.nextNetworkCheckAt) return;
+  config.nextNetworkCheckAt = now + config.networkCheckIntervalMs;
+  try {
+    const saved = JSON.parse(fs.readFileSync(config.networkConfigFile, 'utf8'));
+    if (!Array.isArray(saved.allowedNetworks) || saved.allowedNetworks.length === 0) {
+      throw new Error('公司网段名单为空或无效');
+    }
+    const networks = saved.allowedNetworks.map(value => String(value).trim());
+    const cidrs = networks.map(parseCidr);
+    config.cidrs = cidrs;
+    config.allowedNetworkStrings = networks;
+    config.networkConfigLoaded = true;
+    config.networkReloadError = null;
+  } catch (error) {
+    if (!config.networkConfigLoaded) throw error;
+    if (config.networkReloadError !== error.message) {
+      console.error(`公司网段配置暂不可用，保留上一份有效名单: ${error.message}`);
+    }
+    config.networkReloadError = error.message;
+  }
+}
+
 function normalizedOrigin(value) {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
@@ -69,16 +100,23 @@ function readConfig(options = {}) {
   const publicOrigin = normalizedOrigin(options.publicOrigin ?? environment.PUBLIC_ORIGIN ?? defaultOrigin);
   const origins = new Set([defaultOrigin, publicOrigin]);
   const cidrValue = options.lanAllowCidrs ?? environment.LAN_ALLOW_CIDRS ?? '192.168.1.0/24,192.168.11.0/24';
-  const cidrs = (Array.isArray(cidrValue) ? cidrValue : String(cidrValue).split(','))
-    .map(value => String(value).trim()).filter(Boolean).map(parseCidr);
-  return {
-    host, port, backendPort, publicOrigin, origins, cidrs,
+  const allowedNetworkStrings = (Array.isArray(cidrValue) ? cidrValue : String(cidrValue).split(','))
+    .map(value => String(value).trim()).filter(Boolean);
+  const cidrs = allowedNetworkStrings.map(parseCidr);
+  const networkConfigFile = options.networkConfigFile ?? environment.LAN_ALLOW_CONFIG_FILE ?? installedNetworkConfigFile();
+  const config = {
+    host, port, backendPort, publicOrigin, origins, cidrs, allowedNetworkStrings,
+    networkConfigFile: networkConfigFile ? path.resolve(networkConfigFile) : null,
+    networkCheckIntervalMs: options.networkCheckIntervalMs ?? 2000,
+    nextNetworkCheckAt: 0, networkConfigLoaded: false, networkReloadError: null,
     allowedHosts: new Set([...origins].map(origin => new URL(origin).host.toLowerCase())),
     healthHosts: new Set([`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]),
     frontendBuildDir: path.resolve(options.frontendBuildDir ?? environment.FRONTEND_BUILD_DIR ??
       path.join(__dirname, '../../frontend/build')),
     healthTimeoutMs: options.healthTimeoutMs ?? 3000
   };
+  refreshNetworkAccess(config, true);
+  return config;
 }
 
 function remoteAddress(req) {
@@ -106,6 +144,7 @@ function isModelConfigPath(pathname) {
 // Never use Forwarded, X-Forwarded-For or X-Real-IP for this decision. The
 // gateway is the LAN boundary and sees the connecting employee's real socket.
 function boundaryError(req, config, pathname) {
+  refreshNetworkAccess(config);
   const address = remoteAddress(req);
   if (!addressAllowed(address, config)) return '该地址不在允许的公司网段内';
   const host = String(req.headers.host || '').toLowerCase();
@@ -376,6 +415,15 @@ function createGateway(options = {}) {
         status: frontend && backend ? 'ok' : 'unavailable',
         frontend: frontend ? 'ok' : 'unavailable', backend: backend ? 'ok' : 'unavailable'
       });
+      return;
+    }
+    if (pathname === '/__company/network-access' && req.method === 'GET') {
+      if (!serverBrowser(req)) { json(res, 403, { message: '仅允许在公司服务器本机检查网段配置' }); return; }
+      json(res, 200, { success: true, data: {
+        allowedNetworks: config.allowedNetworkStrings,
+        dynamic: Boolean(config.networkConfigFile),
+        reloadError: config.networkReloadError
+      } });
       return;
     }
     if (pathname === '/api/model-config/access' && req.method === 'GET') {

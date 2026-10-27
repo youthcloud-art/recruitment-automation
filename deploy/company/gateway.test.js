@@ -137,6 +137,48 @@ test('LAN source check uses the socket and refuses spoofed forwarding headers', 
   assert.match(boundaryError(syntheticRequest('192.168.1.22'), expanded, '/api/positions'), /公司网段/);
 });
 
+test('company network list reloads from the installed config without restarting the gateway', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-network-config-test-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const configFile = path.join(directory, 'config.json');
+  await fs.writeFile(configFile, JSON.stringify({ allowedNetworks: ['192.168.1.0/24'] }));
+  const config = readConfig({ environment: {}, networkConfigFile: configFile, networkCheckIntervalMs: 0 });
+  assert.match(boundaryError(syntheticRequest('192.168.69.230'), config, '/healthz'), /公司网段/);
+  await fs.writeFile(configFile, JSON.stringify({ allowedNetworks: ['192.168.1.0/24', '192.168.69.0/24'] }));
+  assert.equal(boundaryError(syntheticRequest('192.168.69.230'), config, '/healthz'), null);
+  await fs.writeFile(configFile, '{broken');
+  assert.equal(boundaryError(syntheticRequest('192.168.69.230'), config, '/healthz'), null);
+  assert.ok(config.networkReloadError);
+  assert.throws(() => readConfig({ environment: {}, networkConfigFile: path.join(directory, 'missing.json') }));
+
+  await fs.writeFile(configFile, JSON.stringify({ allowedNetworks: ['192.168.1.0/24', '192.168.69.0/24'] }));
+  const local = await fixture(t, { gatewayOptions: { networkConfigFile: configFile, networkCheckIntervalMs: 0 } });
+  const response = await request(local.port, '/__company/network-access');
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(response.body).data.allowedNetworks, ['192.168.1.0/24', '192.168.69.0/24']);
+  await fs.writeFile(configFile, JSON.stringify({ allowedNetworks: ['192.168.1.0/24'] }));
+  const reloaded = await request(local.port, '/__company/network-access');
+  assert.deepEqual(JSON.parse(reloaded.body).data.allowedNetworks, ['192.168.1.0/24']);
+  const remote = await fixture(t, { gatewayOptions: {
+    networkConfigFile: configFile, networkCheckIntervalMs: 0, isServerBrowser: () => false
+  } });
+  assert.equal((await request(remote.port, '/__company/network-access')).status, 403);
+});
+
+test('installed release locates the shared deployment network config', async t => {
+  const install = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-installed-gateway-test-'));
+  t.after(() => fs.rm(install, { recursive: true, force: true }));
+  const code = path.join(install, 'releases', 'example', 'deploy', 'company', 'gateway.js');
+  await fs.mkdir(path.dirname(code), { recursive: true });
+  await fs.mkdir(path.join(install, 'delivery'), { recursive: true });
+  await fs.copyFile(path.join(__dirname, 'gateway.js'), code);
+  await fs.writeFile(path.join(install, 'delivery', 'config.json'),
+    JSON.stringify({ allowedNetworks: ['192.168.1.0/24', '192.168.69.0/24'] }));
+  const installed = require(code).readConfig({ environment: {} });
+  assert.equal(boundaryError(syntheticRequest('192.168.69.230'), installed, '/healthz'), null);
+  assert.equal(installed.networkConfigFile, path.join(install, 'delivery', 'config.json'));
+});
+
 test('模型配置只认本机 TCP 连接，转发头和 Host 不能伪装为服务器', async t => {
   assert.equal(isServerBrowser({ socket: { remoteAddress: '192.168.1.24',
     localAddress: '192.168.1.24' } }), true);

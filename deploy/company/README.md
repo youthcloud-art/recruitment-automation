@@ -53,7 +53,7 @@ $commit = '<已核对的40位提交SHA>'
 
 先在连接该 Wi-Fi 的电脑上记录 IPv4 地址、前缀长度、默认网关，并运行 `curl.exe --noproxy '*' --connect-timeout 4 --max-time 8 -i http://192.168.1.24:4001/healthz`。`HTTP 403` 且提示不在公司网段，说明请求到达了网关，但来源地址未获准；连接超时则先检查该 Wi-Fi 到 `192.168.1.24` 的 VLAN 路由、访客/客户端隔离和防火墙，不要直接扩大放行范围。服务器本机 `/healthz` 正常只能证明应用在运行，不能证明该 Wi-Fi 有路由。
 
-确认它是受信任的公司网段、存在到服务器的路由后，在服务器管理员 PowerShell 从**当前 release** 执行 `Add-CompanyNetwork.ps1 -Network '<该 Wi-Fi 的准确 IPv4 CIDR>'`。脚本核实本机服务器身份和现有专用防火墙规则，同时修改 `delivery/config.json` 与该规则的来源地址；先排空采集与评估，暂缓镜像部署，重启本项目运行任务并检查健康状态，失败时回滚。成功后必须再从该 Wi-Fi 的电脑访问 `/healthz` 和页面验证。若脚本输出 `NETWORK_ALREADY_ALLOWED` 但仍超时，应由公司网络管理员检查 Wi-Fi/VLAN 的互访策略；本项目不能绕过网络设备的隔离规则。不要改成 `Any` 或向所有来源开放端口。
+确认它是受信任的公司网段、存在到服务器的路由后，在服务器管理员 PowerShell 从**当前 release** 执行 `Add-CompanyNetwork.ps1 -Network '<该 Wi-Fi 的准确 IPv4 CIDR>'`。脚本核实本机服务器身份、当前网关支持动态加载和专用防火墙规则，暂缓镜像部署，再同时修改 `delivery/config.json` 与该规则的来源地址；待运行中的网关报告已加载新名单且健康检查通过后结束，失败时回滚。它不重启采集后端、网关或招聘平台 Chrome，也不暂停正在运行的采集。成功后必须再从该 Wi-Fi 的电脑访问 `/healthz` 和页面验证。若脚本输出 `NETWORK_ALREADY_ALLOWED` 但仍超时，应由公司网络管理员检查 Wi-Fi/VLAN 的互访策略；本项目不能绕过网络设备的隔离规则。不要改成 `Any` 或向所有来源开放端口。
 
 把服务器 `delivery\gitee-readonly-ed25519.pub` 的**公钥**添加到 Gitee 仓库的只读部署公钥。私钥留在服务器，仅 SYSTEM 和管理员可读。
 

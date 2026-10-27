@@ -33,19 +33,11 @@ if ($rule.Enabled -ne 'True' -or $rule.Direction -ne 'Inbound' -or $rule.Action 
     (($firewallNetworks | Sort-Object) -join ',') -cne (($current | Sort-Object) -join ',')) {
     throw 'The company firewall rule differs from the saved installation. No changes were made.'
 }
-if ($current -contains $network) {
-    Write-Host "NETWORK_ALREADY_ALLOWED: $network. Check the Unionwell VLAN route or wireless client isolation."
-    return
-}
-
 $next = @($current + $network | Sort-Object -Unique)
 $syncDisabledByUs = $false
 $syncLock = $null
-$drainOwned = $false
 $configChanged = $false
 $firewallChanged = $false
-$runtimeStopped = $false
-$drainPath = Join-Path $InstallRoot 'shared\local\deploy-drain.request'
 $configPath = Join-Path $InstallRoot 'delivery\config.json'
 $backup = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('backups\network-access-' +
     (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,6) + '.json'))
@@ -75,10 +67,16 @@ try {
     if ((($lockedFirewallNetworks | Sort-Object) -join ',') -cne (($current | Sort-Object) -join ',')) {
         throw 'The company firewall rule changed while acquiring the deployment lock.'
     }
-    if (Test-Path -LiteralPath $drainPath) { throw 'A deployment drain is already active.' }
-    [IO.File]::WriteAllText($drainPath, 'network access update pending')
-    $drainOwned = $true
-    Assert-CompanyCollectionIdle $config
+    $statusUrl = 'http://' + $config.companyHost + ':' + $config.gatewayPort + '/__company/network-access'
+    $live = Get-CompanyResponseText $statusUrl | ConvertFrom-Json
+    if ($live.success -ne $true -or $live.data.dynamic -ne $true -or $live.data.reloadError -or
+        ((@($live.data.allowedNetworks | Sort-Object)) -join ',') -cne (($current | Sort-Object) -join ',')) {
+        throw 'The running gateway does not support verified live network updates, or its rules differ from the saved configuration.'
+    }
+    if ($current -contains $network) {
+        Write-Host "NETWORK_ALREADY_ALLOWED: $network. Check the Unionwell VLAN route or wireless client isolation."
+        return
+    }
 
     # Preserve the exact previous configuration for a failed health check.
     Copy-Item -LiteralPath $configPath -Destination $backup
@@ -87,31 +85,50 @@ try {
     $config.allowedNetworks = $next
     $configChanged = $true
     Write-JsonFile $configPath $config
-
-    $runtimeStopped = $true
-    Stop-CompanyRuntime $config
-    Start-CompanyRuntime $config
-    Wait-CompanyHealth ('http://' + $config.companyHost + ':' + $config.gatewayPort + '/healthz') -TimeoutSeconds 60
+    $loaded = $false
+    $deadline = [datetime]::UtcNow.AddSeconds(25)
+    do {
+        try {
+            $live = Get-CompanyResponseText $statusUrl | ConvertFrom-Json
+            $loaded = $live.success -eq $true -and $live.data.dynamic -eq $true -and -not $live.data.reloadError -and
+                ((@($live.data.allowedNetworks | Sort-Object)) -join ',') -ceq (($next | Sort-Object) -join ',')
+        } catch { $loaded = $false }
+        if (-not $loaded) { Start-Sleep -Milliseconds 500 }
+    } while (-not $loaded -and [datetime]::UtcNow -lt $deadline)
+    if (-not $loaded) { throw 'The running gateway did not load the new company network list.' }
+    if (-not (Test-CompanyHealth ('http://' + $config.companyHost + ':' + $config.gatewayPort + '/healthz'))) {
+        throw 'The company gateway health check failed after the network update.'
+    }
     Write-JsonFile (Join-Path $InstallRoot 'delivery\last-network-access-update.json') @{
         ok=$true;added=$network;allowedNetworks=$next;backup=$backup;timeUtc=[datetime]::UtcNow.ToString('o')
     }
-    Write-Host "NETWORK_ACCESS_UPDATED: $network; SERVER_HEALTH_OK. Verify from a Unionwell client."
+    Write-Host "NETWORK_ACCESS_UPDATED: $network; GATEWAY_RELOADED; SERVER_HEALTH_OK. Verify from a Unionwell client."
 } catch {
     $failure = $_
-    try {
-        if ($configChanged) { Copy-Item -LiteralPath $backup -Destination $configPath -Force }
-        if ($firewallChanged) {
-            $addresses | Set-NetFirewallAddressFilter -RemoteAddress $firewallNetworks -ErrorAction Stop | Out-Null
-        }
-        if ($runtimeStopped) {
-            Stop-CompanyRuntime $config
-            Start-CompanyRuntime $config
-            Wait-CompanyHealth ('http://' + $config.companyHost + ':' + $config.gatewayPort + '/healthz') -TimeoutSeconds 60
-        }
-    } catch { Write-Warning "Network-access rollback failed: $($_.Exception.Message)" }
+    $configRestored = -not $configChanged
+    if ($configChanged) {
+        try { Copy-Item -LiteralPath $backup -Destination $configPath -Force; $configRestored = $true }
+        catch { Write-Warning "Could not restore company config: $($_.Exception.Message)" }
+    }
+    if ($firewallChanged) {
+        try { $addresses | Set-NetFirewallAddressFilter -RemoteAddress $firewallNetworks -ErrorAction Stop | Out-Null }
+        catch { Write-Warning "Could not restore company firewall rule: $($_.Exception.Message)" }
+    }
+    if ($configChanged -and $configRestored) {
+        $restored = $false
+        $restoreDeadline = [datetime]::UtcNow.AddSeconds(25)
+        do {
+            try {
+                $live = Get-CompanyResponseText $statusUrl | ConvertFrom-Json
+                $restored = $live.success -eq $true -and -not $live.data.reloadError -and
+                    ((@($live.data.allowedNetworks | Sort-Object)) -join ',') -ceq (($current | Sort-Object) -join ',')
+            } catch { $restored = $false }
+            if (-not $restored) { Start-Sleep -Milliseconds 500 }
+        } while (-not $restored -and [datetime]::UtcNow -lt $restoreDeadline)
+        if (-not $restored) { Write-Warning 'The gateway did not reload the restored company network list.' }
+    }
     throw $failure
 } finally {
-    if ($drainOwned) { Remove-Item -LiteralPath $drainPath -Force -ErrorAction SilentlyContinue }
     if ($syncLock) { $syncLock.Dispose() }
     if ($syncDisabledByUs) { Enable-ScheduledTask -TaskName $config.syncTask -ErrorAction Stop | Out-Null }
 }

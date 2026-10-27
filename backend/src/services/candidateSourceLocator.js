@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { idFromOfficialUrl, platformLocator } = require('../utils/platformLocator');
 const { hiringJobTitle } = require('../utils/candidateDisplay');
 
@@ -65,9 +66,92 @@ function bossDialogProbe(expectedId, search) {
   })()`;
 }
 
+function bossFingerprintProbe(title) {
+  return String.raw`(() => {
+    const title=${JSON.stringify(title)};
+    const outer=new URL(location.href);
+    const search=outer.pathname==='/web/chat/search';
+    const recommend=/^\/web\/(?:chat|boss)\/recommend\/?$/.test(outer.pathname);
+    if (outer.origin!=='https://www.zhipin.com' || (!search && !recommend))
+      return {state:'wrong_page'};
+    const frame=document.querySelector(search?'iframe[src*="/web/frame/search/"]':
+      'iframe[src*="/web/frame/recommend/"]');
+    const doc=frame?.contentDocument;
+    if (!doc) return {state:'frame_unavailable'};
+    let url;
+    try {url=new URL(frame.contentWindow.location.href);}
+    catch (_) {return {state:'frame_unavailable'};}
+    if (url.origin!=='https://www.zhipin.com' ||
+        url.pathname.replace(/\/$/,'')!==(search?'/web/frame/search':'/web/frame/recommend'))
+      return {state:'frame_changed'};
+    const current=search?doc.querySelector('input.search-input')?.value:
+      doc.querySelector('.ui-dropmenu-label')?.textContent?.split(/[_＿]/)[0];
+    if (String(current||'').normalize('NFKC').replace(/\s+/g,' ').trim()!==title)
+      return {state:'wrong_job'};
+    if (doc.querySelector('.dialog-wrap.active') ||
+        document.querySelector('div[data-type="boss-dialog"].active'))
+      return {state:'dialog_open'};
+    const cards=[...doc.querySelectorAll(search?'li.geek-info-card':'li.card-item')];
+    if (cards.length>1000) return {state:'list_too_large'};
+    return {state:'ready',search,jobId:search?'':url.searchParams.get('jobid')||'',
+      cards:cards.map(card=>{
+        const links=[...card.querySelectorAll(':scope > a[ka="search_click_open_resume"]')];
+        return {text:(card.textContent||'').replace(/\s+/g,' ').trim(),
+          id:links.length===1?(links[0].getAttribute('data-expect')||
+            links[0].getAttribute('data-geek-id')||''):''};
+      })};
+  })()`;
+}
+
+function searchScope(title) {
+  const normalized=String(title||'').normalize('NFKC').replace(/\s+/g,' ').trim();
+  return `search-${crypto.createHash('sha256').update(normalized).digest('hex').slice(0,32)}`;
+}
+
+function cardFingerprint(scope, text) {
+  return crypto.createHash('sha256').update(`${scope}\n${text}`
+    .normalize('NFKC').replace(/\s+/g,' ').trim()).digest('hex');
+}
+
+async function locateBossCandidateByFingerprint(session, candidate, options = {}) {
+  if (candidate?.source!=='boss' || platformLocator(candidate).id ||
+      !/^[a-f0-9]{64}$/.test(candidate.sourceCardFingerprint||''))
+    throw locatorError(422,'这份 BOSS 旧简历缺少可用于安全补录的平台候选卡证据；请在原岗位重新采集并核对');
+  const title=hiringJobTitle(candidate);
+  if (!title || title==='招聘岗位待核实')
+    throw locatorError(422,'招聘岗位尚未核实，无法补录 BOSS 编号');
+  const current=await session.assertRecruiterReady();
+  const search=new URL(current).pathname==='/web/chat/search';
+  await session.assertUsableRecruiterWindow({frameSelector:search?
+    'iframe[src*="/web/frame/search/"]':'iframe[src*="/web/frame/recommend/"]'});
+  const snapshot=await session.evaluate(bossFingerprintProbe(title),{timeoutMs:12000});
+  if (snapshot?.state!=='ready')
+    throw locatorError(409,snapshot?.state==='wrong_job'?
+      `请先在 BOSS 服务器浏览器切换到“${title}”结果页后重试`:
+      'BOSS 当前候选列表未准备好；请打开原岗位结果并关闭已有简历弹窗');
+  const scope=snapshot.search?searchScope(title):snapshot.jobId;
+  if (!scope) throw locatorError(409,'BOSS 当前招聘岗位编号不可用，无法安全补录');
+  const matches=snapshot.cards.filter(card=>card.text &&
+    cardFingerprint(scope,card.text)===candidate.sourceCardFingerprint);
+  if (matches.length!==1)
+    throw locatorError(409,matches.length?'BOSS 候选卡证据重复，未补录编号':
+      '原候选卡不在当前已加载的结果列表；请加载原岗位的候选人后重试');
+  const { bossCardId }=require('../utils/platformLocator');
+  const id=bossCardId(matches[0].id);
+  if (!id || snapshot.cards.filter(card=>card.id===id).length!==1)
+    throw locatorError(409,'原候选卡没有唯一、可核实的平台编号，未补录');
+  if (await session.assertRecruiterReady()!==current)
+    throw locatorError(409,'BOSS 页面已变化，未补录编号');
+  // Recheck the exact card and official dialog using the regular locator.
+  const result=await locateBossCandidate(session,{...candidate,
+    sourceCandidateId:id,sourceCandidateIdSource:'platform_card'},options);
+  return {...result,recovered:true};
+}
+
 async function locateBossCandidate(session, candidate, { wait = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   const locator=platformLocator(candidate);
-  if (candidate?.source!=='boss' || !locator.id || locator.status!=='platform_card')
+  if (candidate?.source!=='boss' || !locator.id ||
+      !['platform_card','official_url'].includes(locator.status))
     throw locatorError(422,'这份 BOSS 简历没有可用于候选卡定位的已核实平台编号');
   const title=hiringJobTitle(candidate);
   if (!title || title==='招聘岗位待核实')
@@ -120,4 +204,5 @@ async function locateOfficialCandidate(page, candidate) {
   return {platform:candidate.source,recordId:locator.id,verified:'official_url'};
 }
 
-module.exports={locateBossCandidate,locateOfficialCandidate,bossCardProbe,bossDialogProbe};
+module.exports={locateBossCandidate,locateBossCandidateByFingerprint,
+  locateOfficialCandidate,bossCardProbe,bossDialogProbe,bossFingerprintProbe,cardFingerprint,searchScope};

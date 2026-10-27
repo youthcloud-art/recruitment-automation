@@ -3,7 +3,9 @@
 const express = require('express');
 const { localApiAccess } = require('../middleware/localApiAccess');
 const resumeModel = require('../models/resumeModel');
-const { locateBossCandidate, locateOfficialCandidate } = require('../services/candidateSourceLocator');
+const { locateBossCandidate, locateBossCandidateByFingerprint,
+  locateOfficialCandidate } = require('../services/candidateSourceLocator');
+const { platformLocator } = require('../utils/platformLocator');
 
 const PLATFORMS = {
   boss: { label: 'BOSS 直聘', profileName: 'boss', port: 19222, domain: 'zhipin.com' },
@@ -124,8 +126,25 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
         let result;
         if (platform === 'boss') {
           const session = await require('../services/bossRawCdp').connectOwnedBossPage();
-          try { result = await locateBossCandidate(session, candidate); }
+          try {
+            result = platformLocator(candidate).id
+              ? await locateBossCandidate(session, candidate)
+              : await locateBossCandidateByFingerprint(session, candidate);
+          }
           finally { session.close(); }
+          if (result.recovered) {
+            const existing = resumeModel.findDuplicateResume({source:'boss',
+              sourceCandidateId:result.recordId});
+            if (existing && existing.id !== candidate.id)
+              fail(409,'该 BOSS 平台编号已属于其他候选人，未补录；请人工核对');
+            const latest = resumeModel.getResumeById(candidate.id);
+            if (!latest || (platformLocator(latest).id &&
+                platformLocator(latest).id !== result.recordId))
+              fail(409,'本机候选记录在定位期间已变化，未补录');
+            if (!platformLocator(latest).id) resumeModel.updateCandidateMetadata(candidate.id, {
+              sourceCandidateId: result.recordId, sourceCandidateIdSource:'platform_card'
+            });
+          }
         } else {
           result = await withPage(platform, page => locateOfficialCandidate(page, candidate));
         }

@@ -447,8 +447,17 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const locateOnServer = async candidate => {
     setLocating(true);
     try {
-      await apiPost('/browser-console/locate-candidate', { candidateId: candidate.id });
-      message.success('已在公司服务器专用浏览器打开目标候选人');
+      const result = await apiPost('/browser-console/locate-candidate', { candidateId: candidate.id });
+      if (result.data?.recovered && result.data?.recordId) {
+        setSelected(previous => previous?.id === candidate.id ? {
+          ...previous, platformRecordId:result.data.recordId,
+          platformLocatorStatus:'platform_card', sourceCandidateId:result.data.recordId,
+          sourceCandidateIdSource:'platform_card'
+        } : previous);
+        refresh();
+      }
+      message.success(result.data?.recovered ? '已核对原候选卡并补录 BOSS 平台编号' :
+        '已在公司服务器专用浏览器打开目标候选人');
       window.dispatchEvent(new CustomEvent('company-browser-open', {
         detail: { platform: candidate.source === 'zlzp' ? 'zhilian'
           : candidate.source === 'qcwy' ? 'wuyou' : 'boss' }
@@ -755,12 +764,22 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             {selected.platformRecordId && <div><Text type="secondary">平台记录号用于核对身份，招聘平台的关键词搜索框未必支持按此编号查询。</Text></div>}
             {selected.platformLocatorStatus === 'platform_card' &&
               <div><Text type="secondary">编号来自平台候选卡；可在服务器当前岗位结果中按编号定位。</Text></div>}
-            {selected.platformRecordId && ((selected.platformLocatorStatus === 'platform_card' &&
-              selected.source === 'boss') || (selected.platformLocatorStatus === 'official_url' &&
+            {selected.platformRecordId && ((selected.source === 'boss' &&
+              ['platform_card','official_url'].includes(selected.platformLocatorStatus)) ||
+              (selected.platformLocatorStatus === 'official_url' &&
               ['zlzp', 'qcwy'].includes(selected.source))) &&
               <Button style={{ marginTop: 8 }} loading={locating} onClick={() => locateOnServer(selected)}>
                 在公司服务器浏览器定位原候选人
-              </Button>}</div>
+              </Button>}
+            {!selected.platformRecordId && selected.source === 'boss' &&
+              (selected.platformLocatorStatus === 'unavailable') &&
+              (selected.sourceCardFingerprint
+                ? <div><Button style={{ marginTop: 8 }} loading={locating}
+                    onClick={() => locateOnServer(selected)}>核对候选卡并补录平台编号</Button>
+                  <div><Text type="secondary">请先在服务器 BOSS 浏览器打开该招聘岗位的原候选结果。</Text></div>
+                </div>
+                : <div><Text type="secondary">这份旧记录没有可核对的候选卡证据；重新采集同一官方简历后，系统可据完整简历内容补录编号。</Text></div>)}
+          </div>
           {selected.jobGroup === 'historical' && <Alert type="info" showIcon
             message="历史/已删除岗位简历已单独保留"
             description="可查看、记录跟进或单独删除；重新评估前请先在岗位管理中恢复并应用原岗位。" />}

@@ -3,7 +3,8 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');
-const {bossCardProbe,bossDialogProbe,locateBossCandidate,locateOfficialCandidate}=
+const {bossCardProbe,bossDialogProbe,bossFingerprintProbe,cardFingerprint,searchScope,
+  locateBossCandidate,locateBossCandidateByFingerprint,locateOfficialCandidate}=
   require('../src/services/candidateSourceLocator');
 
 const boss={source:'boss',captureJobTitle:'磁轴销售工程师',
@@ -54,6 +55,32 @@ test('BOSS locator refuses an absent card without clicking',async()=>{
   scrollUnique:async()=>{clicked=true;},clickUnique:async()=>{clicked=true;}};
   await assert.rejects(locateBossCandidate(session,boss),/不在 BOSS 当前已加载/);
   assert.equal(clicked,false);
+});
+
+test('旧 BOSS 简历只按唯一候选卡证据补录官方编号',async()=>{
+  new vm.Script(bossFingerprintProbe('磁轴销售工程师'));
+  const title='磁轴销售工程师';
+  const card='王先生 5年经验 磁轴销售工程师';
+  const fingerprint=cardFingerprint(searchScope(title),card);
+  const legacy={source:'boss',captureJobTitle:title,sourceCardFingerprint:fingerprint};
+  const calls=[];
+  const session={assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/search',
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>expression.includes('cards:cards.map')
+      ? {state:'ready',search:true,cards:[{text:card,id:'247229183'}]}
+      : expression.includes('const id=')
+        ? {state:'ready',search:true,frameSelector:'iframe[src*="/web/frame/search/"]',
+          cardSelector:'li.geek-info-card',attribute:'data-expect'} : {state:'ready'},
+    scrollUnique:async()=>calls.push('scroll'),clickUnique:async()=>calls.push('click')};
+  const result=await locateBossCandidateByFingerprint(session,legacy,{wait:async()=>{}});
+  assert.deepEqual([result.recordId,result.recovered,calls],['247229183',true,['scroll','click']]);
+  session.evaluate=async expression=>expression.includes('cards:cards.map')
+    ? {state:'ready',search:true,cards:[{text:card,id:'247229183'},
+      {text:card,id:'other'}]} : {state:'ready'};
+  await assert.rejects(locateBossCandidateByFingerprint(session,legacy),/证据重复/);
+  assert.equal(calls.length,2);
+  await assert.rejects(locateBossCandidateByFingerprint(session,
+    {...legacy,sourceCardFingerprint:''}),/缺少可用于安全补录/);
 });
 
 test('智联官方简历 URL 须导航到同一个简历号并显示详情',async()=>{

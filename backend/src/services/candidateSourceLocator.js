@@ -193,15 +193,66 @@ async function locateOfficialCandidate(page, candidate) {
   if (!['zlzp','qcwy'].includes(candidate?.source) || locator.status!=='official_url' ||
       !locator.url || idFromOfficialUrl(candidate.source,locator.url)!==locator.id)
     throw locatorError(422,'这份简历缺少可验证的官方个人详情链接');
+  if (candidate.source==='zlzp') {
+    // The search URL can be a history entry for an open modal, rather than a
+    // durable deep link. Prefer the exact official card in the live result list.
+    const current=page.url();
+    if (idFromOfficialUrl('zlzp',current)===locator.id &&
+        await waitForZhilianDetail(page,1000))
+      return {platform:'zlzp',recordId:locator.id,verified:'official_detail'};
+    const found=await findZhilianCard(page,locator.id);
+    if (found==='ambiguous')
+      throw locatorError(409,'智联当前结果中有重复的简历号，未执行定位；请在平台人工核对');
+    if (Number.isInteger(found)) {
+      const card=page.locator('div.search-resume-item.resume-item-exp').nth(found);
+      const link=card.locator('a[href*="resumeNumber="], a[href*="resume"], a').first();
+      if (!await link.count())
+        throw locatorError(409,'智联已找到目标候选卡，但卡片没有可打开的官方简历链接');
+      await link.click({timeout:10000});
+      if (idFromOfficialUrl('zlzp',page.url())!==locator.id ||
+          !await waitForZhilianDetail(page,12000))
+        throw locatorError(409,'智联候选卡已打开，但未能核实对应编号的详情；请在官方页面人工核对');
+      return {platform:'zlzp',recordId:locator.id,verified:'exact_card'};
+    }
+  }
   await page.goto(locator.url,{waitUntil:'domcontentloaded',timeout:30000});
   if (idFromOfficialUrl(candidate.source,page.url())!==locator.id)
     throw locatorError(409,'平台跳转后不是目标简历；请在服务器浏览器确认登录或官方安全验证');
   if (candidate.source==='zlzp') {
-    const detail=page.locator('.new-shortcut-resume__modal .new-resume-detail--inner, .new-resume-detail--inner').first();
-    if (!await detail.isVisible({timeout:10000}).catch(()=>false))
-      throw locatorError(409,'智联已打开目标简历地址，但详情尚未显示；请在服务器浏览器检查登录和页面');
+    if (!await waitForZhilianDetail(page,12000))
+      throw locatorError(409,'智联搜索地址已打开，但未恢复目标简历详情；请在官方搜索结果加载该候选卡后重试定位');
   }
   return {platform:candidate.source,recordId:locator.id,verified:'official_url'};
+}
+
+async function waitForZhilianDetail(page,timeout) {
+  try {
+    await page.locator('.new-shortcut-resume__modal .new-resume-detail--inner, .new-resume-detail--inner')
+      .first().waitFor({state:'visible',timeout});
+    return true;
+  } catch { return false; }
+}
+
+async function findZhilianCard(page,id) {
+  let current;
+  try { current=new URL(page.url()); } catch { return null; }
+  if (current.protocol!=='https:' || !['rd6.zhaopin.com','rd.zhaopin.com'].includes(current.hostname) ||
+      current.pathname!=='/app/search') return null;
+  const cards=page.locator('div.search-resume-item.resume-item-exp');
+  const matches=await cards.evaluateAll((elements,expected)=>elements.flatMap((card,index)=>{
+    const ids=['data-resume-id','data-resume-number','data-id']
+      .map(key=>card.getAttribute(key)).filter(Boolean);
+    for (const link of card.querySelectorAll('a[href]')) {
+      try {
+        const url=new URL(link.getAttribute('href'),location.href);
+        if (url.hostname.endsWith('.zhaopin.com') && url.pathname==='/app/search')
+          ids.push(url.searchParams.get('resumeNumber'));
+      } catch (_) {}
+    }
+    return ids.includes(expected)?[index]:[];
+  }),id).catch(()=>[]);
+  if (matches.length>1) return 'ambiguous';
+  return matches.length===1?matches[0]:null;
 }
 
 module.exports={locateBossCandidate,locateBossCandidateByFingerprint,

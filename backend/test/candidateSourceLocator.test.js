@@ -96,6 +96,20 @@ test('BOSS locator refuses ambiguous posted jobs without clicking',async()=>{
   assert.equal(clicked,false);
 });
 
+test('BOSS absent posted job explains the actual selected and available jobs',async()=>{
+  const session={
+    assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/recommend',
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>expression.includes('const title=')
+      ? {state:'ready',selected:'财务总监',jobId:'other',options:[],
+        availableTitles:['财务总监','项目经理'],availableCount:2}
+      : {state:'wrong_job'},
+    clickUnique:async()=>{},
+  };
+  await assert.rejects(locateBossCandidate(session,boss,{wait:async()=>{}}),
+    /当前选中：财务总监；可见岗位：财务总监、项目经理/);
+});
+
 test('BOSS locator reads lazily mounted job options after opening dropdown',async()=>{
   let opened=false,selected=false;
   const calls=[];

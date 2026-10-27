@@ -88,12 +88,15 @@ function bossJobProbe(title) {
     const normalize=value=>String(value||'').normalize('NFKC')
       .split(/\s*[_＿]\s*/)[0].replace(/\s+/g,' ').trim();
     const selected=normalize(doc.querySelector('.ui-dropmenu-label')?.textContent);
-    const options=[...doc.querySelectorAll(
+    const availableOptions=[...doc.querySelectorAll(
       '.job-selecter-options li.job-item, .ui-dropmenu-list li.job-item')]
       .map(el=>({value:el.getAttribute('value')||'',
-        label:normalize(el.querySelector('.label')?.textContent||el.textContent)}))
-      .filter(option=>option.label===title && /^[A-Za-z0-9_-]{1,128}$/.test(option.value));
-    return {state:'ready',selected,jobId:live.searchParams.get('jobid')||'',options};
+        label:normalize(el.querySelector('.label')?.textContent||el.textContent)}));
+    const options=availableOptions.filter(option=>option.label===title &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(option.value));
+    return {state:'ready',selected,jobId:live.searchParams.get('jobid')||'',options,
+      availableTitles:[...new Set(availableOptions.map(option=>option.label).filter(Boolean))].slice(0,8),
+      availableCount:availableOptions.length};
   })()`;
 }
 
@@ -123,7 +126,9 @@ async function selectBossPostedJob(session, title, wait) {
   if (matches.length!==1)
     throw locatorError(409,matches.length>1?
       `BOSS 存在多个同名“${title}”在招岗位，无法确定原候选人所属岗位；请在官方页面人工选择后重试`:
-      `BOSS 当前在招岗位列表没有“${title}”；请在官方页面确认该岗位仍在招后重试`);
+      `BOSS 当前推荐页未列出“${title}”（当前选中：${initial?.selected || '未显示'}；`+
+      `可见岗位：${initial?.availableTitles?.join('、') || '未加载'}）。`+
+      '请在官方“搜索牛人”页打开该岗位结果，或在推荐页切换到该在招岗位后重试');
   const chosen=matches[0];
   if (initial.selected===title && initial.jobId===chosen.value) return;
   if (!opened)

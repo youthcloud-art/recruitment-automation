@@ -132,6 +132,42 @@ test('旧 BOSS 简历只按唯一候选卡证据补录官方编号',async()=>{
     {...legacy,sourceCardFingerprint:''}),/缺少可用于安全补录/);
 });
 
+test('旧 BOSS 简历补录先切换到唯一匹配的原招聘岗位',async()=>{
+  const card='王先生 5年经验 磁轴销售工程师';
+  const legacy={source:'boss',captureJobTitle:'磁轴销售工程师',
+    sourceCardFingerprint:cardFingerprint('posted-123',card)};
+  let selected=false;
+  const calls=[];
+  const session={
+    assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/recommend',
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>{
+      if (expression.includes('cards:cards.map')) return selected
+        ? {state:'ready',search:false,jobId:'posted-123',
+          cards:[{text:card,id:'247229183'}]}
+        : {state:'wrong_job'};
+      if (expression.includes('const title=')) return {state:'ready',
+        selected:selected?'磁轴销售工程师':'财务总监',
+        jobId:selected?'posted-123':'other',
+        options:[{label:'磁轴销售工程师',value:'posted-123'}]};
+      if (expression.includes('const id=')) return {state:selected?'ready':'wrong_job',
+        search:false,frameSelector:'iframe[src*="/web/frame/recommend/"]',
+        cardSelector:'li.card-item',attribute:'data-expect'};
+      return {state:'ready'};
+    },
+    scrollUnique:async spec=>calls.push(['scroll',spec.selector]),
+    clickUnique:async spec=>{
+      calls.push(['click',spec.selector]);
+      if (spec.selector.includes('li.job-item')) selected=true;
+    }
+  };
+  const result=await locateBossCandidateByFingerprint(session,legacy,
+    {wait:async()=>{}});
+  assert.equal(result.recordId,'247229183');
+  assert.equal(result.recovered,true);
+  assert.equal(calls.filter(([action])=>action==='click').length,3);
+});
+
 test('智联官方简历 URL 须导航到同一个简历号并显示详情',async()=>{
   const url='https://rd6.zhaopin.com/app/search?resumeNumber=ZL_2026-abc123';
   const candidate={source:'zlzp',sourceUrl:url,sourceCandidateId:'ZL_2026-abc123'};

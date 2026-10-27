@@ -181,7 +181,12 @@ async function locateBossCandidateByFingerprint(session, candidate, options = {}
   const search=new URL(current).pathname==='/web/chat/search';
   await session.assertUsableRecruiterWindow({frameSelector:search?
     'iframe[src*="/web/frame/search/"]':'iframe[src*="/web/frame/recommend/"]'});
-  const snapshot=await session.evaluate(bossFingerprintProbe(title),{timeoutMs:12000});
+  let snapshot=await session.evaluate(bossFingerprintProbe(title),{timeoutMs:12000});
+  if (snapshot?.state==='wrong_job' && !search) {
+    await selectBossPostedJob(session,title,options.wait ||
+      (ms=>new Promise(resolve=>setTimeout(resolve,ms))));
+    snapshot=await session.evaluate(bossFingerprintProbe(title),{timeoutMs:12000});
+  }
   if (snapshot?.state!=='ready')
     throw locatorError(409,snapshot?.state==='wrong_job'?
       `请先在 BOSS 服务器浏览器切换到“${title}”结果页后重试`:

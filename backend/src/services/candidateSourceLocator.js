@@ -269,18 +269,24 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
   await session.assertUsableRecruiterWindow({frameSelector});
   let expression=bossCardProbe(locator.id,title);
   let before=await session.evaluate(expression,{timeoutMs:12000});
-  if (before?.state==='wrong_job' && !search) {
-    try { await selectBossPostedJob(session,title,wait); }
-    catch (error) {
-      if (error.code!=='BOSS_JOB_NOT_LISTED') throw error;
+  if (before?.state==='wrong_job') {
+    if (search) {
       await prepareSearch(session,title,wait);
-      current=await session.assertRecruiterReady();
-      if (new URL(current).pathname!=='/web/chat/search')
-        throw locatorError(409,'BOSS 官方搜索完成后页面已变化，未打开候选人');
-      search=true;
+    } else {
+      try { await selectBossPostedJob(session,title,wait); }
+      catch (error) {
+        if (error.code!=='BOSS_JOB_NOT_LISTED') throw error;
+        await prepareSearch(session,title,wait);
+      }
+    }
+    current=await session.assertRecruiterReady();
+    search=new URL(current).pathname==='/web/chat/search';
+    if (search) {
       frameSelector='iframe[src*="/web/frame/search/"]';
       await session.assertUsableRecruiterWindow({frameSelector});
       expression=bossCardProbe(locator.id,title);
+    } else if (new URL(current).pathname!=='/web/chat/recommend') {
+      throw locatorError(409,'BOSS 官方岗位页面已变化，未打开候选人');
     }
     before=await session.evaluate(expression,{timeoutMs:12000});
   }

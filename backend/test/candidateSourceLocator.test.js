@@ -134,6 +134,29 @@ test('BOSS absent posted job falls back to official search and verifies the exac
   assert.equal(clicked,1);
 });
 
+test('BOSS locator submits the saved job when already on another official search',async()=>{
+  let prepared=0,clicked=0;
+  const session={
+    assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/search',
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>expression.includes('const id=')
+      ? prepared
+        ? {state:'ready',search:true,frameSelector:'iframe[src*="/web/frame/search/"]',
+          cardSelector:'li.geek-info-card',attribute:'data-expect'}
+        : {state:'wrong_job'}
+      : {state:'ready'},
+    scrollUnique:async()=>{},
+    clickUnique:async()=>{clicked++;}
+  };
+  const result=await locateBossCandidate(session,boss,{wait:async()=>{},
+    prepareSearch:async(_session,title)=>{
+      assert.equal(title,'磁轴销售工程师'); prepared++;
+    }});
+  assert.equal(result.recordId,'247229183');
+  assert.equal(prepared,1);
+  assert.equal(clicked,1);
+});
+
 test('BOSS fallback uses the existing official page to submit a checked job search',async()=>{
   let url='https://www.zhipin.com/web/chat/recommend';
   let keyword='',submitted=false,clickedCard=false;

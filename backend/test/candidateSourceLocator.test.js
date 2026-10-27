@@ -134,6 +134,46 @@ test('BOSS absent posted job falls back to official search and verifies the exac
   assert.equal(clicked,1);
 });
 
+test('BOSS fallback uses the existing official page to submit a checked job search',async()=>{
+  let url='https://www.zhipin.com/web/chat/recommend';
+  let keyword='',submitted=false,clickedCard=false;
+  const session={
+    assertRecruiterReady:async()=>url,
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>{
+      if(expression.includes('const id=')) return url.endsWith('/search') && submitted
+        ? {state:'ready',search:true,frameSelector:'iframe[src*="/web/frame/search/"]',
+          cardSelector:'li.geek-info-card',attribute:'data-expect'}
+        : {state:'wrong_job'};
+      if(expression.includes('const title=')) return {state:'ready',selected:'财务总监',
+        jobId:'other',options:[],availableTitles:['财务总监']};
+      if(expression.includes('bossRaw:page')) return {url,frameReady:true,
+        iframeLiveUrl:'https://www.zhipin.com/web/frame/search/',
+        iframeSrc:'https://www.zhipin.com/web/frame/search/'};
+      if(expression.includes('bossRaw:searchState')) return {state:'ready',
+        selectedFiltersReady:true,nonDefaultSelected:0,checkedCount:0,
+        activeCustomSliderCount:0,value:keyword,frameOrigin:1,
+        matchingSearchRequests:submitted?1:0,cardCount:submitted?1:0,
+        safeCardCount:submitted?1:0};
+      if(expression.includes('bossRaw:searchModal')) return {active:false};
+      if(expression.includes('const frame=document.querySelector(')) return true;
+      return {state:'ready'};
+    },
+    clickUnique:async spec=>{
+      if(spec.selector==='a[ka="menu-geek-search"]') url='https://www.zhipin.com/web/chat/search';
+      if(spec.selector==='.search-input-wrap .icon-search') submitted=true;
+      if(spec.selector.includes('li.geek-info-card')) clickedCard=true;
+    },
+    send:async(method,payload)=>{if(method==='Input.insertText') keyword=payload.text;},
+    scrollUnique:async()=>{}
+  };
+  const result=await locateBossCandidate(session,boss,{wait:async()=>{}});
+  assert.equal(result.recordId,'247229183');
+  assert.equal(keyword,'磁轴销售工程师');
+  assert.equal(submitted,true);
+  assert.equal(clickedCard,true);
+});
+
 test('BOSS absent posted job explains the actual selected and available jobs if official search fails',async()=>{
   const session={
     assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/recommend',

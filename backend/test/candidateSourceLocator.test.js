@@ -168,25 +168,25 @@ test('旧 BOSS 简历补录先切换到唯一匹配的原招聘岗位',async()=>
   assert.equal(calls.filter(([action])=>action==='click').length,3);
 });
 
-test('智联官方简历 URL 须导航到同一个简历号并显示详情',async()=>{
+test('智联当前官方简历号与可见详情一致时直接核实',async()=>{
   const url='https://rd6.zhaopin.com/app/search?resumeNumber=ZL_2026-abc123';
   const candidate={source:'zlzp',sourceUrl:url,sourceCandidateId:'ZL_2026-abc123'};
-  let current='';
-  const page={goto:async next=>{current=next;},url:()=>current,
-    locator:()=>({first:()=>({waitFor:async()=>{}})})};
-  assert.equal((await locateOfficialCandidate(page,candidate)).verified,'official_url');
-  current='';
-  page.goto=async()=>{current='https://rd6.zhaopin.com/app/search?resumeNumber=other';};
-  await assert.rejects(locateOfficialCandidate(page,candidate),/不是目标简历/);
+  let current=url;
+  const page={goto:async()=>{throw new Error('must not navigate');},url:()=>current,
+    locator:selector=>selector.startsWith('div.search-resume-item')
+      ? {evaluateAll:async()=>[]} : {first:()=>({waitFor:async()=>{}})}};
+  assert.equal((await locateOfficialCandidate(page,candidate)).verified,'official_detail');
+  current='https://rd6.zhaopin.com/app/search?resumeNumber=other';
+  await assert.rejects(locateOfficialCandidate(page,candidate),/不在当前已加载/);
 });
 
-test('智联仅打开带简历号的搜索地址不能冒充已核实详情',async()=>{
+test('智联仅打开带简历号的搜索地址不能冒充已核实详情或重置搜索页',async()=>{
   const url='https://rd6.zhaopin.com/app/search?resumeNumber=ZL_2026-abc123';
   const candidate={source:'zlzp',sourceUrl:url,sourceCandidateId:'ZL_2026-abc123'};
-  const page={goto:async()=>{},url:()=>url,
+  const page={goto:async()=>{throw new Error('must not navigate');},url:()=>url,
     locator:selector=>selector.startsWith('div.search-resume-item')
       ? {evaluateAll:async()=>[]} : {first:()=>({waitFor:async()=>{throw new Error('timeout');}})}};
-  await assert.rejects(locateOfficialCandidate(page,candidate),/未恢复目标简历详情/);
+  await assert.rejects(locateOfficialCandidate(page,candidate),/不在当前已加载/);
 });
 
 test('智联只点击官方列表中编号完全一致的唯一候选卡',async()=>{

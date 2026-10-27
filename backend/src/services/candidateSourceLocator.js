@@ -295,6 +295,7 @@ async function locateOfficialCandidate(page, candidate) {
         throw locatorError(409,'智联候选卡已打开，但未能核实对应编号的详情；请在官方页面人工核对');
       return {platform:'zlzp',recordId:locator.id,verified:'exact_card'};
     }
+    throw locatorError(409,'智联原候选卡不在当前已加载的搜索结果中；请在官方页面打开原岗位结果后重试。完整简历号不能直接作为普通关键词搜索');
   }
   await page.goto(locator.url,{waitUntil:'domcontentloaded',timeout:30000});
   if (idFromOfficialUrl(candidate.source,page.url())!==locator.id)

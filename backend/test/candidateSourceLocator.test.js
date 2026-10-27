@@ -92,8 +92,36 @@ test('BOSS locator refuses ambiguous posted jobs without clicking',async()=>{
       : {state:'wrong_job'},
     scrollUnique:async()=>{clicked=true;},clickUnique:async()=>{clicked=true;}
   };
-  await assert.rejects(locateBossCandidate(session,boss),/没有唯一可核实/);
+  await assert.rejects(locateBossCandidate(session,boss),/多个同名/);
   assert.equal(clicked,false);
+});
+
+test('BOSS locator reads lazily mounted job options after opening dropdown',async()=>{
+  let opened=false,selected=false;
+  const calls=[];
+  const session={
+    assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/recommend',
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>{
+      if (expression.includes('const title=')) return {state:'ready',
+        selected:selected?'磁轴销售工程师':'财务总监',
+        jobId:selected?'posted-123':'other',
+        options:opened?[{label:'磁轴销售工程师',value:'posted-123'}]:[]};
+      if (expression.includes('const id=')) return {state:selected?'ready':'wrong_job',
+        search:false,frameSelector:'iframe[src*="/web/frame/recommend/"]',
+        cardSelector:'li.card-item',attribute:'data-expect'};
+      return {state:'ready'};
+    },
+    scrollUnique:async spec=>calls.push(['scroll',spec.selector]),
+    clickUnique:async spec=>{
+      calls.push(['click',spec.selector]);
+      if (spec.selector==='.ui-dropmenu-label') opened=true;
+      if (spec.selector.includes('li.job-item')) selected=true;
+    }
+  };
+  assert.equal((await locateBossCandidate(session,boss,{wait:async()=>{}})).verified,'exact_card');
+  assert.equal(calls.filter(([action,selector])=>action==='click' &&
+    selector==='.ui-dropmenu-label').length,1);
 });
 
 test('BOSS locator refuses an absent card without clicking',async()=>{

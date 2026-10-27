@@ -99,13 +99,35 @@ function bossJobProbe(title) {
 
 async function selectBossPostedJob(session, title, wait) {
   const expression=bossJobProbe(title);
-  const initial=await session.evaluate(expression,{timeoutMs:12000});
-  if (initial?.state!=='ready' || initial.options?.length!==1)
-    throw locatorError(409,`BOSS 没有唯一可核实的“${title}”在招岗位；请在官方页面切换到该岗位后重试`);
-  const chosen=initial.options[0];
-  if (initial.selected===title && initial.jobId===chosen.value) return;
   const frameSelector='iframe[src*="/web/frame/recommend/"]';
-  await session.clickUnique({selector:'.ui-dropmenu-label',frameSelector});
+  let initial=await session.evaluate(expression,{timeoutMs:12000});
+  if (initial?.state==='dialog_open')
+    throw locatorError(409,'请先关闭 BOSS 当前简历弹窗后重试');
+  if (initial?.state!=='ready')
+    throw locatorError(409,'BOSS 推荐岗位列表尚未准备好；请在官方页面确认后重试');
+  // The official dropdown may mount its options only after opening. Read it
+  // again after one deliberate click, without guessing or switching jobs.
+  let opened=false;
+  if (!initial.options?.length) {
+    await session.clickUnique({selector:'.ui-dropmenu-label',frameSelector});
+    opened=true;
+    for (let attempt=0;attempt<8;attempt++) {
+      initial=await session.evaluate(expression,{timeoutMs:12000}).catch(()=>null);
+      if (initial?.state==='dialog_open')
+        throw locatorError(409,'BOSS 打开了简历弹窗，未切换岗位；请关闭弹窗后重试');
+      if (initial?.state==='ready' && initial.options?.length) break;
+      await wait(250);
+    }
+  }
+  const matches=initial?.options?.filter(option=>option.label===title)||[];
+  if (matches.length!==1)
+    throw locatorError(409,matches.length>1?
+      `BOSS 存在多个同名“${title}”在招岗位，无法确定原候选人所属岗位；请在官方页面人工选择后重试`:
+      `BOSS 当前在招岗位列表没有“${title}”；请在官方页面确认该岗位仍在招后重试`);
+  const chosen=matches[0];
+  if (initial.selected===title && initial.jobId===chosen.value) return;
+  if (!opened)
+    await session.clickUnique({selector:'.ui-dropmenu-label',frameSelector});
   const selector=`.job-selecter-options li.job-item[value="${chosen.value}"]`;
   await session.scrollUnique({selector,frameSelector,identityAttribute:'value',
     identityValue:chosen.value});

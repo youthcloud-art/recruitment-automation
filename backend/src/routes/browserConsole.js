@@ -172,6 +172,7 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
       fields(req.body, ['platform', 'clientId']);
       const { platform, clientId } = req.body;
       identity(platform, clientId);
+      if (pending) fail(409, '正在核对候选人，请稍后再获取浏览器操作权');
       if (currentLock() && lock.clientId !== clientId) fail(409, '其他同事正在操作服务器浏览器，请稍后重试');
       if (!available(getTargets()[platform])) fail(409, '请先在对应招聘平台页面启动浏览器');
       lock = { platform, clientId, expiresAt: now() + LOCK_MS };

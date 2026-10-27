@@ -205,9 +205,24 @@ async function locateOfficialCandidate(page, candidate) {
       throw locatorError(409,'智联当前结果中有重复的简历号，未执行定位；请在平台人工核对');
     if (Number.isInteger(found)) {
       const card=page.locator('div.search-resume-item.resume-item-exp').nth(found);
-      const link=card.locator('a[href*="resumeNumber="], a[href*="resume"], a').first();
-      if (!await link.count())
-        throw locatorError(409,'智联已找到目标候选卡，但卡片没有可打开的官方简历链接');
+      const links=card.locator('a[href]');
+      const count=await links.count();
+      if (!count || count>20)
+        throw locatorError(409,'智联已找到目标候选卡，但没有唯一可核对的官方简历链接');
+      let selected=-1;
+      for (let index=0;index<count;index++) {
+        const href=await links.nth(index).getAttribute('href');
+        try {
+          if (idFromOfficialUrl('zlzp',new URL(href,page.url()).href)===locator.id) {
+            if (selected!==-1)
+              throw locatorError(409,'智联候选卡出现多个相同编号链接，未执行定位');
+            selected=index;
+          }
+        } catch (error) { if (error.publicStatus) throw error; }
+      }
+      if (selected===-1 && count!==1)
+        throw locatorError(409,'智联候选卡有多个操作链接且无法确定简历入口，未执行定位');
+      const link=links.nth(selected===-1?0:selected);
       await link.click({timeout:10000});
       if (idFromOfficialUrl('zlzp',page.url())!==locator.id ||
           !await waitForZhilianDetail(page,12000))

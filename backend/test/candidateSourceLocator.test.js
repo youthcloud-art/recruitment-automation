@@ -114,8 +114,8 @@ test('智联只点击官方列表中编号完全一致的唯一候选卡',async(
     locator:selector=>selector.startsWith('div.search-resume-item')
       ? {evaluateAll:async()=>[2],nth:index=>{
         assert.equal(index,2);
-        return {locator:()=>({first:()=>({count:async()=>1,
-          click:async()=>{opened=true;}})})};
+        return {locator:()=>({count:async()=>1,nth:()=>({
+          getAttribute:async()=>url,click:async()=>{opened=true;}})})};
       }} : {first:()=>({waitFor:async()=>{if(!opened) throw new Error('not open');}})}
   };
   const result=await locateOfficialCandidate(page,candidate);

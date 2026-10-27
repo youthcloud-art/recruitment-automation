@@ -9,6 +9,7 @@ $config = Read-CompanyConfig $InstallRoot
 $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
 $release = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('releases\' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $Commit.Substring(0,12) + '-' + [guid]::NewGuid().ToString('N').Substring(0,6)))
 New-Item -ItemType Directory -Path $release | Out-Null
+try {
 
 if (Test-Path -LiteralPath (Join-Path $SourceRoot '.git')) {
     $actualCommit = (& $config.gitPath -C $SourceRoot rev-parse HEAD).Trim()
@@ -86,3 +87,16 @@ Write-JsonFile (Join-Path $release 'release.json') @{ commit=$Commit; preparedAt
 # A dedicated final output lets callers avoid capturing npm diagnostic output.
 Write-JsonFile (Join-Path $InstallRoot 'delivery\prepared-release.json') @{ commit=$Commit; root=$release }
 Write-Host "PREPARED_RELEASE: $release"
+} catch {
+    # A failed npm install or build must not accumulate another large release.
+    # Shared business state is attached only after a successful build; refuse
+    # cleanup if any of its junctions may already have been created.
+    if (-not (Test-Path -LiteralPath (Join-Path $release 'release.json')) -and
+        -not (Test-Path -LiteralPath (Join-Path $release '.local')) -and
+        -not (Test-Path -LiteralPath (Join-Path $release 'backend\storage')) -and
+        -not (Test-Path -LiteralPath (Join-Path $release 'backend\uploads'))) {
+        try { Remove-Item -LiteralPath $release -Recurse -Force -ErrorAction Stop }
+        catch { Write-Warning ('Failed to clear incomplete release ' + $release + ': ' + $_.Exception.Message) }
+    }
+    throw
+}

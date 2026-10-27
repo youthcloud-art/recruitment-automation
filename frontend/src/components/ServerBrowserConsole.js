@@ -57,6 +57,17 @@ export default function ServerBrowserConsole() {
     return () => { mounted.current = false; };
   }, []);
 
+  useEffect(() => {
+    const openLocatedCandidate = event => {
+      const requested = event.detail?.platform;
+      if (!PLATFORMS.some(item => item.value === requested)) return;
+      setPlatform(requested);
+      setOpen(true);
+    };
+    window.addEventListener('company-browser-open', openLocatedCandidate);
+    return () => window.removeEventListener('company-browser-open', openLocatedCandidate);
+  }, []);
+
   const release = () => {
     if (!sessionStarted.current) return Promise.resolve();
     pendingRelease.current = apiPost(`${ROOT}/release`, { clientId: clientId.current }).catch(() => {});

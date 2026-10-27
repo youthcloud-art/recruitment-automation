@@ -2,6 +2,8 @@
 
 const express = require('express');
 const { localApiAccess } = require('../middleware/localApiAccess');
+const resumeModel = require('../models/resumeModel');
+const { locateBossCandidate, locateOfficialCandidate } = require('../services/candidateSourceLocator');
 
 const PLATFORMS = {
   boss: { label: 'BOSS 直聘', profileName: 'boss', port: 19222, domain: 'zhipin.com' },
@@ -99,6 +101,38 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
       if (attached) await attached.browser.close().catch(() => {});
     }
   }
+
+  // Locate a persisted candidate in the server-owned platform browser. This
+  // never accepts a URL or platform ID from the client: both are read from the
+  // local resume record, and collection/manual browser control stay exclusive.
+  router.post('/locate-candidate', async (req, res) => {
+    try {
+      fields(req.body, ['candidateId']);
+      const id = req.body?.candidateId;
+      if (typeof id !== 'string' || !/^resume_[A-Za-z0-9_\-]{8,100}$/.test(id))
+        fail(400, '本机候选人编号无效');
+      const candidate = resumeModel.getResumeById(id);
+      if (!candidate || !['boss', 'zlzp', 'qcwy'].includes(candidate.source))
+        fail(404, '未找到对应平台的候选人记录');
+      const platform = {boss:'boss',zlzp:'zhilian',qcwy:'wuyou'}[candidate.source];
+      if (pending || currentLock() || running(getTargets()[platform]))
+        fail(409, '平台浏览器正在采集或由同事操作，请稍后再定位');
+      pending = true;
+      try {
+        const target = getTargets()[platform];
+        if (!available(target)) fail(409, '请先在采集页面启动对应平台的服务器浏览器');
+        let result;
+        if (platform === 'boss') {
+          const session = await require('../services/bossRawCdp').connectOwnedBossPage();
+          try { result = await locateBossCandidate(session, candidate); }
+          finally { session.close(); }
+        } else {
+          result = await withPage(platform, page => locateOfficialCandidate(page, candidate));
+        }
+        respond(res, result);
+      } finally { pending = false; }
+    } catch (error) { errorResponse(res, error); }
+  });
 
   router.get('/status', (_req, res) => {
     try {

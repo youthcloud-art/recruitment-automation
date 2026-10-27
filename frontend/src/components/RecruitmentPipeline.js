@@ -58,6 +58,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const [selected, setSelected] = useState(null);
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState('');
+  const [locating, setLocating] = useState(false);
   const [emailTo, setEmailTo] = useState('');
   const [minScore, setMinScore] = useState(70);
   const [topN, setTopN] = useState(10);
@@ -443,6 +444,19 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
     });
   };
 
+  const locateOnServer = async candidate => {
+    setLocating(true);
+    try {
+      await apiPost('/browser-console/locate-candidate', { candidateId: candidate.id });
+      message.success('已在公司服务器专用浏览器打开目标候选人');
+      window.dispatchEvent(new CustomEvent('company-browser-open', {
+        detail: { platform: candidate.source === 'zlzp' ? 'zhilian'
+          : candidate.source === 'qcwy' ? 'wuyou' : 'boss' }
+      }));
+    } catch (error) { message.error(error.message || '定位失败，请在服务器浏览器核对'); }
+    finally { setLocating(false); }
+  };
+
   const confirmDeleteHistorical = (ids, title) => {
     Modal.confirm({
       title: `永久删除 ${ids.length} 份历史岗位简历？`,
@@ -470,7 +484,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
     } },
     { title: '平台记录号', dataIndex: 'platformRecordId', width: 190,
       render: (value, row) => value
-        ? <Text copyable={{ text: value }} ellipsis={{ tooltip: value }} style={{ maxWidth: 150 }}>
+        ? <Text copyable={{ text: value }} ellipsis={{ tooltip: `${value} · 平台编号未必支持关键词搜索，请从详情定位` }} style={{ maxWidth: 150 }}>
             {value}</Text>
         : <Tag color="gold" title="本机简历号或文本指纹不能代替招聘平台的唯一编号">待平台核实</Tag> },
     { title: '招聘岗位', dataIndex: 'hiringJobTitle', width: 175,
@@ -738,8 +752,15 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             {selected.platformRecordId
               ? <Text copyable={{ text: selected.platformRecordId }}>{selected.platformRecordId}</Text>
               : <Text type="warning">平台未提供可验证编号；本机简历号不能用于平台查找</Text>}
+            {selected.platformRecordId && <div><Text type="secondary">平台记录号用于核对身份，招聘平台的关键词搜索框未必支持按此编号查询。</Text></div>}
             {selected.platformLocatorStatus === 'platform_card' &&
-              <div><Text type="secondary">编号来自平台候选卡，尚无经验证的个人详情直达链接；请在官方招聘端核对。</Text></div>}</div>
+              <div><Text type="secondary">编号来自平台候选卡；可在服务器当前岗位结果中按编号定位。</Text></div>}
+            {selected.platformRecordId && ((selected.platformLocatorStatus === 'platform_card' &&
+              selected.source === 'boss') || (selected.platformLocatorStatus === 'official_url' &&
+              ['zlzp', 'qcwy'].includes(selected.source))) &&
+              <Button style={{ marginTop: 8 }} loading={locating} onClick={() => locateOnServer(selected)}>
+                在公司服务器浏览器定位原候选人
+              </Button>}</div>
           {selected.jobGroup === 'historical' && <Alert type="info" showIcon
             message="历史/已删除岗位简历已单独保留"
             description="可查看、记录跟进或单独删除；重新评估前请先在岗位管理中恢复并应用原岗位。" />}
@@ -763,7 +784,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             <Text strong>待核实：</Text><p>{selected.matchEvaluation.gaps?.join('；') || '暂无'}</p>
           </Card>}
           {selected.platformRecordUrl
-            ? <a href={selected.platformRecordUrl} target="_blank" rel="noreferrer">按平台记录号打开官方来源页面</a>
+            ? <a href={selected.platformRecordUrl} target="_blank" rel="noreferrer">在当前电脑打开官方来源页面</a>
             : <Text type="secondary">当前来源地址无法精准定位该候选人，已隐藏通用链接。</Text>}
         </Space>}
       </Modal>

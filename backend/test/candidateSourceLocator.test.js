@@ -3,7 +3,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');
-const {bossCardProbe,bossDialogProbe,bossFingerprintProbe,cardFingerprint,searchScope,
+const {bossCardProbe,bossDialogProbe,bossJobProbe,bossFingerprintProbe,cardFingerprint,searchScope,
   locateBossCandidate,locateBossCandidateByFingerprint,locateOfficialCandidate}=
   require('../src/services/candidateSourceLocator');
 
@@ -45,6 +45,55 @@ test('BOSS locator clicks only a unique card on the matching job and verifies a 
   assert.deepEqual(calls.map(item=>Array.isArray(item)?item[0]:item),
     ['window','scroll','click']);
   assert.match(calls[2][1],/data-expect="247229183"/);
+});
+
+test('BOSS locator selects only the exact posted job before matching a card',async()=>{
+  new vm.Script(bossJobProbe('磁轴销售工程师'));
+  const calls=[];
+  let selected=false;
+  const session={
+    assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/recommend',
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>{
+      if (expression.includes('const title=')) return {state:'ready',
+        selected:selected?'磁轴销售工程师':'财务总监',jobId:selected?'posted-123':'other',
+        options:[{label:'磁轴销售工程师',value:'posted-123'}]};
+      if (expression.includes('const id=')) return {state:selected?'ready':'wrong_job',
+        search:false,frameSelector:'iframe[src*="/web/frame/recommend/"]',
+        cardSelector:'li.card-item',attribute:'data-expect'};
+      return {state:'ready'};
+    },
+    scrollUnique:async spec=>calls.push(['scroll',spec.selector]),
+    clickUnique:async spec=>{
+      calls.push(['click',spec.selector]);
+      if (spec.selector.includes('li.job-item')) selected=true;
+    }
+  };
+  const result=await locateBossCandidate(session,boss,{wait:async()=>{}});
+  assert.equal(result.verified,'exact_card');
+  assert.deepEqual(calls.map(([action,selector])=>`${action}:${selector}`),[
+    'click:.ui-dropmenu-label',
+    'scroll:.job-selecter-options li.job-item[value="posted-123"]',
+    'click:.job-selecter-options li.job-item[value="posted-123"]',
+    'scroll:li.card-item:has(> a[ka="search_click_open_resume"][data-expect="247229183"])',
+    'click:li.card-item:has(> a[ka="search_click_open_resume"][data-expect="247229183"])'
+  ]);
+});
+
+test('BOSS locator refuses ambiguous posted jobs without clicking',async()=>{
+  let clicked=false;
+  const session={
+    assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/recommend',
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>expression.includes('const title=')
+      ? {state:'ready',selected:'财务总监',jobId:'other',options:[
+        {label:'磁轴销售工程师',value:'posted-1'},
+        {label:'磁轴销售工程师',value:'posted-2'}]}
+      : {state:'wrong_job'},
+    scrollUnique:async()=>{clicked=true;},clickUnique:async()=>{clicked=true;}
+  };
+  await assert.rejects(locateBossCandidate(session,boss),/没有唯一可核实/);
+  assert.equal(clicked,false);
 });
 
 test('BOSS locator refuses an absent card without clicking',async()=>{

@@ -66,6 +66,60 @@ function bossDialogProbe(expectedId, search) {
   })()`;
 }
 
+function bossJobProbe(title) {
+  return String.raw`(() => {
+    const title=${JSON.stringify(title)};
+    const outer=new URL(location.href);
+    if (outer.origin!=='https://www.zhipin.com' ||
+        !/^\/web\/(?:chat|boss)\/recommend\/?$/.test(outer.pathname))
+      return {state:'wrong_page'};
+    const frame=document.querySelector('iframe[src*="/web/frame/recommend/"]');
+    const doc=frame?.contentDocument;
+    if (!doc) return {state:'frame_unavailable'};
+    let live;
+    try {live=new URL(frame.contentWindow.location.href);}
+    catch (_) {return {state:'frame_unavailable'};}
+    if (live.origin!=='https://www.zhipin.com' ||
+        live.pathname.replace(/\/$/,'')!=='/web/frame/recommend')
+      return {state:'frame_changed'};
+    const normalize=value=>String(value||'').normalize('NFKC')
+      .split(/\s*[_＿]\s*/)[0].replace(/\s+/g,' ').trim();
+    const selected=normalize(doc.querySelector('.ui-dropmenu-label')?.textContent);
+    const options=[...doc.querySelectorAll(
+      '.job-selecter-options li.job-item, .ui-dropmenu-list li.job-item')]
+      .map(el=>({value:el.getAttribute('value')||'',
+        label:normalize(el.querySelector('.label')?.textContent||el.textContent)}))
+      .filter(option=>option.label===title && /^[A-Za-z0-9_-]{1,128}$/.test(option.value));
+    return {state:'ready',selected,jobId:live.searchParams.get('jobid')||'',options};
+  })()`;
+}
+
+async function selectBossPostedJob(session, title, wait) {
+  const expression=bossJobProbe(title);
+  const initial=await session.evaluate(expression,{timeoutMs:12000});
+  if (initial?.state!=='ready' || initial.options?.length!==1)
+    throw locatorError(409,`BOSS 没有唯一可核实的“${title}”在招岗位；请在官方页面切换到该岗位后重试`);
+  const chosen=initial.options[0];
+  if (initial.selected===title && initial.jobId===chosen.value) return;
+  const frameSelector='iframe[src*="/web/frame/recommend/"]';
+  await session.clickUnique({selector:'.ui-dropmenu-label',frameSelector});
+  const selector=`.job-selecter-options li.job-item[value="${chosen.value}"]`;
+  await session.scrollUnique({selector,frameSelector,identityAttribute:'value',
+    identityValue:chosen.value});
+  await session.clickUnique({selector,frameSelector,identityAttribute:'value',
+    identityValue:chosen.value});
+  let stable=0;
+  for (let attempt=0;attempt<16;attempt++) {
+    const state=await session.evaluate(expression,{timeoutMs:12000}).catch(()=>null);
+    if (state?.state==='ready' && state.selected===title &&
+        state.jobId===chosen.value && state.options?.length===1) {
+      if (++stable>=2) return;
+    } else stable=0;
+    await wait(400);
+  }
+  throw locatorError(409,`BOSS 切换后未能核实“${title}”岗位，未定位候选人`);
+}
+
 function bossFingerprintProbe(title) {
   return String.raw`(() => {
     const title=${JSON.stringify(title)};
@@ -162,7 +216,11 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
     'iframe[src*="/web/frame/recommend/"]';
   await session.assertUsableRecruiterWindow({frameSelector});
   const expression=bossCardProbe(locator.id,title);
-  const before=await session.evaluate(expression,{timeoutMs:12000});
+  let before=await session.evaluate(expression,{timeoutMs:12000});
+  if (before?.state==='wrong_job' && !search) {
+    await selectBossPostedJob(session,title,wait);
+    before=await session.evaluate(expression,{timeoutMs:12000});
+  }
   if (before?.state!=='ready') {
     const messages={wrong_page:'请先在 BOSS 服务器浏览器打开对应岗位的搜索或推荐结果页',
       wrong_job:`BOSS 当前列表并非“${title}”，请切换到该岗位后重试`,
@@ -271,4 +329,5 @@ async function findZhilianCard(page,id) {
 }
 
 module.exports={locateBossCandidate,locateBossCandidateByFingerprint,
-  locateOfficialCandidate,bossCardProbe,bossDialogProbe,bossFingerprintProbe,cardFingerprint,searchScope};
+  locateOfficialCandidate,bossCardProbe,bossDialogProbe,bossJobProbe,
+  bossFingerprintProbe,cardFingerprint,searchScope};

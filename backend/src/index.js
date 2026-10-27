@@ -1,3 +1,4 @@
+console.log('招聘后端启动中');
 require('dotenv').config({ path: require('./config/environmentFile').environmentFile() });
 // A saved UI configuration takes precedence over the legacy .env values.
 const { ModelConfigService } = require('./services/modelConfigService');
@@ -10,7 +11,9 @@ const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs-extra');
 const multer = require('multer');
+const resumeStoreStarted = Date.now();
 const resumeModel = require('./models/resumeModel');
+console.log(`简历库加载完成 (${Date.now() - resumeStoreStarted} ms)`);
 const { publicCandidate } = require('./utils/candidateDisplay');
 const { resolveBindHost } = require('./config/localBind');
 const HOST = resolveBindHost(process.env.HOST);

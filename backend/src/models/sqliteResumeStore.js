@@ -82,7 +82,13 @@ class SqliteResumeStore {
     this.db = new DatabaseSync(this.sqliteFile);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
     this.createSchema();
-    if (this.db.prepare('PRAGMA integrity_check').get().integrity_check !== 'ok') {
+    // A full integrity_check walks every index on every server restart. With
+    // a growing resume library it can hold the company gateway in a 503
+    // state long enough for a healthy release to be rolled back. SQLite
+    // validates the file when opening it; quick_check still catches damaged
+    // database pages while keeping routine startups bounded. The migration
+    // path below retains its full integrity_check before promoting data.
+    if (this.db.prepare('PRAGMA quick_check(1)').get().quick_check !== 'ok') {
       this.db.close();
       throw new Error('SQLite 简历库完整性检查失败，请从备份恢复');
     }

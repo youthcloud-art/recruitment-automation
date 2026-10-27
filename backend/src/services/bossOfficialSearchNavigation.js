@@ -21,8 +21,9 @@ function isSearchPage(value) {
 }
 
 async function ensureOfficialSearchPage({ connect = connectOwnedBossPage,
+  session: borrowedSession = null,
   wait = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
-  const session = await connect();
+  const session = borrowedSession || await connect();
   try {
     const before = await session.assertRecruiterReady();
     if (isSearchPage(before)) return { navigated: false, url: before };
@@ -74,7 +75,7 @@ async function ensureOfficialSearchPage({ connect = connectOwnedBossPage,
     }
     throw navigationError('BOSS_SEARCH_PAGE_UNAVAILABLE',
       'BOSS 官方搜索页未加载完成；请在浏览器中确认平台状态');
-  } finally { session.close(); }
+  } finally { if (!borrowedSession) session.close(); }
 }
 
 module.exports = { ensureOfficialSearchPage, isSearchPage };

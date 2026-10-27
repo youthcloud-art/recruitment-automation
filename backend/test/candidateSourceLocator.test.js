@@ -29,6 +29,18 @@ test('BOSS DOM probe is valid JavaScript and compares exact platform IDs',()=>{
   assert.equal(vm.runInNewContext(expression,context).state,'ambiguous');
 });
 
+test('BOSS official resume dialog must expose the same complete platform ID',()=>{
+  const iframe={src:'https://www.zhipin.com/web/frame/c-resume/'};
+  const dialog={querySelectorAll:()=>[iframe]};
+  const document={querySelectorAll:()=>[dialog]};
+  const expression=bossDialogProbe('247229183',true);
+  assert.equal(vm.runInNewContext(expression,{document,URL}).state,'identity_unavailable');
+  iframe.src+='?expectId=other';
+  assert.equal(vm.runInNewContext(expression,{document,URL}).state,'identity_conflict');
+  iframe.src='https://www.zhipin.com/web/frame/c-resume/?expectId=247229183';
+  assert.equal(vm.runInNewContext(expression,{document,URL}).state,'ready');
+});
+
 test('BOSS locator clicks only a unique card on the matching job and verifies a dialog',async()=>{
   const calls=[];
   const session={assertRecruiterReady:async()=>
@@ -96,7 +108,33 @@ test('BOSS locator refuses ambiguous posted jobs without clicking',async()=>{
   assert.equal(clicked,false);
 });
 
-test('BOSS absent posted job explains the actual selected and available jobs',async()=>{
+test('BOSS absent posted job falls back to official search and verifies the exact card',async()=>{
+  let search=false,prepared=0,clicked=0;
+  const session={
+    assertRecruiterReady:async()=>search?'https://www.zhipin.com/web/chat/search':
+      'https://www.zhipin.com/web/chat/recommend',
+    assertUsableRecruiterWindow:async()=>{},
+    evaluate:async expression=>{
+      if(expression.includes('const title=')) return {state:'ready',selected:'财务总监',
+        jobId:'other',options:[],availableTitles:['财务总监'],availableCount:1};
+      if(expression.includes('const id=')) return search
+        ? {state:'ready',search:true,frameSelector:'iframe[src*="/web/frame/search/"]',
+          cardSelector:'li.geek-info-card',attribute:'data-expect'}
+        : {state:'wrong_job'};
+      return {state:'ready'};
+    },
+    scrollUnique:async()=>{},
+    clickUnique:async spec=>{if(spec.selector.includes('li.geek-info-card')) clicked++;}
+  };
+  const result=await locateBossCandidate(session,boss,{wait:async()=>{},
+    prepareSearch:async(_session,title)=>{assert.equal(title,'磁轴销售工程师');
+      prepared++; search=true;}});
+  assert.equal(result.recordId,'247229183');
+  assert.equal(prepared,1);
+  assert.equal(clicked,1);
+});
+
+test('BOSS absent posted job explains the actual selected and available jobs if official search fails',async()=>{
   const session={
     assertRecruiterReady:async()=> 'https://www.zhipin.com/web/chat/recommend',
     assertUsableRecruiterWindow:async()=>{},
@@ -106,7 +144,8 @@ test('BOSS absent posted job explains the actual selected and available jobs',as
       : {state:'wrong_job'},
     clickUnique:async()=>{},
   };
-  await assert.rejects(locateBossCandidate(session,boss,{wait:async()=>{}}),
+  await assert.rejects(locateBossCandidate(session,boss,{wait:async()=>{},
+    prepareSearch:async()=>{throw new Error('当前选中：财务总监；可见岗位：财务总监、项目经理');}}),
     /当前选中：财务总监；可见岗位：财务总监、项目经理/);
 });
 

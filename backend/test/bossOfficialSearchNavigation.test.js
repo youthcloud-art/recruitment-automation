@@ -45,6 +45,17 @@ test('BOSS search navigation leaves an existing search page untouched', async ()
   assert.equal(clicks, 0);
 });
 
+test('BOSS search navigation keeps a borrowed CDP session open', async () => {
+  let closed = 0;
+  const session = {
+    assertRecruiterReady: async () => 'https://www.zhipin.com/web/chat/search',
+    close: () => { closed++; }
+  };
+  const result = await ensureOfficialSearchPage({ session });
+  assert.equal(result.navigated, false);
+  assert.equal(closed, 0);
+});
+
 test('BOSS search menu retries only a pre-click layout movement on the same page', async () => {
   let url = 'https://www.zhipin.com/web/chat/recommend';
   let clicks = 0;

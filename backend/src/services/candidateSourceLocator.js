@@ -8,6 +8,18 @@ function locatorError(status, message) {
   return Object.assign(new Error(message), { publicStatus: status });
 }
 
+async function prepareBossSearchPage(session, title, wait) {
+  const { ensureOfficialSearchPage } = require('./bossOfficialSearchNavigation');
+  const { BossRawSearchCollector } = require('./bossRawSearchCollector');
+  await ensureOfficialSearchPage({ session, wait });
+  // Reuse the collector's official search submission and result checks. This
+  // locator only opens a candidate after the exact job search is confirmed.
+  const collector = new BossRawSearchCollector({ store: null, jobService: null,
+    queue: null, ocr: null, quarantine: null, wait });
+  collector.session = session;
+  await collector.selectJob(title);
+}
+
 function bossCardProbe(id, title) {
   return String.raw`(() => {
     const id=${JSON.stringify(id)}, title=${JSON.stringify(title)};
@@ -62,7 +74,8 @@ function bossDialogProbe(expectedId, search) {
         url.pathname.replace(/\/$/,'')!=='/web/frame/c-resume')
       return {state:'detail_unavailable'};
     const pageId=url.searchParams.get('expectId')||url.searchParams.get('geekId')||'';
-    return {state:pageId && pageId!==${JSON.stringify(expectedId)}?'identity_conflict':'ready'};
+    return {state:!pageId?'identity_unavailable':
+      pageId!==${JSON.stringify(expectedId)}?'identity_conflict':'ready'};
   })()`;
 }
 
@@ -123,12 +136,15 @@ async function selectBossPostedJob(session, title, wait) {
     }
   }
   const matches=initial?.options?.filter(option=>option.label===title)||[];
-  if (matches.length!==1)
-    throw locatorError(409,matches.length>1?
+  if (matches.length!==1) {
+    const error=locatorError(409,matches.length>1?
       `BOSS 存在多个同名“${title}”在招岗位，无法确定原候选人所属岗位；请在官方页面人工选择后重试`:
       `BOSS 当前推荐页未列出“${title}”（当前选中：${initial?.selected || '未显示'}；`+
       `可见岗位：${initial?.availableTitles?.join('、') || '未加载'}）。`+
       '请在官方“搜索牛人”页打开该岗位结果，或在推荐页切换到该在招岗位后重试');
+    if (!matches.length) error.code='BOSS_JOB_NOT_LISTED';
+    throw error;
+  }
   const chosen=matches[0];
   if (initial.selected===title && initial.jobId===chosen.value) return;
   if (!opened)
@@ -237,7 +253,8 @@ async function locateBossCandidateByFingerprint(session, candidate, options = {}
   return {...result,recovered:true};
 }
 
-async function locateBossCandidate(session, candidate, { wait = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+async function locateBossCandidate(session, candidate, { wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  prepareSearch = prepareBossSearchPage } = {}) {
   const locator=platformLocator(candidate);
   if (candidate?.source!=='boss' || !locator.id ||
       !['platform_card','official_url'].includes(locator.status))
@@ -245,15 +262,26 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
   const title=hiringJobTitle(candidate);
   if (!title || title==='招聘岗位待核实')
     throw locatorError(422,'这份简历的招聘岗位尚未核实，无法安全定位');
-  const current=await session.assertRecruiterReady();
-  const search=new URL(current).pathname==='/web/chat/search';
-  const frameSelector=search?'iframe[src*="/web/frame/search/"]':
+  let current=await session.assertRecruiterReady();
+  let search=new URL(current).pathname==='/web/chat/search';
+  let frameSelector=search?'iframe[src*="/web/frame/search/"]':
     'iframe[src*="/web/frame/recommend/"]';
   await session.assertUsableRecruiterWindow({frameSelector});
-  const expression=bossCardProbe(locator.id,title);
+  let expression=bossCardProbe(locator.id,title);
   let before=await session.evaluate(expression,{timeoutMs:12000});
   if (before?.state==='wrong_job' && !search) {
-    await selectBossPostedJob(session,title,wait);
+    try { await selectBossPostedJob(session,title,wait); }
+    catch (error) {
+      if (error.code!=='BOSS_JOB_NOT_LISTED') throw error;
+      await prepareSearch(session,title,wait);
+      current=await session.assertRecruiterReady();
+      if (new URL(current).pathname!=='/web/chat/search')
+        throw locatorError(409,'BOSS 官方搜索完成后页面已变化，未打开候选人');
+      search=true;
+      frameSelector='iframe[src*="/web/frame/search/"]';
+      await session.assertUsableRecruiterWindow({frameSelector});
+      expression=bossCardProbe(locator.id,title);
+    }
     before=await session.evaluate(expression,{timeoutMs:12000});
   }
   if (before?.state!=='ready') {

@@ -6,11 +6,18 @@ import App from './App';
 import CompanyAuthGate from './components/CompanyAuthGate';
 import './index.css';
 
+function AppEntry() {
+  const [plainApp, setPlainApp] = React.useState(false);
+  const unsupported = React.useCallback(() => setPlainApp(true), []);
+  return plainApp ? <App /> : <CompanyAuthGate
+    onUnsupported={process.env.REACT_APP_COMPANY_AUTH === 'true' ? null : unsupported} />;
+}
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
     <ConfigProvider locale={zhCN}>
-      {process.env.REACT_APP_COMPANY_AUTH === 'true' ? <CompanyAuthGate /> : <App />}
+      <AppEntry />
     </ConfigProvider>
   </React.StrictMode>
 );

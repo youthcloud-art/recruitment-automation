@@ -12,24 +12,36 @@ async function authRequest(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.message || `请求失败 (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(result.message || `请求失败 (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return result.data || {};
 }
 
 const shell = { minHeight: '100vh', display: 'grid', placeItems: 'center',
   padding: 20, background: 'linear-gradient(145deg,#edf5ff,#f6f8fc 55%,#e9f3ff)' };
 
-export default function CompanyAuthGate() {
+export default function CompanyAuthGate({ onUnsupported = null }) {
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const refresh = useCallback(async () => {
     try {
       const data = await authRequest('session');
+      if (typeof data.authenticated !== 'boolean' || typeof data.setupRequired !== 'boolean') {
+        if (onUnsupported) onUnsupported();
+        else setError('服务器登录接口响应无效');
+        return;
+      }
       setSession(data);
       setError('');
-    } catch (cause) { setError(cause.message); }
-  }, []);
+    } catch (cause) {
+      if (cause.status === 404 && onUnsupported) onUnsupported();
+      else setError(cause.message);
+    }
+  }, [onUnsupported]);
 
   useEffect(() => {
     refresh();

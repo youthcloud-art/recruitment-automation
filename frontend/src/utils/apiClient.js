@@ -45,7 +45,7 @@ export const apiCall = async (endpoint, options = {}) => {
     }
     
     if (!response.ok) {
-      if (response.status === 401 && process.env.REACT_APP_COMPANY_AUTH === 'true') {
+      if (response.status === 401) {
         window.dispatchEvent(new Event('hiresmart:unauthorized'));
       }
       const errorBody = await response.clone().json().catch(() => null);

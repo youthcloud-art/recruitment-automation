@@ -1012,7 +1012,14 @@ class WuyouService {
         // The platform UI filter is only a prefilter. If it is hidden or
         // blocked by a fixed panel, keep the actual job evaluation instead
         // of failing the entire batch, but make the skipped prefilter visible.
-        const status = await this.getStatus();
+        let status = await this.getStatus();
+        // The talent page briefly reports `loading` while its filter bar is
+        // remounting. Do not turn that transient state into a failed batch;
+        // still refuse to continue through a login or verification screen.
+        for (let attempt = 0; attempt < 6 && status.status === 'loading'; attempt++) {
+          await this.page.waitForTimeout(300);
+          status = await this.getStatus();
+        }
         if (status.verificationRequired || status.permissionRequired ||
             status.status === 'waiting_login' || !status.isLoggedIn) throw error;
         educationFilter = { value: education, applied: false, changed: false,

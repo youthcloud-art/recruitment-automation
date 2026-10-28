@@ -1073,6 +1073,24 @@ test('51Job keyword batch never ignores a blocked education filter without evalu
     education: '大专及以上', jobRequirements: '大专及以上，三年运维经验' }), /学历筛选按钮/);
 });
 
+test('51Job keyword batch waits for a transient filter-page loading state before safe fallback', async () => {
+  const service = new WuyouService();
+  let checks = 0;
+  service.page = { waitForTimeout: async () => {} };
+  service.requireLogin = async () => {};
+  service.selectEducationFilter = async () => {
+    throw new Error('前程无忧学历筛选控件未能唯一定位');
+  };
+  service.getStatus = async () => ++checks < 3 ?
+    { status: 'loading', isLoggedIn: false } :
+    { status: 'ready', isLoggedIn: true };
+  service.runKeywordBatch = async () => {};
+  const batch = await service.startKeywordBatch({ keywords: ['磁轴销售工程师'],
+    targetCount: 5, education: '大专及以上', jobRequirements: '大专及以上，三年销售经验' });
+  assert.equal(checks, 3);
+  assert.equal(batch.educationFilter.applied, false);
+});
+
 test('a verification challenge pauses a keyword batch with an explicit stop reason', async () => {
   const service = new WuyouService();
   service.page = { waitForTimeout: async () => {} };

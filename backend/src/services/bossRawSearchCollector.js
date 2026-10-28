@@ -74,19 +74,30 @@ const SEARCH_STATE = `(() => { /* bossRaw:searchState */
       + '.age-select-custom-slider .ui-slider')]
     .filter(slider=>!slider.classList.contains('custom-slider-disabled')).length;
   const term=inputs[0].value.normalize('NFKC').trim();
-  const matchingSearchRequests=outer.contentWindow.performance.getEntriesByType('resource')
+  const searchResources=outer.contentWindow.performance.getEntriesByType('resource')
     .filter(entry=>{
       try {
         const resource=new URL(entry.name);
-        if (resource.origin!=='https://www.zhipin.com' ||
-            !/search.*geek|geek.*search/i.test(resource.pathname)) return false;
-        return decodeURIComponent(resource.href).normalize('NFKC').includes(term);
+        return resource.origin==='https://www.zhipin.com' &&
+          /search.*geek|geek.*search/i.test(resource.pathname);
       } catch (_) {return false;}
-    }).length;
+    });
+  // BOSS can submit the keyword in a POST body. Resource Timing exposes the
+  // official endpoint and time, but omits that body. Keep URL-keyword evidence
+  // for pre-existing results; after our verified click, a *new* official
+  // search resource plus exact visible keyword also proves submission.
+  const matchingSearchRequests=searchResources.filter(entry=>{
+    try {return decodeURIComponent(entry.name).normalize('NFKC').includes(term);}
+    catch (_) {return false;}
+  }).length;
+  const latestOfficialSearchRequestAt=searchResources.reduce((latest,entry)=>
+    Number.isFinite(entry.startTime) ? Math.max(latest,
+      outer.contentWindow.performance.timeOrigin+entry.startTime) : latest,0);
   return {state:'ready',value:inputs[0].value,cardCount:cards.length,
     safeCardCount:safeCards.length,frameUrl:frameUrl.href,
     frameOrigin:outer.contentWindow.performance.timeOrigin,
-    matchingSearchRequests,selectedFiltersReady,nonDefaultSelected,
+    matchingSearchRequests,latestOfficialSearchRequestAt,
+    selectedFiltersReady,nonDefaultSelected,
     checkedCount,activeCustomSliderCount};
 })()`;
 
@@ -537,7 +548,10 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       await this.assertPage({allowMissingFrame:true});
       const state=await this.readOnlyExpression(SEARCH_STATE,'wait_official_search');
       if (state?.state==='ready' && normalized(state.value)===normalized(title) &&
-          state.matchingSearchRequests>0 && state.cardCount>0) {
+          state.cardCount>0 &&
+          (state.matchingSearchRequests>0 ||
+            state.latestOfficialSearchRequestAt>before.latestOfficialSearchRequestAt)) {
+        this.searchEvidence={frameOrigin:state.frameOrigin,keyword:normalized(title)};
         await this.wait(800);
         return;
       }

@@ -715,6 +715,23 @@ test('search state detects an enabled custom slider despite an active 不限 chi
   assert.equal(state.activeCustomSliderCount,1);
 });
 
+test('search state timestamps official POST-style search without a keyword in its URL',()=>{
+  const chip={textContent:'不限',getClientRects:()=>[{}]};
+  const input={value:TITLE,getClientRects:()=>[{}]};
+  const doc={defaultView:{getComputedStyle:()=>({visibility:'visible'})},
+    querySelectorAll:selector=>selector==='input.search-input' ? [input]
+      : selector.endsWith('-item.active') ? [chip] : []};
+  const frame={contentDocument:doc,contentWindow:{
+    location:{href:'https://www.zhipin.com/web/frame/search/'},
+    performance:{timeOrigin:1000,getEntriesByType:()=>[{
+      name:'https://www.zhipin.com/wapi/zpitem/web/boss/search/geeks.json',
+      startTime:250}]}}};
+  const document={querySelector:selector=>selector===SEARCH_FRAME ? frame : null};
+  const state=vm.runInNewContext(SEARCH_STATE,{document,URL});
+  assert.equal(state.matchingSearchRequests,0);
+  assert.equal(state.latestOfficialSearchRequestAt,1250);
+});
+
 test('search modal probes require the observed official child wrapper',()=>{
   const canvas={width:777,height:905};
   const resumeDoc={querySelector:selector=>selector==='canvas#resume' ? canvas : null,
@@ -903,6 +920,28 @@ test('assistant search submits the active job through the official input once',a
   assert.equal(sent.filter(method=>method==='Input.dispatchKeyEvent').length,4);
   assert.deepEqual(clicked,['input.search-input','.search-input-wrap .icon-search']);
   assert.equal(state.value,TITLE);
+});
+
+test('assistant accepts a fresh official POST-style search after its own verified click',async()=>{
+  const collector=new BossRawSearchCollector();
+  let state={state:'ready',value:'旧岗位',cardCount:1,safeCardCount:1,
+    frameOrigin:7,matchingSearchRequests:0,latestOfficialSearchRequestAt:1000,
+    selectedFiltersReady:true,nonDefaultSelected:0,checkedCount:0,
+    activeCustomSliderCount:0};
+  collector.readOnlyExpression=async()=>state;
+  collector.readModal=async()=>({active:false});
+  collector.assertPage=async()=>({url:PAGE});
+  collector.wait=async()=>{};
+  collector.session={assertUsableRecruiterWindow:async()=>true,
+    clickUnique:async options=>{
+      if(options.selector==='.search-input-wrap .icon-search')
+        state={...state,latestOfficialSearchRequestAt:1200};
+    },
+    send:async(method,args)=>{
+      if(method==='Input.insertText') state={...state,value:args.text};
+    }};
+  assert.match((await collector.selectJob(TITLE)).value,/^search-[a-f0-9]{32}$/);
+  assert.equal(collector.searchEvidence.keyword,TITLE);
 });
 
 test('assistant retries a moving search control only before any mouse press',async()=>{

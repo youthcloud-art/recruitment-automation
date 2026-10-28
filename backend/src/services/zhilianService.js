@@ -999,6 +999,10 @@ class ZhilianService {
       
       await this.page.waitForTimeout(2000);
 
+      // A previously interrupted city search can leave its dialog mounted
+      // over the keyword field before this batch even begins.
+      await this.closeLocationDialogIfOpen();
+
       // The recruiter site keeps the previous search's chips (including city
       // and activity date) across jobs. Start this job from the platform's
       // own clear control so a saved search cannot silently narrow results.
@@ -1247,24 +1251,26 @@ class ZhilianService {
       logger.error(`配置工作地点筛选失败:`, error);
       return false;
     } finally {
-      // A failed city search used to leave its modal over the candidate list,
-      // causing every card click in the batch to fail. Close only this known
-      // official dialog; if it cannot be closed, stop before opening resumes.
-      const header = this.page.locator('div.s-dialog__header').first();
-      if (await header.isVisible().catch(() => false)) {
-        const cancel = this.page.locator('div.s-cascader__footer button')
-          .filter({ hasText: /^\s*取消\s*$/ }).first();
-        if (await cancel.isVisible().catch(() => false)) {
-          await cancel.click({ timeout: 3000 }).catch(() => {});
-        }
-        if (await header.isVisible().catch(() => false)) {
-          await this.page.keyboard.press('Escape').catch(() => {});
-        }
-        await header.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {
-          throw new Error('智联工作地点弹窗未关闭，已暂停当前搜索以避免误点候选人');
-        });
-      }
+      await this.closeLocationDialogIfOpen();
     }
+  }
+
+  async closeLocationDialogIfOpen() {
+    // Only the known city dialog is dismissed. Unknown overlays, including
+    // platform verification, remain untouched and stop the search naturally.
+    const header = this.page.locator('div.s-dialog__header').first();
+    if (!await header.isVisible().catch(() => false)) return;
+    const cancel = this.page.locator('div.s-cascader__footer button')
+      .filter({ hasText: /^\s*取消\s*$/ }).first();
+    if (await cancel.isVisible().catch(() => false)) {
+      await cancel.click({ timeout: 3000 }).catch(() => {});
+    }
+    if (await header.isVisible().catch(() => false)) {
+      await this.page.keyboard.press('Escape').catch(() => {});
+    }
+    await header.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {
+      throw new Error('智联工作地点弹窗未关闭，已暂停当前搜索以避免误点候选人');
+    });
   }
 
   /**

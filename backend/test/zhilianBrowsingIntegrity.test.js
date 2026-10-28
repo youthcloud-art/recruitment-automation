@@ -69,6 +69,16 @@ test('智联城市搜索无结果时关闭官方弹窗，不让遮挡层阻断�
   assert.equal(dialogVisible, false);
 });
 
+test('智联新批次先关闭上次遗留的城市弹窗再清理旧筛选', async () => {
+  const service = readyService();
+  const order = [];
+  service.page.waitForLoadState = async () => {};
+  service.closeLocationDialogIfOpen = async () => { order.push('close'); };
+  service.clearInheritedSearchFilters = async () => { order.push('clear'); };
+  await service.applySearchFilters({});
+  assert.deepEqual(order, ['close', 'clear']);
+});
+
 test('智联仅在官方悬浮栏遮挡清除按钮时改用同一按钮的 DOM 点击', async () => {
   const service = readyService();
   let clicks = 0;

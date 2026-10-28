@@ -1205,49 +1205,19 @@ class ZhilianService {
       await searchInput.type(location);
       await this.page.waitForTimeout(2000);
       
-      // 等待并点击下拉列表中的第一个选项
-      try {
-        // 优先尝试点击mark.search-mark元素
-        await this.page.waitForSelector('mark.search-mark', { timeout: 5000 });
-        const firstOption = await this.page.$('mark.search-mark');
-        if (firstOption) {
-          await firstOption.click();
-          await this.page.waitForTimeout(1000);
-          logger.info('已点击下拉列表第一个选项 (mark.search-mark)');
-        } else {
-          throw new Error('未找到mark.search-mark选项');
-        }
-      } catch (error) {
-        logger.warn('点击mark.search-mark选项失败:', error.message);
-        
-        // 尝试其他可能的选择器
-        const alternativeSelectors = [
-          'div.s-cascader__menu .s-cascader__menu-item:first-child',
-          'div.s-cascader__menu li:first-child',
-          '.cascader-option:first-child',
-          '[class*="option"]:first-child'
-        ];
-        
-        let optionClicked = false;
-        for (const selector of alternativeSelectors) {
-          try {
-            const option = await this.page.$(selector);
-            if (option) {
-              await option.click();
-              await this.page.waitForTimeout(1000);
-              logger.info(`使用备用选择器点击选项: ${selector}`);
-              optionClicked = true;
-              break;
-            }
-          } catch (altError) {
-            continue;
-          }
-        }
-        
-        if (!optionClicked) {
-          logger.warn('未能点击任何下拉选项，继续执行确认操作');
-        }
+      // Never select the first unrelated city when the platform returns no
+      // result (or more than one exact match). A broad search with a visible
+      // warning is safer than silently searching the wrong location.
+      const choices = this.page.locator('mark.search-mark');
+      const labels = await choices.allTextContents({ timeout: 5000 }).catch(() => []);
+      const exact = labels.map((label, index) => ({ label: label.trim(), index }))
+        .filter(item => item.label === location);
+      if (exact.length !== 1) {
+        logger.warn(`智联工作地点“${location}”没有唯一的官方城市选项`);
+        return false;
       }
+      await choices.nth(exact[0].index).click({ timeout: 5000 });
+      await this.page.waitForTimeout(1000);
       
       // 识别确认按钮区域
       const cascaderFooter = await this.page.$('div.s-cascader__footer');
@@ -1276,6 +1246,24 @@ class ZhilianService {
     } catch (error) {
       logger.error(`配置工作地点筛选失败:`, error);
       return false;
+    } finally {
+      // A failed city search used to leave its modal over the candidate list,
+      // causing every card click in the batch to fail. Close only this known
+      // official dialog; if it cannot be closed, stop before opening resumes.
+      const header = this.page.locator('div.s-dialog__header').first();
+      if (await header.isVisible().catch(() => false)) {
+        const cancel = this.page.locator('div.s-cascader__footer button')
+          .filter({ hasText: /^\s*取消\s*$/ }).first();
+        if (await cancel.isVisible().catch(() => false)) {
+          await cancel.click({ timeout: 3000 }).catch(() => {});
+        }
+        if (await header.isVisible().catch(() => false)) {
+          await this.page.keyboard.press('Escape').catch(() => {});
+        }
+        await header.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {
+          throw new Error('智联工作地点弹窗未关闭，已暂停当前搜索以避免误点候选人');
+        });
+      }
     }
   }
 

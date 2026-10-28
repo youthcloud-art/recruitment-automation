@@ -45,6 +45,30 @@ test('智联清理旧岗位城市筛选时接受新版关闭图标并确认已�
   assert.equal(cityLabel, '不限');
 });
 
+test('智联城市搜索无结果时关闭官方弹窗，不让遮挡层阻断整批候选卡', async () => {
+  const service = readyService();
+  let dialogVisible = false;
+  let cancelled = 0;
+  const search = { click: async () => {}, fill: async () => {}, type: async () => {} };
+  const city = { click: async () => { dialogVisible = true; } };
+  const wrapper = { $: async selector => selector.includes('keyword-panel-city') ? city : null };
+  service.page.$ = async selector => selector === 'div.keyword-panel.sticky-pane'
+    ? { $: async () => wrapper } : selector === 'div.s-dialog__header'
+      ? {} : selector === 'input[placeholder="搜索城市名/区县"]' ? search : null;
+  service.page.$$ = async () => [];
+  service.page.locator = selector => selector === 'mark.search-mark'
+    ? { allTextContents: async () => [] }
+    : selector === 'div.s-dialog__header'
+      ? { first: () => ({ isVisible: async () => dialogVisible,
+        waitFor: async () => assert.equal(dialogVisible, false) }) }
+      : { filter: () => ({ first: () => ({ isVisible: async () => true,
+        click: async () => { cancelled++; dialogVisible = false; } }) }) };
+  service.page.keyboard = { press: async () => { throw new Error('Escape should not be needed'); } };
+  assert.equal(await service.configureLocationFilter('惠州'), false);
+  assert.equal(cancelled, 1);
+  assert.equal(dialogVisible, false);
+});
+
 test('智联仅在官方悬浮栏遮挡清除按钮时改用同一按钮的 DOM 点击', async () => {
   const service = readyService();
   let clicks = 0;

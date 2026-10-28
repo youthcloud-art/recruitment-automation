@@ -67,6 +67,16 @@ function fixture(t) {
 }
 const now = new Date('2026-10-28T00:00:00Z');
 
+test('real Windows task engine accepts the cleanup schedule and rejects the previous invalid logon XML', { skip: process.platform !== 'win32' }, () => {
+  const result = spawnSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'companyCleanupSchedule.ps1'),
+      '-Installer', path.resolve(__dirname, '../../deploy/company/Install-CompanyCleanup.ps1')],
+    { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /NATIVE_CLEANUP_SCHEDULE_VALID/);
+});
+
 test('cleanup protects current, prepared, real process roots, rollback releases, recent versions and business data', async t => {
   const f = fixture(t), plan = await planCleanup({ installRoot: f.root, now, processRoots: [f.releases[2]] });
   const paths = new Set(plan.candidates.map(item => item.path));

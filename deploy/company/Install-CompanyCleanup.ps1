@@ -43,7 +43,7 @@ try {
         $ownedPattern = '^-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + [regex]::Escape((Join-Path $InstallRoot 'delivery\maintenance\')) + '[a-f0-9]{64}\\Invoke-CompanyCleanup\.ps1" -InstallRoot "' + [regex]::Escape($InstallRoot) + '" -Apply$'
         if ($action.Count -ne 1 -or $action[0].Execute -ine "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -or
             $action[0].WorkingDirectory -ine $InstallRoot -or $action[0].Arguments -notmatch $ownedPattern -or
-            $existing.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or [string]$existing.Principal.LogonType -ne 'ServiceAccount') { throw 'An unrelated task already uses the cleanup name; it was preserved.' }
+            $existing.Principal.UserId -notin @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM') -or [string]$existing.Principal.LogonType -ne 'ServiceAccount') { throw 'An unrelated task already uses the cleanup name; it was preserved.' }
     }
     $today = [datetime]::UtcNow.AddHours(8).ToString('yyyy-MM-dd')
     $command = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -58,14 +58,17 @@ try {
     <CalendarTrigger><StartBoundary>${today}T12:30:00+08:00</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
     <CalendarTrigger><StartBoundary>${today}T20:00:00+08:00</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
   </Triggers>
-  <Principals><Principal id="System"><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>true</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT2H</ExecutionTimeLimit><Priority>7</Priority></Settings>
   <Actions Context="System"><Exec><Command>$command</Command><Arguments>$escapedArguments</Arguments><WorkingDirectory>$escapedRoot</WorkingDirectory></Exec></Actions>
 </Task>
 "@
-    Register-ScheduledTask -TaskName $taskName -Xml $xml -Force | Out-Null
+    # ServiceAccount is a PowerShell/CIM enum, not a valid XML LogonType.
+    # Windows infers service-account logon from the explicit SYSTEM user.
+    Register-ScheduledTask -TaskName $taskName -Xml $xml -User 'SYSTEM' -Force | Out-Null
     $installed = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
-    if ([string]$installed.State -eq 'Disabled' -or @($installed.Triggers).Count -ne 2 -or $installed.Actions[0].Arguments -cne $arguments) { throw 'Cleanup task registration did not match the reviewed schedule.' }
+    if ([string]$installed.State -eq 'Disabled' -or @($installed.Triggers).Count -ne 2 -or $installed.Actions[0].Arguments -cne $arguments -or
+        $installed.Principal.UserId -notin @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM') -or [string]$installed.Principal.LogonType -ne 'ServiceAccount') { throw 'Cleanup task registration did not match the reviewed schedule or SYSTEM identity.' }
     Write-JsonFile (Join-Path $InstallRoot 'delivery\cleanup-installation.json') @{
         installed=$true;taskName=$taskName;times=@('12:30','20:00');timeZone='Asia/Shanghai';offset='+08:00';bundle=$bundle;
         installedAtUtc=[datetime]::UtcNow.ToString('o');enabled=$true;policy=(Get-Content -LiteralPath $policy -Raw | ConvertFrom-Json)

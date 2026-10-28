@@ -1258,7 +1258,8 @@ class ZhilianService {
   async closeLocationDialogIfOpen() {
     // Only the known city dialog is dismissed. Unknown overlays, including
     // platform verification, remain untouched and stop the search naturally.
-    const header = this.page.locator('div.s-dialog__header').first();
+    const header = this.page.locator('div.s-dialog__header')
+      .filter({ hasText: /选择人才期望城市/ }).first();
     if (!await header.isVisible().catch(() => false)) return;
     const cancel = this.page.locator('div.s-cascader__footer button')
       .filter({ hasText: /^\s*取消\s*$/ }).first();

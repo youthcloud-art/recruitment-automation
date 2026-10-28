@@ -59,8 +59,8 @@ test('智联城市搜索无结果时关闭官方弹窗，不让遮挡层阻断�
   service.page.locator = selector => selector === 'mark.search-mark'
     ? { allTextContents: async () => [] }
     : selector === 'div.s-dialog__header'
-      ? { first: () => ({ isVisible: async () => dialogVisible,
-        waitFor: async () => assert.equal(dialogVisible, false) }) }
+      ? { filter: () => ({ first: () => ({ isVisible: async () => dialogVisible,
+        waitFor: async () => assert.equal(dialogVisible, false) }) }) }
       : { filter: () => ({ first: () => ({ isVisible: async () => true,
         click: async () => { cancelled++; dialogVisible = false; } }) }) };
   service.page.keyboard = { press: async () => { throw new Error('Escape should not be needed'); } };

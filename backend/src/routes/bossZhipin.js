@@ -1,13 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const BossZhipinService = require('../services/bossZhipinService');
-const { BossRawRecommendCollector } = require('../services/bossRawRecommendCollector');
+const { BossRawRecommendCollector, jobResumeSignature } = require('../services/bossRawRecommendCollector');
 const { BossRawSearchCollector } = require('../services/bossRawSearchCollector');
+const { CollectionRunJournal } = require('../services/collectionRunJournal');
 const { BossCardQuarantine } = require('../services/bossCardQuarantine');
 const { connectOwnedBossPage } = require('../services/bossRawCdp');
 const { ensureOfficialSearchPage } = require('../services/bossOfficialSearchNavigation');
 const { getCdpTabs } = require('../services/visibleChromeCdp');
 const { ActiveJobService } = require('../services/activeJobService');
+const { bossCardId } = require('../utils/platformLocator');
 const logger = require('../utils/logger');
 
 // 创建 Boss 直聘服务实例
@@ -16,10 +18,25 @@ let rawCollector = null;
 let rawTask = null;
 let rawStarting = false;
 let rawRequestedMode = 'recommended';
+let rawRunFilters = null;
 let io = null;
 let startupPromise = null;
+const runJournal = process.env.COMPANY_DEPLOYMENT === 'true'
+  ? new CollectionRunJournal() : null;
 
-function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo = null) {
+function savedRunStatus() {
+  if (!runJournal) return null;
+  try {
+    const job = new ActiveJobService().current('boss');
+    return runJournal.interruptedStatus({signature:job ? jobResumeSignature(job) : ''});
+  } catch (error) {
+    logger.warn(`读取 BOSS 上次采集进度失败: ${error.message}`);
+    return null;
+  }
+}
+
+function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo = null,
+  runFilters = null) {
   const state = status?.state || 'idle';
   const saved = status?.saved || 0;
   return {
@@ -40,6 +57,7 @@ function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo =
     lastCardIndex: Number.isInteger(status?.lastCardIndex)
       ? status.lastCardIndex : -1,
     lastTargetState: status?.lastTargetState || '',
+    lastTargetReason: status?.lastTargetReason || '',
     scrollRounds: status?.scrollRounds || 0,
     windowRestoreCount: status?.windowRestoreCount || 0,
     targetCount: status?.targetCount || 0,
@@ -59,7 +77,9 @@ function rawStatusToBrowsing(status, requestedMode = 'recommended', resumeInfo =
         : state === 'stopped' ? '用户已停止采集'
           : state === 'paused' ? status?.lastError || '平台页面需要人工确认' : ''),
     resumeAvailable: !!resumeInfo,
-    filters: resumeInfo?.filters || null,
+    // Keep the original job filter visible after an ordinary timeout, too.
+    // Operators can then request exactly the remaining new resumes from the UI.
+    filters: resumeInfo?.filters || runFilters,
     evaluationQueue: status?.evaluationQueue || null
   };
 }
@@ -161,6 +181,98 @@ router.get('/status', async (req, res) => {
       error: error.message
     });
   }
+});
+
+// Read-only structural diagnostics for a paused search resume. Never return
+// candidate text, images, IDs or URLs. This distinguishes a stalled redraw
+// from multiple canvases on the company server without touching the page.
+router.get('/canvas-health', async (_req, res) => {
+  if (process.env.COMPANY_DEPLOYMENT !== 'true') return res.status(404).json({success:false});
+  if (rawStarting || rawTask) return res.status(409).json({success:false,
+    message:'采集运行中，稍后检查画布'});
+  let session;
+  try {
+    session = await connectOwnedBossPage();
+    await session.assertRecruiterReady();
+    const data = await session.evaluate(`(() => {
+      const dialog=document.querySelector('div[data-type="boss-dialog"].active.dialog-wrap');
+      const pane=dialog?.querySelector('.resume-detail-wrap');
+      const iframe=pane?.querySelector('iframe[src*="/web/frame/c-resume/"]');
+      const doc=iframe?.contentDocument;
+      const canvases=[...(doc?.querySelectorAll('canvas#resume')||[])];
+      const paneRect=pane?.getBoundingClientRect();
+      const iframeRect=iframe?.getBoundingClientRect();
+      const bodyText=doc?.body?.innerText || '';
+      const bodyContent=doc?.body?.textContent || '';
+      return {modalOpen:!!dialog,frameReady:!!doc,
+        canvasCount:canvases.length,
+        canvases:canvases.slice(0,16).map(canvas=>({
+          width:canvas.width,height:canvas.height,
+          visible:canvas.getClientRects().length>0
+        })),scrollTop:pane?.scrollTop||0,
+        scrollHeight:pane?.scrollHeight||0,
+        clientHeight:pane?.clientHeight||0,
+        paneSize:paneRect ? {width:Math.round(paneRect.width),
+          height:Math.round(paneRect.height)} : null,
+        iframeSize:iframeRect ? {width:Math.round(iframeRect.width),
+          height:Math.round(iframeRect.height)} : null,
+        bodyTextLength:bodyText.length,
+        bodyContentLength:bodyContent.length,
+        bodyHasResumeSections:/工作经历|教育经历|项目经历|专业技能|求职意向/.test(bodyText),
+        visible:document.visibilityState==='visible'};
+    })()`, {timeoutMs:8000});
+    res.set('Cache-Control','no-store');
+    return res.json({success:true,data});
+  } catch (_) {
+    return res.status(503).json({success:false,message:'当前 BOSS 画布结构不可读取'});
+  } finally {
+    try { session?.close(); } catch (_) { /* Keep the dedicated Chrome open. */ }
+  }
+});
+
+// Structural identity audit for the official result list. No candidate text,
+// identifier value, link, or resume content leaves this route.
+router.get('/platform-id-health', async (_req, res) => {
+  if (process.env.COMPANY_DEPLOYMENT !== 'true') return res.status(404).json({success:false});
+  if (rawStarting || rawTask) return res.status(409).json({success:false,
+    message:'采集运行中，请在任务空闲时检查平台编号'});
+  let session;
+  try {
+    session = await connectOwnedBossPage();
+    await session.assertRecruiterReady();
+    const result = await session.evaluate(`(() => {
+      const selectors=[
+        ['search','iframe[src*="/web/frame/search/"]','li.geek-info-card'],
+        ['recommend','iframe[src*="/web/frame/recommend/"]','li.card-item']];
+      for (const [mode,frameSelector,cardSelector] of selectors) {
+        const doc=document.querySelector(frameSelector)?.contentDocument;
+        if (!doc) continue;
+        const cards=[...doc.querySelectorAll(cardSelector)].slice(0,100);
+        return {mode,totalCards:doc.querySelectorAll(cardSelector).length,
+          cards:cards.map(card=>{
+            const link=card.querySelector(':scope > a[ka="search_click_open_resume"]');
+            const raw=link?.getAttribute('data-expect') || link?.getAttribute('data-geek-id') || '';
+            let hrefPath='',hrefKeys=[];
+            try {const url=new URL(link?.href);hrefPath=url.pathname;hrefKeys=[...url.searchParams.keys()];}
+            catch (_) {}
+            return {raw,hrefPath,hrefKeys};
+          })};
+      }
+      return {mode:'no_result_frame',totalCards:0,cards:[]};
+    })()`, {timeoutMs:8000});
+    const ids = result.cards.map(card => bossCardId(card.raw)).filter(Boolean);
+    const first = result.cards[0];
+    res.set('Cache-Control','no-store');
+    return res.json({success:true,data:{mode:result.mode,totalCards:result.totalCards,
+      sampledCards:result.cards.length,withPlatformId:ids.length,
+      uniquePlatformIds:new Set(ids).size,
+      firstAttributeShape:first?.raw ? first.raw.startsWith('{') ? 'json' :
+        /^[A-Za-z0-9_-]+$/.test(first.raw) ? 'token' : 'other' : 'absent',
+      firstAttributeLength:first?.raw?.length || 0,
+      firstLinkPath:first?.hrefPath || '',firstLinkQueryKeys:first?.hrefKeys || []}});
+  } catch (_) {
+    return res.status(503).json({success:false,message:'当前 BOSS 候选卡结构不可读取'});
+  } finally { try { session?.close(); } catch (_) {} }
 });
 
 /**
@@ -327,7 +439,7 @@ router.post('/start-browsing', async (req, res) => {
       return res.status(422).json({success:false,
         message:'BOSS 官方搜索最长运行时间须为 1～180 分钟'});
     }
-    const job = new ActiveJobService().current();
+    const job = new ActiveJobService().current('boss');
     if (!job?.title || !job.jobRequirements) {
       return res.status(422).json({success:false,message:'请先保存岗位条件再开始采集'});
     }
@@ -360,10 +472,27 @@ router.post('/start-browsing', async (req, res) => {
       }
     } else {
       if (mode === 'search') await ensureOfficialSearchPage();
+      const signature = jobResumeSignature(job);
+      let recordedSaved = -1;
+      let recordedState = '';
+      const onProgress = status => {
+        if (!runJournal || (status.saved === recordedSaved &&
+            status.state === recordedState)) return;
+        try {
+          runJournal.write({mode,targetCount:count,jobSignature:signature,
+            jobTitle:job.title,status});
+          recordedSaved=status.saved;
+          recordedState=status.state;
+        } catch (error) {
+          logger.warn(`保存 BOSS 采集进度失败: ${error.message}`);
+        }
+      };
       rawCollector = mode === 'search'
-        ? new BossRawSearchCollector() : new BossRawRecommendCollector();
+        ? new BossRawSearchCollector({onProgress})
+        : new BossRawRecommendCollector({onProgress});
     }
     rawRequestedMode = mode;
+    rawRunFilters = mode === 'search' ? {position:job.title} : null;
     const service = bossZhipinService;
     // Both paths verify their own official iframe before candidate actions.
     // Search checks the exact current keyword and official resume link;
@@ -467,8 +596,10 @@ router.post('/reset-browsing', async (req, res) => {
         message:'BOSS 简历采集尚未结束，请先停止'});
       rawCollector = null;
       rawRequestedMode = 'recommended';
+      runJournal?.clear();
       return res.json({success:true,message:'BOSS 采集状态已重置'});
     }
+    runJournal?.clear();
     if (!bossZhipinService) {
       return res.status(400).json({
         success: false,
@@ -518,9 +649,16 @@ router.post('/reset-card-quarantine', (req,res) => {
  */
 router.get('/browsing-status', async (req, res) => {
   try {
+    if (rawStarting) return res.json({success:true,data:{
+      ...(rawCollector ? rawStatusToBrowsing(rawCollector.getStatus(),rawRequestedMode,
+        rawCollector.getResumeInfo?.(),rawRunFilters) : savedRunStatus() || {}),
+      status:'starting',isActive:true
+    }});
     if (rawCollector) return res.json({success:true,
       data:rawStatusToBrowsing(rawCollector.getStatus(),rawRequestedMode,
-        rawCollector.getResumeInfo?.())});
+        rawCollector.getResumeInfo?.(),rawRunFilters)});
+    const previousRun = savedRunStatus();
+    if (previousRun) return res.json({success:true,data:previousRun});
     if (!bossZhipinService) {
       return res.json({
         success: true,

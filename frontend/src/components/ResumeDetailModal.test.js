@@ -14,3 +14,11 @@ test('只读详情展示平台保存的原始简历全文，不显示无处理�
   expect(screen.queryByRole('button', { name: '标记感兴趣' })).toBeNull();
   expect(screen.queryByRole('button', { name: '下载简历' })).toBeNull();
 });
+
+test('BOSS OCR 详情提示用户核对结构化字段和保存原文', () => {
+  render(<ResumeDetailModal visible readOnly onClose={() => {}}
+    resume={{ source: 'boss', parseMethod: 'ocr', hiringJobTitle: '销售工程师',
+      originalText: '工作经历：设备销售和客户服务' }} />);
+  expect(screen.getByText(/BOSS 画布简历经 OCR 识别/)).not.toBeNull();
+  expect(screen.getByText(/设备销售和客户服务/)).not.toBeNull();
+});

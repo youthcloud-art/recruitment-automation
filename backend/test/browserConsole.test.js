@@ -17,6 +17,13 @@ function fakePage(calls, initialURL = 'https://www.zhipin.com/web/user/') {
   png.writeUInt32BE(720, 20);
   return {
     isClosed: () => false, url: () => url, changeURL: value => { url = value; },
+    context: () => ({ newCDPSession: async () => ({
+      send: async (method, args) => {
+        calls.push(['cdp', method, args]);
+        return method === 'Browser.getWindowForTarget' ? { windowId: 42 } : {};
+      },
+      detach: async () => calls.push(['cdp-detach'])
+    }) }),
     screenshot: async options => { calls.push(['screenshot', options]); return png; },
     mouse: {
       click: async (x, y, options) => calls.push(['click', x, y, options]),
@@ -39,7 +46,7 @@ async function fixture(t, options = {}) {
   app.use(express.json());
   app.use('/api/browser-console', createBrowserConsoleRouter({
     environment: { COMPANY_DEPLOYMENT: 'true' }, getTargets: () => ({ boss: target }),
-    now: () => time, ...options
+    now: () => time, readOwnedTabs: async () => [], ...options
   }));
   const server = await new Promise(resolve => {
     const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
@@ -158,6 +165,23 @@ test('running collections and stale or navigated frames cannot receive manual in
   assert.deepEqual(app.calls.map(call => call[0]), ['screenshot', 'screenshot']);
 });
 
+test('operator can restore the existing official Chrome window only while collection is idle', async t => {
+  const app = await fixture(t);
+  assert.equal((await app.request('/restore-window', { platform: 'boss', clientId: CLIENT })).status, 409);
+  await acquire(app);
+  app.target.running = true;
+  assert.equal((await app.request('/restore-window', { platform: 'boss', clientId: CLIENT })).status, 409);
+  app.target.running = false;
+  const restored = await app.request('/restore-window', { platform: 'boss', clientId: CLIENT });
+  assert.equal(restored.status, 200);
+  assert.deepEqual(restored.body.data, { restored: true });
+  assert.deepEqual(app.calls, [
+    ['cdp', 'Browser.getWindowForTarget', undefined],
+    ['cdp', 'Browser.setWindowBounds', { windowId: 42, bounds: { windowState: 'maximized' } }],
+    ['cdp-detach']
+  ]);
+});
+
 test('login-only Chrome is attached through owned CDP without launching or navigation', async t => {
   const calls = [];
   const page = fakePage(calls);
@@ -181,4 +205,42 @@ test('login-only Chrome is attached through owned CDP without launching or navig
   assert.equal((await screenshot(app)).status, 409);
   assert.equal(disconnected, 2);
   assert.equal(calls.filter(call => call[0] === 'screenshot').length, 1);
+});
+
+test('after a backend restart the console reconnects an existing owned platform window', async t => {
+  const calls = [];
+  const page = fakePage(calls, 'https://www.zhipin.com/web/chat/search');
+  const app = await fixture(t, {
+    readOwnedTabs: async options => {
+      assert.equal(options.profileName, 'boss');
+      return [{ url: page.url() }];
+    },
+    attachExisting: async () => ({ context: { pages: () => [page] },
+      browser: { close: async () => calls.push(['disconnect']) } })
+  });
+  app.target.service.page = null;
+  app.target.service.chromeWindowOpened = false;
+  assert.equal((await app.request('/status')).body.data.platforms[0].available, true);
+  assert.equal((await acquire(app)).status, 200);
+  assert.equal((await screenshot(app)).status, 200);
+  assert.deepEqual(calls.map(call => call[0]), ['screenshot', 'disconnect']);
+  page.changeURL('https://other.example/');
+  assert.equal((await app.request('/status')).body.data.platforms[0].available, false);
+});
+
+test('a stalled owned-browser disconnect releases console control', async t => {
+  const calls=[];
+  const page=fakePage(calls);
+  const app=await fixture(t,{
+    disconnectTimeoutMs:20,
+    getTargets:()=>({boss:{service:{page:null,chromeWindowOpened:true}}}),
+    readOwnedTabs:async()=>[{url:page.url()}],
+    attachExisting:async()=>({context:{pages:()=>[page]},
+      browser:{close:async()=>new Promise(()=>{})}})
+  });
+  await acquire(app);
+  assert.equal((await screenshot(app)).status,200);
+  await new Promise(resolve=>setTimeout(resolve,40));
+  assert.equal((await screenshot(app)).status,200);
+  assert.equal(calls.filter(call=>call[0]==='screenshot').length,2);
 });

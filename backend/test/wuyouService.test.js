@@ -307,6 +307,7 @@ test('real talent result list ignores sidebar cards and virtual placeholders', a
     const visible = await service.visibleCards();
     assert.equal(visible.length, 11);
     assert.equal(visible[0].index, 1);
+    assert.equal(visible[0].displayName, '候选人1');
     assert.equal(visible.at(-1).index, 11);
     assert.ok(visible.every(card => !card.text.includes('侧栏候选人')));
     const diagnostics = await service.getPageDiagnostics();
@@ -791,7 +792,7 @@ test('identical visible cards without stable IDs are processed as separate candi
   }
 });
 
-test('the same 51Job resume is deduplicated by content across URLs and by URL across content changes', async () => {
+test('51Job preserves distinct official resume IDs and deduplicates the same ID after content changes', async () => {
   const saved = [];
   const service = new WuyouService({
     parser: { parseResumeText: text => ({ name: '测试候选人', skills: ['成本核算'], rawText: text }) },
@@ -814,13 +815,14 @@ test('the same 51Job resume is deduplicated by content across URLs and by URL ac
   assert.equal(saved[0].sourceUrl,
     'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=one');
   assert.equal(saved[0].parseMethod, 'local');
+  assert.equal(saved[0].sourceCandidateId, 'one');
 
   capture = { ...capture, url: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=two' };
-  assert.equal((await service.collectPage({})).duplicate, true);
+  assert.equal((await service.collectPage({})).saved, true);
   capture = { ...capture, text: capture.text + '\n项目经历：ERP 成本模块上线。',
     url: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=one' };
   assert.equal((await service.collectPage({})).duplicate, true);
-  assert.equal(saved.length, 1);
+  assert.equal(saved.length, 2);
 });
 
 test('51Job page chrome cannot populate new name, position or desired position metadata', async () => {
@@ -842,6 +844,29 @@ test('51Job page chrome cannot populate new name, position or desired position m
   assert.equal(stored.expectedPosition.position, '');
   assert.equal(stored.expectedPosition.city, '上海');
   assert.match(stored.originalText, /^通知/);
+});
+
+test('verified talent card name enriches a previously anonymous matching resume', async () => {
+  const existing = { id: 'same-candidate', source: 'qcwy', name: '未识别姓名',
+    captureJobRequirements: '岗位名称：磁轴销售工程师\n工作地点：惠州' };
+  let update;
+  const service = new WuyouService({ resumeStore: {
+    findWuyouDuplicate: () => existing,
+    updateCandidateMetadata: async (_id, changes) => {
+      update = changes;
+      return { ...existing, ...changes };
+    }
+  } });
+  service.captureVisibleResume = async () => ({
+    text: '工作经历：磁轴销售三年。\n教育经历：大专。',
+    url: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=same-candidate',
+    title: '简历详情', nameHint: '通知'
+  });
+  const result = await service.collectPage({}, existing.captureJobRequirements, '张三');
+  assert.equal(result.duplicate, true);
+  assert.equal(result.resume.name, '张三');
+  assert.equal(update.nameSource, 'qcwy_card');
+  assert.equal(update.captureJobTitle, '磁轴销售工程师');
 });
 
 test('scrolling follows the real overflow container and waits for virtual cards to refresh', async () => {

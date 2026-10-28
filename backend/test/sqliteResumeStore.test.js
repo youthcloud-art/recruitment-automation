@@ -51,6 +51,101 @@ test('SQLite migration retains legacy JSON, deduplicates and updates a single ca
   assert.equal(model.getResumes().length, 2);
 });
 
+test('legacy official URLs backfill platform IDs, support search and keep distinct resumes', async t => {
+  const resumes = [
+    { id: 'zl-old', source: 'zlzp', sourceFingerprint: 'shared',
+      sourceUrl: 'https://rd.zhaopin.com/app/search?resumeNumber=zl-001', originalText: '相同正文' },
+    { id: 'qc-old', source: 'qcwy', sourceFingerprint: 'qc-old-fp',
+      sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=qc-001',
+      originalText: '前程无忧正文' },
+    { id: 'boss-old', source: 'boss', sourceFingerprint: 'boss-old-fp',
+      sourceUrl: 'https://www.zhipin.com/web/frame/c-resume/?source=search',
+      originalText: 'BOSS 正文' }
+  ];
+  const { libraryDir, cleanup } = fixture(t, { resumes, positions: [], categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  assert.equal(model.getResumeById('zl-old').sourceCandidateId, 'zl-001');
+  assert.equal(model.getResumeById('qc-old').sourceCandidateId, 'qc-001');
+  assert.equal(model.getResumeById('boss-old').sourceCandidateId, undefined);
+  assert.equal(model.getResumesPage({ keyword: 'qc-001' }).total, 1);
+  assert.equal(model.getResumesPage({ keyword: 'zl-001' }).total, 1);
+  const distinct = await model.addResume({ source: 'zlzp', sourceCandidateId: 'zl-002',
+    sourceFingerprint: 'shared', originalText: '相同正文' }, { returnStatus: true });
+  assert.equal(distinct.created, true);
+  assert.equal(model.getResumes().length, 4);
+});
+
+test('an earlier narrow ID backfill is rerun for real Zhilian numbers with parentheses', t => {
+  const opaqueId = 'abcdefghijklmnopqr)stuvwxyz12345';
+  const sourceUrl = `https://rd.zhaopin.com/app/search?resumeNumber=${encodeURIComponent(opaqueId)}`;
+  const { libraryDir, cleanup } = fixture(t, { resumes: [{ id: 'zl-legacy',
+    source: 'zlzp', sourceUrl, originalText: '历史智联简历' }], positions: [], categories: [] });
+  const first = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  const legacy = first.getResumeById('zl-legacy');
+  delete legacy.sourceCandidateId;
+  first.sqliteStore.db.prepare(`UPDATE candidate_resumes SET source_candidate_id = NULL,
+    payload = ? WHERE id = 'zl-legacy'`).run(JSON.stringify(legacy));
+  first.sqliteStore.db.exec(`DELETE FROM library_metadata WHERE key = 'official_platform_ids_backfilled_v2';
+    INSERT OR REPLACE INTO library_metadata (key, value)
+    VALUES ('official_platform_ids_backfilled_v1', 'true');`);
+  first.sqliteStore.close();
+  const upgraded = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { upgraded.sqliteStore.close(); cleanup(); });
+  assert.equal(upgraded.getResumeById('zl-legacy').sourceCandidateId, opaqueId);
+  assert.equal(upgraded.getResumesPage({ keyword: opaqueId }).total, 1);
+});
+
+test('三平台岗位筛选与评分排序在 SQLite 全部结果分页前执行', t => {
+  const resumes = [
+    { id: 'a', source: 'boss', captureJobTitle: '网络运维', matchScore: 60 },
+    { id: 'b', source: 'zlzp', captureJobTitle: '网络运维', matchScore: 95 },
+    { id: 'c', source: 'qcwy', captureJobTitle: '网络运维', matchScore: 0 },
+    { id: 'd', source: 'boss', captureJobTitle: '网络运维' },
+    { id: 'e', source: 'boss', captureJobTitle: '财务经理', matchScore: 99 },
+    { id: 'f', source: 'qcwy', captureJobRequirements: '岗位名称：网络运维\n要求：Linux', matchScore: 70 }
+  ].map((item, index) => ({ ...item, createdAt: `2026-10-0${index + 1}T00:00:00.000Z` }));
+  const { libraryDir, cleanup } = fixture(t, { resumes, positions: [], categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  const filters = { hiringJobTitle: '网络运维', sources: ['boss', 'zlzp', 'qcwy'] };
+  assert.deepEqual(model.getResumesPage({ ...filters, sortBy: 'scoreDesc', limit: 2 }).items.map(x => x.id), ['b', 'f']);
+  assert.deepEqual(model.getResumesPage({ ...filters, sortBy: 'scoreDesc', limit: 2, offset: 2 }).items.map(x => x.id), ['a', 'c']);
+  assert.deepEqual(model.getResumesPage({ ...filters, sortBy: 'scoreAsc', limit: 6 }).items.map(x => x.id), ['c', 'a', 'f', 'b', 'd']);
+  assert.deepEqual(model.getResumesPage({ ...filters, source: 'qcwy', sortBy: 'scoreDesc' }).items.map(x => x.id), ['f', 'c']);
+  const counts = model.getHiringJobCounts(['boss', 'zlzp', 'qcwy']);
+  assert.equal(counts.filter(row => row.title === '网络运维').reduce((sum, row) => sum + row.total, 0), 5);
+  model.updateCandidateMetadata('d', { matchScore: 85 });
+  assert.deepEqual(model.getResumesPage({ ...filters, sortBy: 'scoreDesc', limit: 2 }).items.map(x => x.id), ['b', 'd']);
+});
+
+test('同名岗位归档后新旧候选人独立保存，旧无 ID 记录不会混入在用岗位', t => {
+  const criteria = { jobRequirements: '岗位名称：磁轴销售工程师\n负责销售' };
+  const positions = [
+    { id: 'position_old', title: '磁轴销售工程师', jobCriteria: criteria,
+      archivedAt: '2026-10-01T00:00:00Z' },
+    { id: 'position_new', title: '磁轴销售工程师', jobCriteria: criteria }
+  ];
+  const resumes = [
+    { id: 'old', source: 'boss', captureJobTitle: '磁轴销售工程师',
+      captureJobRequirements: criteria.jobRequirements, capturePositionId: 'position_old' },
+    { id: 'new', source: 'zlzp', captureJobTitle: '磁轴销售工程师',
+      captureJobRequirements: criteria.jobRequirements, capturePositionId: 'position_new' },
+    { id: 'legacy', source: 'qcwy', captureJobTitle: '磁轴销售工程师',
+      captureJobRequirements: criteria.jobRequirements }
+  ];
+  const { libraryDir, cleanup } = fixture(t, { resumes, positions, categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  assert.deepEqual(model.getResumesPage({ hiringJobTitle: '磁轴销售工程师',
+    jobGroup: 'current' }).items.map(item => item.id), ['new']);
+  assert.deepEqual(model.getResumesPage({ hiringJobTitle: '磁轴销售工程师',
+    jobGroup: 'historical' }).items.map(item => item.id).sort(), ['legacy', 'old']);
+  const groups = model.getHiringJobCounts(['boss', 'zlzp', 'qcwy']);
+  assert.equal(groups.filter(item => item.jobGroup === 'current').reduce((n, item) => n + item.total, 0), 1);
+  assert.equal(groups.filter(item => item.jobGroup === 'historical').reduce((n, item) => n + item.total, 0), 2);
+});
+
 test('SQLite position edits avoid loading candidate payloads and preserve linked resumes', async t => {
   const { libraryDir, cleanup } = fixture(t, { resumes: [], positions: [], categories: [] });
   const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
@@ -64,12 +159,54 @@ test('SQLite position edits avoid loading candidate payloads and preserve linked
   assert.equal(model.getPositionById(linked.id).description, '负责网络设备维护');
   const candidate = await model.addResume({ source: 'boss', positionId: linked.id,
     sourceFingerprint: 'position-linked', originalText: '独立测试简历' });
-  assert.deepEqual(await model.deletePosition(linked.id), {
-    success: false, error: '该岗位还有关联的简历，无法删除'
-  });
+  const archived = await model.deletePosition(linked.id);
+  assert.equal(archived.success, true);
+  assert.ok(archived.position.archivedAt);
+  assert.ok(model.getResumeById(candidate.id));
+  assert.equal(model.getResumesPage({ jobGroup: 'historical' }).total, 1);
+  assert.equal((await model.restorePosition(linked.id)).success, true);
+  assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
   assert.equal((await model.deletePosition(other.id)).success, true);
-  assert.equal(model.getPositions().length, 1);
+  assert.equal(model.getPositions().length, 2);
+  assert.equal(model.getPositionById(other.id).status, '已归档');
   assert.equal(model.getResumeById(candidate.id).positionId, linked.id);
+});
+
+test('restoring a unique archived job also restores safely matched legacy candidates', async t => {
+  const requirements = '岗位名称：网络运维\n负责企业网络设备维护';
+  const { libraryDir, cleanup } = fixture(t, { resumes: [], positions: [], categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  const position = await model.addPosition({ title: '网络运维',
+    jobCriteria: { jobRequirements: requirements } });
+  await model.addResume({ source: 'boss', captureJobTitle: '网络运维',
+    captureJobRequirements: requirements, sourceFingerprint: 'legacy-job-resume' });
+  assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
+  assert.equal((await model.deletePosition(position.id)).success, true);
+  assert.equal(model.getResumesPage({ jobGroup: 'historical' }).total, 1);
+  assert.equal((await model.restorePosition(position.id)).success, true);
+  assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
+});
+
+test('历史岗位简历按岗位与 ID 原子删除，混入在用简历会整批拒绝', t => {
+  const positions = [{ id: 'position_live', title: '网络运维',
+    jobCriteria: { jobRequirements: '负责网络设备维护' } },
+  { id: 'position_old', title: '网络运维', archivedAt: '2026-10-01T00:00:00Z',
+    jobCriteria: { jobRequirements: '负责旧网络设备维护' } }];
+  const resumes = [
+    { id: 'live', source: 'boss', captureJobTitle: '网络运维', capturePositionId: 'position_live' },
+    { id: 'old-a', source: 'zlzp', captureJobTitle: '网络运维', capturePositionId: 'position_old' },
+    { id: 'old-b', source: 'qcwy', captureJobTitle: '网络运维', capturePositionId: 'position_old' }
+  ];
+  const { libraryDir, cleanup } = fixture(t, { resumes, positions, categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  assert.throws(() => model.deleteHistoricalResumes(['old-a', 'live'], '网络运维'), /已变化/);
+  assert.equal(model.getResumesPage({ hiringJobTitle: '网络运维' }).total, 3);
+  assert.throws(() => model.deleteHistoricalResumes(['old-a'], '其他岗位'), /已变化/);
+  assert.equal(model.deleteHistoricalResumes(['old-a', 'old-b'], '网络运维').count, 2);
+  assert.equal(model.getResumesPage({ jobGroup: 'historical' }).total, 0);
+  assert.equal(model.getResumesPage({ jobGroup: 'current' }).total, 1);
 });
 
 test('invalid legacy JSON cannot create a replacement SQLite database', t => {
@@ -400,6 +537,24 @@ test('recommendation and analytics stream a 6,000-record SQLite library without 
   const all = analytics.snapshot({ scope: 'all', threshold: 70 });
   assert.equal(all.metrics.total, 6000);
   assert.equal(all.metrics.passed, 50);
+});
+
+test('SQLite active-job iteration includes captured resumes awaiting AI evaluation', t => {
+  const requirements = '岗位名称：项目经理主管\n项目管理经验五年以上';
+  const { libraryDir, cleanup } = fixture(t, { resumes: [
+    { id: 'pending', source: 'zlzp', captureJobRequirements: requirements,
+      matchEvaluationStatus: 'pending', originalText: '完整简历正文' },
+    { id: 'other', source: 'zlzp', captureJobRequirements: '其他岗位条件',
+      originalText: '其他岗位简历' }
+  ], positions: [], categories: [] });
+  const model = new ResumeModel({ resumeStorageDir: libraryDir, storageEngine: 'sqlite' });
+  t.after(() => { model.sqliteStore.close(); cleanup(); });
+  const found = [];
+  model.forEachResume(item => found.push(item.id), { jobRequirements: requirements });
+  assert.deepEqual(found, ['pending']);
+  const analytics = new RecruitmentAnalyticsService({ store: model,
+    activeJobService: { current: () => ({ title: '项目经理主管', jobRequirements: requirements }) } });
+  assert.equal(analytics.snapshot().metrics.unevaluated, 1);
 });
 
 test('SQLite resume iteration uses a read snapshot while another connection writes', t => {

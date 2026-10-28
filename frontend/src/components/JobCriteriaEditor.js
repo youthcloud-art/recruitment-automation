@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { Alert, Button, Card, Col, Input, InputNumber, Row, Space, Tag, Typography, message } from 'antd';
 import { DownloadOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons';
 import { apiGet, apiPut, apiUpload } from '../utils/apiClient';
+import { notifyActiveJobChanged } from '../utils/activeJobEvents';
 
 const { Text } = Typography;
 export const EMPTY_JOB = {
@@ -11,7 +12,9 @@ export const EMPTY_JOB = {
 };
 
 export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disabled = false,
-  persistImport = true, showSave = true, title = '岗位条件（采集前设置）' }) {
+  persistImport = true, showSave = true, showHelp = true,
+  platform = 'all',
+  title = '岗位条件（采集前设置）' }) {
   const [busy, setBusy] = useState('');
   const fileInput = useRef(null);
   const job = { ...EMPTY_JOB, ...(value || {}) };
@@ -20,9 +23,10 @@ export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disable
   const save = async () => {
     setBusy('save');
     try {
-      const result = await apiPut('/recruitment-pipeline/active-job', job);
+      const result = await apiPut('/recruitment-pipeline/active-job', { ...job, applyTo: platform });
       onChange(result.data);
-      message.success('岗位条件已保存在本机，三个平台将使用这份配置');
+      notifyActiveJobChanged(result.data, platform);
+      message.success(platform === 'all' ? '岗位条件已应用到三平台' : '岗位条件已应用到当前平台');
     } catch (error) { message.error('保存岗位条件失败：' + error.message); }
     finally { setBusy(''); }
   };
@@ -54,10 +58,12 @@ export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disable
     try {
       const body = new FormData();
       body.append('file', file);
+      body.append('applyTo', platform);
       const result = await apiUpload(persistImport
         ? '/recruitment-pipeline/active-job/import'
         : '/recruitment-pipeline/active-job/preview-import', body);
       onChange(persistImport ? result.data : { ...result.data, updatedAt: null });
+      if (persistImport) notifyActiveJobChanged(result.data, platform);
       message.success(persistImport ? '岗位条件已导入并保存，可在页面继续修改'
         : '岗位条件已读取，请检查后点击“创建并应用”');
     } catch (error) { message.error('导入岗位条件失败：' + error.message); }
@@ -120,7 +126,7 @@ export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disable
             onChange={number => setField('recommendationTargetCount', number)} />
         </Col>
         <Col xs={24} md={12}>
-          <Text>单次采集目标份数（按本次新入库自动停止，前程无忧最多 30）</Text>
+          <Text>单次采集目标份数（按本次新入库自动停止，前程无忧最多 50）</Text>
           <InputNumber min={1} max={200} precision={0} style={{ width: '100%' }}
             value={job.targetCount} disabled={disabled}
             onChange={number => setField('targetCount', number)} />
@@ -132,11 +138,12 @@ export default function JobCriteriaEditor({ value = EMPTY_JOB, onChange, disable
           disabled={disabled} placeholder="填写必需技能、经验、职责及加分条件；导入模板后可继续编辑"
           onChange={event => setField('jobRequirements', event.target.value)} />
       </div>
+      {(showHelp || (job.recommendationTargetCount && !job.targetCount)) &&
       <Alert type={job.recommendationTargetCount && !job.targetCount ? 'warning' : 'info'}
         showIcon style={{ marginTop: 12 }}
         message={job.recommendationTargetCount && !job.targetCount
           ? `推荐名单目标为 ${job.recommendationTargetCount} 人，单次采集目标尚未设置；请填写上方采集份数，或在平台页面确认本次目标。`
-          : '岗位名称和关键词用于平台检索；详细条件用于采后评估。推荐人数与单次采集目标分别设置；每次任务按本次新入库份数停止。'} />
+          : '岗位名称和关键词用于平台检索；详细条件用于采后评估。推荐人数与单次采集目标分别设置；每次任务按本次新入库份数停止。'} />}
     </Card>
   );
 }

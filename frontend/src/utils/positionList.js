@@ -1,6 +1,6 @@
 const CRITERIA_FIELDS = [
   'title', 'searchKeywords', 'location', 'education', 'minExperienceYears',
-  'targetCount', 'jobRequirements'
+  'targetCount', 'recommendationTargetCount', 'jobRequirements'
 ];
 
 export const sameCriteria = (left, right) => Boolean(left && right &&
@@ -11,7 +11,7 @@ export const sameCriteria = (left, right) => Boolean(left && right &&
 export const mergeActivePosition = (positions = [], activeJob = null) => {
   const list = Array.isArray(positions) ? positions : [];
   if (!activeJob?.title || !activeJob?.jobRequirements ||
-      list.some(position => sameCriteria(position.jobCriteria, activeJob))) return list;
+      list.some(position => !position.archivedAt && sameCriteria(position.jobCriteria, activeJob))) return list;
   return [{
     id: 'active-job-current',
     title: activeJob.title,

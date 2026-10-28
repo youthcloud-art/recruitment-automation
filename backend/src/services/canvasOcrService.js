@@ -1,6 +1,14 @@
 const { createWorker } = require('tesseract.js');
+const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const logger = require('../utils/logger');
+
+const BUNDLED_LANGUAGE_PATH = path.resolve(__dirname, '../../assets/tessdata');
+const LANGUAGE_SHA256 = Object.freeze({
+  'chi_sim.traineddata': 'a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730',
+  'eng.traineddata': '7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2'
+});
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
@@ -40,10 +48,12 @@ function validateCanvasPng(image) {
  * 用于从canvas元素截图并通过OCR识别文字内容
  */
 class CanvasOcrService {
-  constructor({ createOcrWorker = createWorker, deadlines = {} } = {}) {
+  constructor({ createOcrWorker = createWorker, deadlines = {},
+    languagePath = BUNDLED_LANGUAGE_PATH } = {}) {
     this.worker = null;
     this.isInitialized = false;
     this.createOcrWorker = createOcrWorker;
+    this.languagePath = languagePath;
     this.deadlines = {
       initialize: deadlines.initialize ?? 60000,
       screenshot: deadlines.screenshot ?? 20000,
@@ -83,6 +93,25 @@ class CanvasOcrService {
       .catch(error => logger.warn(`OCR 工作器关闭未及时完成: ${error.message}`));
   }
 
+  verifyLanguageData() {
+    for (const [name, expected] of Object.entries(LANGUAGE_SHA256)) {
+      const file = path.join(this.languagePath, name);
+      let bytes;
+      try { bytes = fs.readFileSync(file); }
+      catch {
+        const error = new Error(`OCR 语言文件缺失：${name}；请重新部署完整发布包`);
+        error.code = 'OCR_LANGUAGE_DATA_MISSING';
+        throw error;
+      }
+      const actual = crypto.createHash('sha256').update(bytes).digest('hex');
+      if (actual !== expected) {
+        const error = new Error(`OCR 语言文件校验失败：${name}；请重新部署完整发布包`);
+        error.code = 'OCR_LANGUAGE_DATA_INVALID';
+        throw error;
+      }
+    }
+  }
+
   /**
    * 初始化OCR工作器
    */
@@ -92,11 +121,12 @@ class CanvasOcrService {
     const generation = ++this.workerGeneration;
     this.initializationPromise = (async () => {
       logger.info('正在初始化OCR工作器...');
+      // A missing model can make the Tesseract worker fail outside the
+      // collector's promise chain. Reject before spawning it instead.
+      this.verifyLanguageData();
       const startup = Promise.resolve().then(() => this.createOcrWorker('chi_sim+eng', 1, {
-        // The repository already includes both uncompressed language models.
-        // Resolve them from this module so OCR also works when launched from
-        // another directory, without a CDN download or writable cache.
-        langPath: path.resolve(__dirname, '../..'),
+        // Resolve bundled, checksum-verified models independently of cwd.
+        langPath: this.languagePath,
         cacheMethod: 'none',
         gzip: false,
         logger: m => {

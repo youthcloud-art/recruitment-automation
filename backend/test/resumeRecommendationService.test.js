@@ -63,6 +63,20 @@ test('平台、最低分和展示上限生效，智联相同简历不会重复�
   assert.deepEqual(result.recommendations.map(item => item.id), ['first']);
 });
 
+test('按单个平台推荐时使用该平台当前岗位，不误用最近应用到其他平台的岗位', () => {
+  const requests = [];
+  const target = new ResumeRecommendationService({
+    store: { getResumes: () => [candidate('zl', 'zlzp', 85)] },
+    activeJobService: { current: platform => {
+      requests.push(platform);
+      return platform === 'zlzp' ? job : { ...job, title: '其他岗位',
+        jobRequirements: '其他岗位要求' };
+    } }
+  });
+  assert.equal(target.recommend({ source: 'zlzp' }).qualifiedCount, 1);
+  assert.deepEqual(requests, ['zlzp']);
+});
+
 test('岗位尚未应用时返回清楚的空状态，不推荐历史岗位候选人', () => {
   const result = service([candidate('old', 'boss', 99)], { ...job, updatedAt: null }).recommend();
   assert.equal(result.evaluatedCount, 0);
@@ -80,12 +94,13 @@ test('错误的分数、份数或平台参数会被拒绝', () => {
 test('历史前程无忧页面导航文字不会显示成候选人姓名或求职岗位', () => {
   const key = 'b'.repeat(64);
   const item = candidate('qcwy-ui', 'qcwy', 82, {
-    name: '通知', position: '通知', sourceRecordKey: key
+    name: '通知', position: '通知', sourceRecordKey: key,
+    sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=official-123'
   });
   const result = service([item]).recommend();
   assert.equal(result.qualifiedCount, 1);
   assert.equal(result.recommendations[0].name,
-    `匿名候选人（前程无忧记录 ID：${key.slice(0, 16)}）`);
+    '匿名候选人（前程无忧记录 ID：official-123）');
   assert.equal(result.recommendations[0].position, '求职岗位待核实');
   assert.equal(item.name, '通知');
 });

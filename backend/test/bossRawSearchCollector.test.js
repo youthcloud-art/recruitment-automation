@@ -532,7 +532,8 @@ test('search cards read one official name and the second expected-job field',()=
   const role={textContent:'IT网络运维'};
   const row={textContent:'期望 上海 IT网络运维',querySelectorAll:selector=>
     selector==='span.render-two' ? [city,role] : []};
-  const link={textContent:'张三 期望 上海 IT网络运维'};
+  const link={textContent:'张三 期望 上海 IT网络运维',
+    getAttribute:name=>name==='data-expect' ? 'expect-verified-123' : null};
   const name={textContent:'张三'};
   const card={textContent:link.textContent,querySelectorAll:selector=>
     selector===':scope > a[ka="search_click_open_resume"][data-expect]' ? [link]
@@ -547,6 +548,7 @@ test('search cards read one official name and the second expected-job field',()=
   assert.equal(result.cards[0].displayName,'张三');
   assert.equal(result.cards[0].expectedPosition,'IT网络运维');
   assert.equal(result.cards[0].clickText,link.textContent);
+  assert.equal(result.cards[0].sourceCardIdHint,'expect-verified-123');
   assert.equal(result.cards[0].index,0);
   row.querySelectorAll=()=>[city];
   assert.equal(vm.runInNewContext(SEARCH_CARDS,{document}).cards[0].expectedPosition,'',
@@ -715,7 +717,8 @@ test('search state detects an enabled custom slider despite an active 不限 chi
 
 test('search modal probes require the observed official child wrapper',()=>{
   const canvas={width:777,height:905};
-  const resumeDoc={querySelector:selector=>selector==='canvas#resume' ? canvas : null};
+  const resumeDoc={querySelector:selector=>selector==='canvas#resume' ? canvas : null,
+    body:{innerText:'工作经历：五年项目销售经历。教育经历：本科机械工程专业。'}};
   const frame={src:RESUME,contentDocument:resumeDoc,
     contentWindow:{location:{href:RESUME},performance:{timeOrigin:3}}};
   const pane={scrollTop:0,scrollHeight:2570,clientHeight:905,
@@ -731,6 +734,7 @@ test('search modal probes require the observed official child wrapper',()=>{
   assert.equal(modal.active,true);
   assert.equal(modal.frameReady,true);
   assert.equal(modal.canvasWidth,777);
+  assert.match(modal.text,/教育经历/);
   assert.equal(modal.scrollHeight,2570);
   assert.equal(modal.iframeLiveUrl,RESUME);
   assert.equal(modal.resumeOrigin,3);
@@ -901,6 +905,96 @@ test('assistant search submits the active job through the official input once',a
   assert.equal(state.value,TITLE);
 });
 
+test('assistant retries a moving search control only before any mouse press',async()=>{
+  const collector=new BossRawSearchCollector();
+  collector.wait=async()=>{};
+  collector.assertPage=async()=>({url:PAGE});
+  collector.readModal=async()=>({active:false});
+  collector.readOnlyExpression=async()=>({state:'ready',value:TITLE,
+    frameOrigin:7,selectedFiltersReady:true,nonDefaultSelected:0,
+    checkedCount:0,activeCustomSliderCount:0});
+  let clicks=0;
+  collector.session={clickUnique:async()=>{
+    clicks++;
+    if(clicks===1) throw Object.assign(new Error('control moved'),{
+      code:'BOSS_CDP_TARGET_UNSTABLE',stage:'pre_click_recheck',
+      reason:'position_moved'});
+  }};
+  await collector.clickStableSearchControl('input.search-input',TITLE,7);
+  assert.equal(clicks,2);
+});
+
+test('assistant waits through transient hidden search control with unchanged iframe',async()=>{
+  const collector=new BossRawSearchCollector();
+  collector.wait=async()=>{};
+  collector.assertPage=async()=>({url:PAGE});
+  collector.readModal=async()=>({active:false});
+  collector.readOnlyExpression=async()=>({state:'ready',value:TITLE,
+    frameOrigin:7,selectedFiltersReady:true,nonDefaultSelected:0,
+    checkedCount:0,activeCustomSliderCount:0});
+  let clicks=0;
+  collector.session={clickUnique:async()=>{
+    clicks++;
+    if(clicks<3) throw Object.assign(new Error('rendering'),{
+      code:'BOSS_CDP_TARGET_UNSTABLE',stage:'pre_click_recheck',
+      reason:'target_not_ready',targetState:'hidden'});
+  }};
+  await collector.clickStableSearchControl('input.search-input',TITLE,7);
+  assert.equal(clicks,3);
+});
+
+test('assistant stops retrying when the official search iframe changes',async()=>{
+  const collector=new BossRawSearchCollector();
+  collector.wait=async()=>{};
+  collector.assertPage=async()=>({url:PAGE});
+  collector.readModal=async()=>({active:false});
+  collector.readOnlyExpression=async()=>({state:'ready',value:TITLE,
+    frameOrigin:8,selectedFiltersReady:true,nonDefaultSelected:0,
+    checkedCount:0,activeCustomSliderCount:0});
+  let clicks=0;
+  collector.session={clickUnique:async()=>{
+    clicks++;
+    throw Object.assign(new Error('control moved'),{
+      code:'BOSS_CDP_TARGET_UNSTABLE',stage:'pre_click_recheck',
+      reason:'target_not_ready',targetState:'hidden'});
+  }};
+  await assert.rejects(collector.clickStableSearchControl(
+    'input.search-input',TITLE,7),error=>error.reason==='target_not_ready');
+  assert.equal(clicks,1);
+});
+
+test('assistant does not retry a search control after iframe replacement',async()=>{
+  const collector=new BossRawSearchCollector();
+  let clicks=0;
+  collector.session={clickUnique:async()=>{
+    clicks++;
+    throw Object.assign(new Error('iframe changed'),{
+      code:'BOSS_CDP_TARGET_UNSTABLE',stage:'pre_click_recheck',
+      reason:'document_changed'});
+  }};
+  await assert.rejects(collector.clickStableSearchControl(
+    'input.search-input',TITLE,7),
+  error=>error.reason==='document_changed');
+  assert.equal(clicks,1);
+});
+
+test('assistant waits for newly opened official search controls before editing',async()=>{
+  const collector=new BossRawSearchCollector();
+  const states=[{state:'frame_unavailable'},{state:'input_unavailable'},
+    {state:'ready',value:'',selectedFiltersReady:false},
+    {state:'ready',value:TITLE,cardCount:2,safeCardCount:2,
+      frameOrigin:7,matchingSearchRequests:1,selectedFiltersReady:true,
+      nonDefaultSelected:0,checkedCount:0,activeCustomSliderCount:0}];
+  let reads=0,waits=0,mutations=0;
+  collector.readOnlyExpression=async()=>states[Math.min(reads++,states.length-1)];
+  collector.assertPage=async()=>({url:PAGE});
+  collector.wait=async()=>{waits++;};
+  collector.session={clickUnique:async()=>{mutations++;}};
+  assert.match((await collector.selectJob(TITLE)).value,/^search-[a-f0-9]{32}$/);
+  assert.equal(waits,3);
+  assert.equal(mutations,0);
+});
+
 test('assistant search refuses non-default platform filters before editing',async()=>{
   const collector=new BossRawSearchCollector();
   collector.readOnlyExpression=async()=>({state:'ready',value:'旧岗位',
@@ -923,13 +1017,29 @@ test('search extraction accepts complete official DOM resume and rejects blank c
   ].join('\n');
   const url=new URL(RESUME);
   collector.readModal=async()=>({active:true,frameReady:true,text,canvas:false,
-    url,scrollTop:0,iframeSrc:RESUME,iframeLiveUrl:RESUME,
+    url,scrollTop:0,scrollHeight:905,clientHeight:905,
+    iframeSrc:RESUME,iframeLiveUrl:RESUME,
     outerOrigin:1,resumeOrigin:2});
   collector.assertJob=async()=>({});
   const direct=await collector.extractResume(Date.now()+1000,
     {title:TITLE,id:TITLE});
   assert.equal(direct.method,'dom');
   assert.equal(direct.text,text);
+
+  let top=0;
+  const scrolling=new BossRawSearchCollector({wait:async()=>{}});
+  scrolling.readModal=async()=>({active:true,frameReady:true,text,canvas:true,
+    canvasWidth:777,canvasHeight:905,url,scrollTop:top,
+    scrollHeight:1302,clientHeight:953,iframeSrc:RESUME,
+    iframeLiveUrl:RESUME,outerOrigin:1,resumeOrigin:2});
+  scrolling.assertJob=async()=>({});
+  scrolling.setSearchResumeScrollTop=async value=>{
+    top=value;return {after:top};
+  };
+  const complete=await scrolling.extractResume(Date.now()+1000,
+    {title:TITLE,id:TITLE});
+  assert.equal(complete.method,'dom');
+  assert.equal(top,349,'the official resume bottom is checked before saving DOM text');
 
   let time=0;
   const blank=new BossRawSearchCollector({now:()=>time,wait:async ms=>{time+=ms;}});
@@ -968,6 +1078,36 @@ test('search OCR shifts only within the prior viewport when one lazy screen repe
   assert.deepEqual(moves,[700,850,1495]);
   assert.match(result.text,/教育经历/);
   assert.match(result.text,/项目经历/);
+});
+
+test('search OCR reads the verified visible resume when a static Canvas repeats after scrolling',async()=>{
+  let top=0;
+  const screens={
+    canvas:'工作经历：2020年至今负责设备销售与客户维护，跟进合同、交付、验收、回款以及售后服务，持续五年以上。',
+    viewport:'教育经历：2016年至2020年在大学完成机械工程本科学习。专业技能：熟悉磁性材料、电机产品和工业客户项目沟通。'
+  };
+  const collector=new BossRawSearchCollector({wait:async()=>{},
+    ocr:{recognizeTextFromImage:async image=>screens[image.toString()]}});
+  collector.session={captureSearchResumeViewportPng:async()=>{}};
+  collector.readModal=async()=>({active:true,frameReady:true,text:'',canvas:true,
+    canvasWidth:777,canvasHeight:905,scrollTop:top,scrollHeight:1605,
+    clientHeight:905,url:new URL(RESUME),iframeSrc:RESUME,
+    iframeLiveUrl:RESUME,outerOrigin:1,resumeOrigin:2});
+  collector.assertJob=async()=>({});
+  collector.assertPage=async()=>({url:PAGE,visibilityState:'visible'});
+  collector.verifiedCanvas=async()=>({image:Buffer.from('canvas'),
+    fingerprint:'same-canvas-pixels'});
+  collector.verifiedViewport=async()=>({image:Buffer.from('viewport'),
+    fingerprint:`visible-at-${top}`});
+  collector.setSearchResumeScrollTop=async value=>{
+    top=value;return {after:top};
+  };
+  const result=await collector.extractResume(Date.now()+10_000,
+    {title:TITLE,id:searchScope(TITLE)});
+  assert.equal(result.method,'ocr');
+  assert.match(result.text,/工作经历/);
+  assert.match(result.text,/教育经历/);
+  assert.equal(top,700);
 });
 
 test('search OCR refuses to bridge an unknown gap when the final screen repeats',async()=>{

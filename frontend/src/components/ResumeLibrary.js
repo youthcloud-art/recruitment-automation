@@ -30,6 +30,8 @@ const ResumeLibrary = () => {
   const requestSequence = useRef(0);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedResume, setSelectedResume] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const detailRequest = useRef(0);
   
   // 获取简历列表
   const fetchResumes = useCallback(async () => {
@@ -89,15 +91,30 @@ const ResumeLibrary = () => {
   };
 
   // 处理查看详情
-  const handleViewDetail = (resume) => {
-    setSelectedResume(resume);
+  const handleViewDetail = async (resume) => {
+    const request = ++detailRequest.current;
+    setSelectedResume(null);
     setDetailModalVisible(true);
+    setDetailLoading(true);
+    try {
+      const result = await apiGet(`/resume/${encodeURIComponent(resume.id)}`);
+      if (request === detailRequest.current) setSelectedResume(result.data);
+    } catch (error) {
+      if (request === detailRequest.current) {
+        setDetailModalVisible(false);
+        message.error('读取完整简历失败：' + error.message);
+      }
+    } finally {
+      if (request === detailRequest.current) setDetailLoading(false);
+    }
   };
 
   // 关闭详情弹窗
   const handleCloseDetail = () => {
+    detailRequest.current++;
     setDetailModalVisible(false);
     setSelectedResume(null);
+    setDetailLoading(false);
   };
 
   // 处理上传成功
@@ -543,6 +560,9 @@ const ResumeLibrary = () => {
                     </div>
                   </div>
 
+                  <div style={{ textAlign: 'center', marginBottom: 8 }}>
+                    <Text type="secondary">招聘岗位：{item.hiringJobTitle || '待核实'}</Text>
+                  </div>
                   {/* 求职岗位 */}
                   <div style={{ textAlign: 'center', marginBottom: '12px' }}>
                     <Tag color="blue" style={{ fontSize: '13px', padding: '4px 8px', borderRadius: '12px' }}>
@@ -570,7 +590,7 @@ const ResumeLibrary = () => {
                         // 确保所有字段都是字符串类型，避免React渲染错误
                         const company = typeof exp.company === 'string' ? exp.company : 
                                        (typeof exp.company === 'object' && exp.company ? JSON.stringify(exp.company) : '未知公司');
-                        const position = typeof exp.position === 'string' ? exp.position : 
+                        const position = typeof exp.position === 'string' && exp.position ? exp.position :
                                         (typeof exp.position === 'object' && exp.position ? JSON.stringify(exp.position) : '未知职位');
                         const duration = typeof exp.duration === 'string' ? exp.duration : 
                                         (typeof exp.duration === 'object' && exp.duration ? JSON.stringify(exp.duration) : '未知时间');
@@ -581,13 +601,15 @@ const ResumeLibrary = () => {
                           <div key={index} style={{ marginBottom: '8px', padding: '6px', backgroundColor: '#fafafa', borderRadius: '4px' }}>
                             <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#333' }}>
                               {company} | {position}
+                              {exp.verificationStatus === 'ocr_needs_review' &&
+                                <span style={{ color: '#b26a00', fontWeight: 'normal' }}> · OCR 待核实</span>}
                             </div>
                             <div style={{ fontSize: '10px', color: '#666', marginBottom: '2px' }}>
                               {duration}
                             </div>
-                            <div style={{ fontSize: '10px', color: '#888', lineHeight: '1.3' }}>
+                            {description && <div style={{ fontSize: '10px', color: '#888', lineHeight: '1.3' }}>
                               {description.length > 50 ? description.substring(0, 50) + '...' : description}
-                            </div>
+                            </div>}
                           </div>
                         );
                       })}
@@ -664,6 +686,7 @@ const ResumeLibrary = () => {
       />
       
       {/* 简历详情弹窗 */}
+      {detailLoading && <Spin tip="读取完整简历中" fullscreen />}
       <ResumeDetailModal
         visible={detailModalVisible}
         onClose={handleCloseDetail}

@@ -1,6 +1,6 @@
 const express = require('express');
 const resumeModel = require('../models/resumeModel');
-const { publicCandidate } = require('../utils/candidateDisplay');
+const { publicCandidateSummary } = require('../utils/candidateDisplay');
 
 function integerParameter(value, fallback, min, max) {
   if (value === undefined) return fallback;
@@ -37,7 +37,8 @@ function createResumePageRouter(store = resumeModel) {
       const data = store.getResumesPage({ source: source || null, status: status || null,
         position: position || null, keyword, sortBy, limit, offset });
       res.set('Cache-Control', 'no-store');
-      res.json({ success: true, data: { ...data, items: data.items.map(publicCandidate) } });
+      res.json({ success: true, data: { ...data,
+        items: data.items.map(item => publicCandidateSummary(item, { view: 'library' })) } });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }

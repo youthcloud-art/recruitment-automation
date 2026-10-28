@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Assert-ChildPath([string]$Root, [string]$Path) {
@@ -24,6 +24,7 @@ function Read-CompanyConfig([string]$InstallRoot) {
     # Compatibility with the first bootstrap, which used a fixed port 5001.
     if (-not $config.PSObject.Properties['backendPort']) { $config | Add-Member -NotePropertyName backendPort -NotePropertyValue 5001 }
     if (-not $config.PSObject.Properties['gatewayPort']) { $config | Add-Member -NotePropertyName gatewayPort -NotePropertyValue 4000 }
+    if (-not $config.PSObject.Properties['watchdogTask']) { $config | Add-Member -NotePropertyName watchdogTask -NotePropertyValue 'AutoRecru-Company-Watchdog' }
     $gateway = 0
     if (-not [int]::TryParse([string]$config.gatewayPort, [ref]$gateway) -or $gateway -lt 1024 -or $gateway -gt 65535) { throw 'The configured gateway port is invalid.' }
     $port = 0
@@ -71,7 +72,10 @@ function Get-CompanyResponseText([string]$Url) {
     } finally { $response.Close() }
 }
 
-function Wait-CompanyHealth([string]$Url, [int]$TimeoutSeconds = 90) {
+# Loading the shared resume store after a release switch can take several
+# minutes on the company server. Keep the health predicate strict, but allow
+# cold startup to finish before rolling a healthy release back.
+function Wait-CompanyHealth([string]$Url, [int]$TimeoutSeconds = 600) {
     $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
         if (Test-CompanyHealth $Url) { return }
@@ -100,6 +104,20 @@ function Get-CompanyRuntimeDefinitions($Config, [string]$ReleaseRoot, [string]$G
 function Start-CompanyChild($Config, $Definition, [string]$LogPrefix = '') {
     $previous = @{}
     $process = $null
+    $logRoot = Assert-ChildPath $Config.installRoot (Join-Path $Config.installRoot 'logs')
+    $logStem = $LogPrefix + $Definition.name
+    foreach ($stream in @('stdout','stderr')) {
+        $activeLog = Assert-ChildPath $logRoot (Join-Path $logRoot ($logStem + '.' + $stream + '.log'))
+        if ((Test-Path -LiteralPath $activeLog -PathType Leaf) -and
+            (Get-Item -LiteralPath $activeLog).Length -gt 0) {
+            $archive = Assert-ChildPath $logRoot (Join-Path $logRoot ($logStem + '.' + $stream + '.' +
+                (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,6) + '.log'))
+            Move-Item -LiteralPath $activeLog -Destination $archive -ErrorAction Stop
+        }
+        $old = @(Get-ChildItem -LiteralPath $logRoot -Filter ($logStem + '.' + $stream + '.*.log') -File |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -Skip 10)
+        foreach ($file in $old) { Remove-Item -LiteralPath $file.FullName -Force }
+    }
     try {
         foreach ($name in $Definition.env.Keys) {
             $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -182,6 +200,32 @@ function Stop-CompanyRuntime($Config) {
     if (Test-Path -LiteralPath $statePath) {
         $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
         foreach ($record in @($state.children)) { Stop-VerifiedChild $record }
+    }
+}
+
+function Assert-CompanyCollectionIdle($Config) {
+    # A release switch terminates the backend process. Never interrupt a
+    # collector or an accepted AI evaluation merely to publish new code.
+    $runtime = Get-ScheduledTask -TaskName $Config.runtimeTask -ErrorAction Stop
+    if ($runtime.State -ne 'Running') { return }
+    $base = 'http://127.0.0.1:' + $Config.backendPort + '/api'
+    $checks = @(
+        @{name='BOSS'; path='/boss-zhipin/browsing-status'; active={param($data) [bool]$data.isActive}},
+        @{name='智联'; path='/zhilian/browsing-status'; active={param($data) [bool]$data.isActive}},
+        @{name='前程无忧'; path='/wuyou/status?readOnly=1'; active={param($data) [bool]$data.batch.running}},
+        @{name='AI 评估'; path='/recruitment-pipeline/evaluation-queue/status'; active={param($data) [bool]$data.running -or [int]$data.queued -gt 0}},
+        @{name='批量评估'; path='/recruitment-pipeline/evaluate-batch/status'; active={param($data) [bool]$data.running}}
+    )
+    foreach ($check in $checks) {
+        try {
+            $reply = Invoke-RestMethod -Uri ($base + $check.path) -TimeoutSec 5 -ErrorAction Stop
+            if ($reply.success -ne $true -or $null -eq $reply.data) { throw '状态响应无效' }
+        } catch {
+            throw "DEPLOY_DEFERRED: $($check.name) 状态暂不可确认；保留当前服务并稍后重试部署"
+        }
+        if (& $check.active $reply.data) {
+            throw "DEPLOY_DEFERRED: $($check.name) 正在采集或评估；本次部署延后，当前任务继续运行"
+        }
     }
 }
 

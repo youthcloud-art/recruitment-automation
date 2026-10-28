@@ -3,6 +3,9 @@ const express = require('express');
 function createModelConfigRouter(configService, onChange = () => {}) {
   const router = express.Router();
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+  // The company gateway answers this endpoint itself using the TCP peer address.
+  // Direct local development has its own config and remains editable.
+  router.get('/access', (_req, res) => res.json({ success: true, data: { canEdit: true } }));
   router.get('/', (_req, res) => res.json({ success: true, data: configService.status() }));
   router.put('/', (req, res) => {
     try {

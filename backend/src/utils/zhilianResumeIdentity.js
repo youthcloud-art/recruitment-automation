@@ -1,3 +1,5 @@
+const { platformLocator } = require('./platformLocator');
+
 function normalizedField(value) {
   return String(value ?? '').normalize('NFKC').replace(/\s+/g, '').trim().toLowerCase();
 }
@@ -69,6 +71,10 @@ function oneSmallTextChange(left, right, strongIdentity) {
 
 function isSameZhilianResume(a, b) {
   if (a?.source !== 'zlzp' || b?.source !== 'zlzp') return false;
+  const leftId = platformLocator(a).id;
+  const rightId = platformLocator(b).id;
+  if (leftId && rightId && leftId !== rightId) return false;
+  if (leftId && rightId && leftId === rightId) return true;
   if (a.sourceFingerprint && a.sourceFingerprint === b.sourceFingerprint) return true;
   // Search-result pages are shared by many candidates. Matching URLs are a guard,
   // not an identity by themselves: require a parsed name and almost identical long text.

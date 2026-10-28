@@ -8,7 +8,7 @@ const {BossCardQuarantine} = require('../src/services/bossCardQuarantine');
 const {
   BossRawRecommendCollector, normalizeTitle, chooseExactJob,
   officialResumeUrl, candidateIdFromUrl, joinScreenText, repeatedScreenText, hashText,
-  verifiedCardName, verifiedCardPosition, EXPRESSIONS
+  verifiedCardName, platformCardAlias, verifiedCardPosition, EXPRESSIONS
 } = require('../src/services/bossRawRecommendCollector');
 
 const TITLE = '成本核算经理';
@@ -18,6 +18,46 @@ const RESUME = [
   '专业技能：熟悉 ERP 系统、标准成本制定、预算分析、财务报表编制。'
 ].join('\n');
 const LONG_CARD = '候选人甲在制造企业担任成本核算经理，负责标准成本、差异分析和月度结账。'.repeat(9);
+
+test('BOSS official card record ID is stored when generic resume iframe has no ID', async () => {
+  const records = [];
+  const collector = new BossRawRecommendCollector({
+    store: { addResume: async record => {
+      records.push(record); return { resume: record, created: true };
+    } }, queue: { enqueue: () => ({ queued: true }) }
+  });
+  const captured = { text: RESUME,
+    url: new URL('https://www.zhipin.com/web/frame/c-resume/?source=search'), method: 'dom' };
+  await collector.saveResume(captured, { title: TITLE, jobRequirements: '本科及以上' },
+    '', { sourceCardIdHint: 'expect-verified-123' });
+  assert.equal(records[0].sourceCandidateId, 'expect-verified-123');
+  await assert.rejects(collector.saveResume(captured,
+    { title: TITLE, jobRequirements: '本科及以上' }),
+  error => error.code === 'BOSS_PLATFORM_ID_UNAVAILABLE');
+  assert.equal(records.length, 1);
+});
+test('BOSS revisiting an exact historical resume backfills its official card ID', async () => {
+  let historical = { id: 'legacy-boss', source: 'boss',
+    sourceFingerprint: hashText(RESUME), originalText: RESUME };
+  const collector = new BossRawRecommendCollector({
+    store: {
+      addResume: async () => ({ resume: historical, created: false }),
+      updateCandidateMetadata: async (id, changes) => {
+        assert.equal(id, 'legacy-boss');
+        historical = { ...historical, ...changes };
+        return historical;
+      }
+    }, queue: { enqueue: () => ({ queued: true }) }
+  });
+  const captured = { text: RESUME,
+    url: new URL('https://www.zhipin.com/web/frame/c-resume/?source=search'), method: 'dom' };
+  const result = await collector.saveResume(captured,
+    { title: TITLE, jobRequirements: '本科及以上' }, '',
+    { sourceCardIdHint: 'expect-verified-123' });
+  assert.equal(result.created, false);
+  assert.equal(historical.sourceCandidateId, 'expect-verified-123');
+  assert.equal(historical.sourceCandidateIdSource, 'platform_card');
+});
 const TITLELESS_OCR_PAGES = new Map([
   [0,'2020年3月-2024年9月，某制造公司成本核算经理，负责产品成本归集与月度结账，管理多工厂的材料耗用核对，制定成本差异分析流程，协调仓库和生产团队逐月核验出入库单据，完成经营报表。针对材料价格波动建立月度追踪台账，汇总产品单位成本变化，向财务负责人说明异常项目并跟进整改。'],
   [700,'2018年6月-2020年2月，某工业集团财务主管，参与年度预算和标准成本制定，实施 ERP 成本模块上线，优化成本中心分摊口径，协助业务部门复核库存和采购数据，持续分析毛利变化。每季度与供应链团队核对采购价格和生产损耗，编制管理层需要的分析材料，追踪预算执行情况。'],
@@ -296,9 +336,30 @@ test('a virtualized list shrinking below the current card window is rescanned on
 test('official card name and job validators reject single-character OCR artifacts', () => {
   assert.equal(verifiedCardName('张三'),'张三');
   assert.equal(verifiedCardName('张'),'');
+  assert.equal(verifiedCardName('张先生'),'');
+  assert.deepEqual(platformCardAlias('涂**'), {value:'涂**',type:'masked'});
+  assert.deepEqual(platformCardAlias('张先生'), {value:'张先生',type:'honorific'});
+  assert.equal(platformCardAlias('张三'), null);
   assert.equal(verifiedCardPosition('成本核算经理'),'成本核算经理');
   assert.equal(verifiedCardPosition('经'),'');
   assert.equal(verifiedCardPosition('不限'),'');
+});
+
+test('masked BOSS card label is saved as a platform alias, not a verified name', async () => {
+  const {session,store} = fakeSession({cardMetadata:{
+    displayName:'涂**',expectedPosition:'销售工程师'
+  }});
+  const collector = new BossRawRecommendCollector({
+    connect:async () => session,store,queue:{enqueue() {}},
+    jobService:{current:() => ({title:TITLE,jobRequirements:'销售经验'})},
+    wait:async () => {}
+  });
+  const result = await collector.collect({targetCount:1});
+  assert.equal(result.state,'completed');
+  assert.equal(store.records[0].name,null);
+  assert.equal(store.records[0].nameSource,'unverified');
+  assert.equal(store.records[0].platformAlias,'涂**');
+  assert.equal(store.records[0].platformAliasType,'masked');
 });
 
 test('validated official card metadata overrides one-character OCR fields at save', async () => {
@@ -411,10 +472,16 @@ test('collector pauses before candidate click when owned page stays hidden', asy
 });
 
 test('recent unique long official card with a complete indexed resume skips repeat OCR', async () => {
-  const {session,state,store} = fakeSession({cardText:LONG_CARD});
+  const {session,state,store} = fakeSession({cardText:LONG_CARD,
+    cardMetadata:{displayName:'涂**'}});
   const fingerprint = hashText(`cost-job\n${LONG_CARD}`);
   let lookups = 0;
+  const updates=[];
   const queued = [];
+  store.updateCandidateMetadata=async (id,changes)=>{
+    updates.push([id,changes]);
+    return {id,source:'boss',...changes};
+  };
   store.findBossCardMatch = async value => {
     lookups++;
     assert.equal(value,fingerprint);
@@ -438,6 +505,9 @@ test('recent unique long official card with a complete indexed resume skips repe
   assert.equal(store.records.length,0);
   assert.ok(lookups >= 1);
   assert.equal(state.clicks.includes('li.card-item'),false);
+  assert.deepEqual(updates,[['existing',{
+    platformAlias:'涂**',platformAliasType:'masked'
+  }]]);
   assert.deepEqual(queued,[['existing','本科，三年以上成本核算经验']]);
 });
 
@@ -455,6 +525,23 @@ test('short teaser never uses the OCR skip hint', async () => {
   assert.equal(store.records.length,1);
   assert.equal(lookups,0);
   assert.equal(state.clicks.includes('li.card-item'),true);
+});
+
+test('known BOSS card without a stored platform ID is revisited instead of skipped', async () => {
+  const { session, state, store } = fakeSession({ cardText: LONG_CARD,
+    cardMetadata: { sourceCardIdHint: 'expect-verified-123' } });
+  store.findBossCardMatch = () => ({ id: 'historical', source: 'boss',
+    sourceCardFingerprint: hashText(`cost-job\n${LONG_CARD}`),
+    sourceFingerprint: hashText(RESUME), parseStatus: 'completed',
+    originalText: RESUME, createdAt: new Date().toISOString() });
+  const collector = new BossRawRecommendCollector({ connect: async () => session,
+    store, queue: { enqueue: () => ({ queued: true }) },
+    jobService: { current: () => ({ title: TITLE,
+      jobRequirements: '本科，三年以上成本核算经验' }) }, wait: async () => {} });
+  const result = await collector.collect({ targetCount: 1 });
+  assert.equal(result.state, 'completed');
+  assert.equal(store.records.length, 1);
+  assert.equal(state.clicks.includes('li.card-item'), true);
 });
 
 test('same-text official cards report ambiguity without merging or clicking', async () => {
@@ -497,7 +584,10 @@ test('historical duplicate receives card index only after full-resume identity m
   });
   const result = await collector.collect({targetCount:1});
   assert.equal(result.state,'partial');
-  assert.deepEqual(updates,[{id:'historical',changes:{sourceCardFingerprint:fingerprint}}]);
+  assert.deepEqual(updates,[
+    {id:'historical',changes:{sourceCandidateId:'geek-1',sourceCandidateIdSource:'official_url'}},
+    {id:'historical',changes:{sourceCardFingerprint:fingerprint}}
+  ]);
   assert.deepEqual(queued,[['historical','本科，三年以上成本核算经验']]);
 });
 
@@ -621,8 +711,35 @@ test('a single obscured card can be skipped after read-only checks and the next 
   assert.equal(store.records.length,1);
 });
 
-test('five consecutive candidate processing failures pause before consuming a large list', async () => {
-  const cards=Array.from({length:12},(_,index)=>`候选卡 ${index} 成本核算经历`);
+test('five incomplete candidates do not stop the next complete BOSS resume', async () => {
+  const cards=Array.from({length:6},(_,index)=>`候选卡 ${index} 成本核算经历`);
+  const {session,state,store}=fakeSession({cardTexts:cards});
+  const collector=new BossRawRecommendCollector({
+    connect:async()=>session,store,queue:{enqueue() {}},
+    jobService:{current:()=>({title:TITLE,jobRequirements:'本科，三年以上成本核算经验'})},
+    wait:async()=>{}
+  });
+  const extract=collector.extractResume.bind(collector);
+  let calls=0;
+  collector.extractResume=async(...args)=>{
+    if (++calls<=5) {
+      const error=new Error('invalid resume content');
+      error.code='BOSS_RESUME_CONTENT_INVALID';
+      throw error;
+    }
+    return extract(...args);
+  };
+  const result=await collector.collect({targetCount:1});
+  assert.equal(result.state,'completed');
+  assert.equal(result.attempted,6);
+  assert.equal(result.skipped,5);
+  assert.equal(result.saved,1);
+  assert.equal(state.openCount,6);
+  assert.equal(store.records.length,1);
+});
+
+test('twenty consecutive incomplete candidates pause a likely page or OCR regression', async () => {
+  const cards=Array.from({length:25},(_,index)=>`候选卡 ${index} 成本核算经历`);
   const {session,state,store}=fakeSession({cardTexts:cards});
   const collector=new BossRawRecommendCollector({
     connect:async()=>session,store,queue:{enqueue() {}},
@@ -637,10 +754,10 @@ test('five consecutive candidate processing failures pause before consuming a la
   const result=await collector.collect({targetCount:1});
   assert.equal(result.state,'paused');
   assert.equal(result.lastFailureCode,'BOSS_RESUME_CONTENT_INVALID');
-  assert.equal(result.attempted,5);
-  assert.equal(result.skipped,4);
+  assert.equal(result.attempted,20);
+  assert.equal(result.skipped,19);
   assert.equal(result.saved,0);
-  assert.equal(state.openCount,5);
+  assert.equal(state.openCount,20);
   assert.equal(store.records.length,0);
 });
 
@@ -845,9 +962,11 @@ test('transition-only read does not itself click an exact guide', async () => {
 test('official modal read uses a bounded longer timeout and records its stage', async () => {
   const {session,state}=fakeSession();
   let timeoutMs=0;
+  let reads=0;
   session.evaluate=async (expression,options) => {
     assert.equal(expression,EXPRESSIONS.modal);
     timeoutMs=options.timeoutMs;
+    reads++;
     const error=new Error('CDP timeout');
     error.code='BOSS_CDP_TIMEOUT';
     throw error;
@@ -859,6 +978,29 @@ test('official modal read uses a bounded longer timeout and records its stage', 
   await assert.rejects(collector.readModal(),
     error => error.code === 'BOSS_CDP_TIMEOUT' && error.stage === 'read_modal');
   assert.equal(timeoutMs,15000);
+  assert.equal(reads,2);
+  assert.equal(state.openCount,0);
+});
+
+test('official modal read retries one timed-out read without another click', async () => {
+  const {session,state}=fakeSession();
+  let reads=0;
+  session.evaluate=async expression => {
+    assert.equal(expression,EXPRESSIONS.modal);
+    reads++;
+    if (reads===1) {
+      const error=new Error('CDP timeout');
+      error.code='BOSS_CDP_TIMEOUT';
+      throw error;
+    }
+    return {active:false};
+  };
+  const collector=new BossRawRecommendCollector({
+    connect:async()=>session,store:{},queue:{},jobService:{},wait:async()=>{}
+  });
+  collector.session=session;
+  assert.deepEqual(await collector.readModal(),{active:false});
+  assert.equal(reads,2);
   assert.equal(state.openCount,0);
 });
 

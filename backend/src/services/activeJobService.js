@@ -12,6 +12,12 @@ const EMPTY_JOB = Object.freeze({
   minExperienceYears: null, targetCount: null, recommendationTargetCount: null,
   jobRequirements: '', updatedAt: null
 });
+const PLATFORM_IDS = Object.freeze(['boss', 'zlzp', 'qcwy']);
+function normalizeApplyTo(value = 'all') {
+  if (value === undefined || value === null || value === '') return 'all';
+  if (value === 'all' || PLATFORM_IDS.includes(value)) return value;
+  throw new Error('应用平台无效');
+}
 
 function field(value, label, maxLength) {
   if (value === undefined || value === null) return '';
@@ -206,22 +212,49 @@ function parseJobTemplate(buffer, options) {
 class ActiveJobService {
   constructor({ file = DEFAULT_FILE } = {}) { this.file = file; }
 
-  current() {
+  readSaved() {
     try {
-      const saved = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      return { ...EMPTY_JOB, ...saved };
+      return JSON.parse(fs.readFileSync(this.file, 'utf8'));
     } catch (error) {
-      if (error.code === 'ENOENT') return { ...EMPTY_JOB };
+      if (error.code === 'ENOENT') return null;
       throw error;
     }
   }
 
-  save(input) {
+  current(platform) {
+    const platformId = platform ? normalizeApplyTo(platform) : null;
+    const saved = this.readSaved();
+    if (!saved) return { ...EMPTY_JOB };
+    const scoped = platformId ? saved.platformJobs?.[platformId] : null;
+    const { platformJobs: _platformJobs, ...defaultJob } = saved;
+    return { ...EMPTY_JOB, ...(scoped || defaultJob) };
+  }
+
+  currentByPlatform() {
+    return Object.fromEntries(PLATFORM_IDS.map(id => [id, this.current(id)]));
+  }
+
+  save(input, { positionId = null, applyTo = 'all' } = {}) {
+    applyTo = normalizeApplyTo(applyTo);
     const normalized = normalizeJob(input);
+    if (positionId !== null) {
+      if (typeof positionId !== 'string' || !/^position_[A-Za-z0-9_-]{1,80}$/.test(positionId)) {
+        throw new Error('岗位编号无效');
+      }
+      normalized.positionId = positionId;
+    }
+    const saved = this.readSaved();
+    const { platformJobs: previousScopes, ...previousDefault } = saved || {};
+    // Materialize legacy global settings before changing a single platform.
+    // Otherwise an untouched platform would silently inherit the new job.
+    const scopes = Object.fromEntries(PLATFORM_IDS.map(id => [id,
+      previousScopes?.[id] || { ...EMPTY_JOB, ...previousDefault }]));
+    if (applyTo === 'all') PLATFORM_IDS.forEach(id => { scopes[id] = normalized; });
+    else scopes[applyTo] = normalized;
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = `${this.file}.${process.pid}.tmp`;
     try {
-      fs.writeFileSync(temporary, JSON.stringify(normalized, null, 2), { mode: 0o600 });
+      fs.writeFileSync(temporary, JSON.stringify({ ...normalized, platformJobs: scopes }, null, 2), { mode: 0o600 });
       fs.renameSync(temporary, this.file);
     } finally {
       try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -233,4 +266,4 @@ class ActiveJobService {
 }
 
 module.exports = { ActiveJobService, normalizeJob, parseJobTemplate,
-  readableXlsxBuffer, EMPTY_JOB };
+  readableXlsxBuffer, EMPTY_JOB, PLATFORM_IDS, normalizeApplyTo };

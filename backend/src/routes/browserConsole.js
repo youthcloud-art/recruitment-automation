@@ -2,6 +2,10 @@
 
 const express = require('express');
 const { localApiAccess } = require('../middleware/localApiAccess');
+const resumeModel = require('../models/resumeModel');
+const { locateBossCandidate, locateBossCandidateByFingerprint,
+  locateOfficialCandidate } = require('../services/candidateSourceLocator');
+const { platformLocator } = require('../utils/platformLocator');
 
 const PLATFORMS = {
   boss: { label: 'BOSS 直聘', profileName: 'boss', port: 19222, domain: 'zhipin.com' },
@@ -55,12 +59,27 @@ function identity(platform, clientId) {
 }
 
 function createBrowserConsoleRouter({ environment = process.env, getTargets = defaultTargets,
-  now = Date.now, attachExisting = options => require('../services/visibleChromeCdp').attachExistingVisibleChromeCdp(options) } = {}) {
+  now = Date.now,
+  disconnectTimeoutMs = 5000,
+  attachExisting = options => require('../services/visibleChromeCdp').attachExistingVisibleChromeCdp(options),
+  readOwnedTabs = options => require('../services/visibleChromeCdp').getCdpTabs(options) } = {}) {
   const router = express.Router();
   let lock = null;
   let pending = false;
   const frames = new Map();
   const currentLock = () => lock && lock.expiresAt > now() ? lock : null;
+  const ownedAvailable = async (platform, target) => {
+    if (available(target)) return true;
+    try {
+      const tabs = await readOwnedTabs(PLATFORMS[platform]);
+      return tabs.some(tab => {
+        const url = new URL(tab.url);
+        const domain = PLATFORMS[platform].domain;
+        return url.protocol === 'https:' &&
+          (url.hostname === domain || url.hostname.endsWith(`.${domain}`));
+      });
+    } catch { return false; }
+  };
   const owns = (platform, clientId) => currentLock()?.clientId === clientId && currentLock()?.platform === platform;
   const requireLock = (platform, clientId) => {
     identity(platform, clientId);
@@ -69,6 +88,21 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
   const respond = (res, data) => res.json({ success: true, data });
   const errorResponse = (res, error) => res.status(error.publicStatus || 503)
     .json({ success: false, message: error.publicStatus ? error.message : '平台画面暂不可用，请确认服务器浏览器已打开后重试' });
+
+  // Raw CDP failures have deliberately terse internal messages. Give the
+  // operator a safe recovery action instead of hiding every locator failure
+  // behind the same generic screenshot error.
+  const bossLocatorRecovery = {
+    BOSS_CDP_PAGE_UNAVAILABLE: 'BOSS 专用浏览器未找到唯一的招聘后台标签页；请保留一个已登录的“搜索牛人”页后重试',
+    BOSS_CDP_WINDOW_MINIMIZED: 'BOSS 专用 Chrome 已最小化；请恢复并最大化窗口后重试定位',
+    BOSS_CDP_WINDOW_UNAVAILABLE: 'BOSS 招聘窗口或结果区域暂不可用；请恢复窗口并等待岗位结果卡片显示后重试',
+    BOSS_CDP_VIEWPORT_TOO_SMALL: 'BOSS 招聘窗口显示区域不足；请最大化专用 Chrome 后重试定位',
+    BOSS_VERIFICATION_REQUIRED: 'BOSS 需要在官方页面完成人工安全验证；完成后回到岗位结果页重试',
+    BOSS_LOGIN_REQUIRED: 'BOSS 登录已失效；请在专用 Chrome 正常登录后重试',
+    BOSS_PAGE_UNAVAILABLE: 'BOSS 当前不在可用的招聘结果页；请打开对应岗位的“搜索牛人”结果后重试',
+    BOSS_CDP_TIMEOUT: 'BOSS 页面响应超时；请确认官方结果卡片已加载，稍后重试',
+    BOSS_CDP_DISCONNECTED: 'BOSS 浏览器连接中断；请确认专用 Chrome 仍打开后重试'
+  };
 
   router.use((_req, res, next) => {
     res.set('Cache-Control', 'no-store, private');
@@ -80,7 +114,8 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
 
   async function withPage(platform, callback) {
     const target = getTargets()[platform];
-    if (!available(target)) fail(409, '请先在对应招聘平台页面启动浏览器，再打开服务器画面');
+    if (!await ownedAvailable(platform, target))
+      fail(409, '请先在对应招聘平台页面启动浏览器，再打开服务器画面');
     let attached;
     try {
       let page = target.service.page;
@@ -96,31 +131,101 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
     } finally {
       // connectOverCDP browser.close disconnects this temporary attachment. It
       // does not close the externally launched dedicated Chrome process.
-      if (attached) await attached.browser.close().catch(() => {});
+      if (attached) {
+        // A stalled CDP disconnect must not keep the global manual-control
+        // lock busy forever after an otherwise completed lookup/screenshot.
+        let timer;
+        try {
+          await Promise.race([
+            attached.browser.close().catch(() => {}),
+            new Promise(resolve => { timer = setTimeout(resolve, disconnectTimeoutMs); })
+          ]);
+        } finally { clearTimeout(timer); }
+      }
     }
   }
 
-  router.get('/status', (_req, res) => {
+  // Locate a persisted candidate in the server-owned platform browser. This
+  // never accepts a URL or platform ID from the client: both are read from the
+  // local resume record, and collection/manual browser control stay exclusive.
+  router.post('/locate-candidate', async (req, res) => {
+    try {
+      fields(req.body, ['candidateId']);
+      const id = req.body?.candidateId;
+      if (typeof id !== 'string' || !/^resume_[A-Za-z0-9_\-]{8,100}$/.test(id))
+        fail(400, '本机候选人编号无效');
+      const candidate = resumeModel.getResumeById(id);
+      if (!candidate || !['boss', 'zlzp', 'qcwy'].includes(candidate.source))
+        fail(404, '未找到对应平台的候选人记录');
+      const platform = {boss:'boss',zlzp:'zhilian',qcwy:'wuyou'}[candidate.source];
+      if (pending || currentLock() || running(getTargets()[platform]))
+        fail(409, '平台浏览器正在采集或由同事操作，请稍后再定位');
+      pending = true;
+      try {
+        const target = getTargets()[platform];
+      if (!await ownedAvailable(platform, target))
+        fail(409, '请先在采集页面启动对应平台的服务器浏览器');
+        let result;
+        if (platform === 'boss') {
+          const session = await require('../services/bossRawCdp').connectOwnedBossPage();
+          try {
+            result = platformLocator(candidate).id
+              ? await locateBossCandidate(session, candidate)
+              : await locateBossCandidateByFingerprint(session, candidate);
+          }
+          finally { session.close(); }
+          if (result.recovered) {
+            const existing = resumeModel.findDuplicateResume({source:'boss',
+              sourceCandidateId:result.recordId});
+            if (existing && existing.id !== candidate.id)
+              fail(409,'该 BOSS 平台编号已属于其他候选人，未补录；请人工核对');
+            const latest = resumeModel.getResumeById(candidate.id);
+            if (!latest || (platformLocator(latest).id &&
+                platformLocator(latest).id !== result.recordId))
+              fail(409,'本机候选记录在定位期间已变化，未补录');
+            if (!platformLocator(latest).id) resumeModel.updateCandidateMetadata(candidate.id, {
+              sourceCandidateId: result.recordId, sourceCandidateIdSource:'platform_card'
+            });
+          }
+        } else {
+          result = await withPage(platform, page => locateOfficialCandidate(page, candidate));
+        }
+        respond(res, result);
+      } finally { pending = false; }
+    } catch (error) {
+      if (!error.publicStatus && Object.hasOwn(bossLocatorRecovery, error.code)) {
+        error.publicStatus = 409;
+        error.message = bossLocatorRecovery[error.code];
+      }
+      errorResponse(res, error);
+    }
+  });
+
+  router.get('/status', async (_req, res) => {
     try {
       const targets = getTargets();
       const active = currentLock();
+      const platforms = await Promise.all(Object.entries(PLATFORMS).map(async ([id, metadata]) => ({
+        id, label: metadata.label, available: await ownedAvailable(id, targets[id]),
+        running: running(targets[id])
+      })));
       respond(res, {
         enabled: true,
-        platforms: Object.entries(PLATFORMS).map(([id, metadata]) => ({
-          id, label: metadata.label, available: available(targets[id]), running: running(targets[id])
-        })),
+        platforms,
         lock: { held: Boolean(active), expiresAt: active?.expiresAt || null }
       });
     } catch (error) { errorResponse(res, error); }
   });
 
-  router.post('/session', (req, res) => {
+  router.post('/session', async (req, res) => {
     try {
       fields(req.body, ['platform', 'clientId']);
       const { platform, clientId } = req.body;
       identity(platform, clientId);
+      if (pending) fail(409, '正在核对候选人，请稍后再获取浏览器操作权');
       if (currentLock() && lock.clientId !== clientId) fail(409, '其他同事正在操作服务器浏览器，请稍后重试');
-      if (!available(getTargets()[platform])) fail(409, '请先在对应招聘平台页面启动浏览器');
+      if (!await ownedAvailable(platform, getTargets()[platform]))
+        fail(409, '请先在对应招聘平台页面启动浏览器');
       lock = { platform, clientId, expiresAt: now() + LOCK_MS };
       respond(res, { platform, expiresAt: lock.expiresAt });
     } catch (error) { errorResponse(res, error); }
@@ -134,6 +239,32 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
       lock = null;
       frames.clear();
       respond(res, { released: true });
+    } catch (error) { errorResponse(res, error); }
+  });
+
+  router.post('/restore-window', async (req, res) => {
+    try {
+      fields(req.body, ['platform', 'clientId']);
+      const { platform, clientId } = req.body;
+      requireLock(platform, clientId);
+      if (pending) fail(409, '浏览器正在处理其他操作，请稍后重试');
+      if (running(getTargets()[platform])) fail(409, '平台正在采集，请先暂停后恢复窗口');
+      pending = true;
+      try {
+        await withPage(platform, async (page, target) => {
+          requireLock(platform, clientId);
+          if (running(target)) fail(409, '平台正在采集，请先暂停后恢复窗口');
+          const session = await page.context().newCDPSession(page);
+          try {
+            const { windowId } = await session.send('Browser.getWindowForTarget');
+            await session.send('Browser.setWindowBounds', {
+              windowId, bounds: { windowState: 'maximized' }
+            });
+            if (owns(platform, clientId)) lock.expiresAt = now() + LOCK_MS;
+            respond(res, { restored: true });
+          } finally { await session.detach().catch(() => {}); }
+        });
+      } finally { pending = false; }
     } catch (error) { errorResponse(res, error); }
   });
 

@@ -2,11 +2,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const http = require('node:http');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { createGateway, readConfig, boundaryError } = require('./gateway');
+const zlib = require('node:zlib');
+const { EventEmitter } = require('node:events');
+const { createGateway, readConfig, boundaryError, isServerBrowser } = require('./gateway');
+const { CompanyAuth } = require('./auth');
 
 const PUBLIC_ORIGIN = 'http://192.168.1.24:4000';
 const PUBLIC_HOST = '192.168.1.24:4000';
@@ -59,7 +63,9 @@ async function fixture(t, options = {}) {
   const backendPort = await listen(backend);
   const gateway = createGateway({
     environment: {}, host: '192.168.1.24', publicOrigin: PUBLIC_ORIGIN, backendPort,
-    frontendBuildDir: build, healthTimeoutMs: 100, ...options.gatewayOptions
+    frontendBuildDir: build, healthTimeoutMs: 100,
+    authFile: options.authEnabled ? path.join(directory, 'shared', 'auth', 'users.json') : null,
+    ...options.gatewayOptions
   });
   gateway.on('connection', socket => {
     sockets.add(socket);
@@ -71,7 +77,14 @@ async function fixture(t, options = {}) {
     await Promise.all([gateway, backend].map(server => new Promise(resolve => server.close(resolve))));
     await fs.rm(directory, { recursive: true, force: true });
   });
-  return { port, directory, build, requests, upgrades, backend, backendPort };
+  return { port, directory, build, requests, upgrades, backend, backendPort,
+    authFile: path.join(directory, 'shared', 'auth', 'users.json') };
+}
+
+function jsonRequest(port, url, body, headers = {}) {
+  return request(port, url, { method: 'POST', headers: {
+    origin: PUBLIC_ORIGIN, 'content-type': 'application/json', ...headers
+  }, chunks: [Buffer.from(JSON.stringify(body))] });
 }
 
 function request(port, url = '/', options = {}) {
@@ -82,7 +95,10 @@ function request(port, url = '/', options = {}) {
     }, res => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks);
+        resolve({ status: res.statusCode, headers: res.headers, body: raw.toString(), raw });
+      });
       res.on('error', reject);
     });
     req.on('error', reject);
@@ -131,6 +147,247 @@ test('LAN source check uses the socket and refuses spoofed forwarding headers', 
   const expanded = readConfig({ environment: { LAN_ALLOW_CIDRS: '10.20.0.0/16' } });
   assert.equal(boundaryError(syntheticRequest('10.20.1.22'), expanded, '/api/positions'), null);
   assert.match(boundaryError(syntheticRequest('192.168.1.22'), expanded, '/api/positions'), /公司网段/);
+});
+
+test('company network list reloads from the installed config without restarting the gateway', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-network-config-test-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const configFile = path.join(directory, 'config.json');
+  await fs.writeFile(configFile, JSON.stringify({ allowedNetworks: ['192.168.1.0/24'] }));
+  const config = readConfig({ environment: {}, networkConfigFile: configFile, networkCheckIntervalMs: 0 });
+  assert.match(boundaryError(syntheticRequest('192.168.69.230'), config, '/healthz'), /公司网段/);
+  await fs.writeFile(configFile, JSON.stringify({ allowedNetworks: ['192.168.1.0/24', '192.168.69.0/24'] }));
+  assert.equal(boundaryError(syntheticRequest('192.168.69.230'), config, '/healthz'), null);
+  await fs.writeFile(configFile, '{broken');
+  assert.equal(boundaryError(syntheticRequest('192.168.69.230'), config, '/healthz'), null);
+  assert.ok(config.networkReloadError);
+  assert.throws(() => readConfig({ environment: {}, networkConfigFile: path.join(directory, 'missing.json') }));
+
+  await fs.writeFile(configFile, JSON.stringify({ allowedNetworks: ['192.168.1.0/24', '192.168.69.0/24'] }));
+  const local = await fixture(t, { gatewayOptions: { networkConfigFile: configFile, networkCheckIntervalMs: 0 } });
+  const response = await request(local.port, '/__company/network-access');
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(response.body).data.allowedNetworks, ['192.168.1.0/24', '192.168.69.0/24']);
+  await fs.writeFile(configFile, JSON.stringify({ allowedNetworks: ['192.168.1.0/24'] }));
+  const reloaded = await request(local.port, '/__company/network-access');
+  assert.deepEqual(JSON.parse(reloaded.body).data.allowedNetworks, ['192.168.1.0/24']);
+  const remote = await fixture(t, { gatewayOptions: {
+    networkConfigFile: configFile, networkCheckIntervalMs: 0, isServerBrowser: () => false
+  } });
+  assert.equal((await request(remote.port, '/__company/network-access')).status, 403);
+});
+
+test('installed release locates the shared deployment network config', async t => {
+  const install = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-installed-gateway-test-'));
+  t.after(() => fs.rm(install, { recursive: true, force: true }));
+  const code = path.join(install, 'releases', 'example', 'deploy', 'company', 'gateway.js');
+  await fs.mkdir(path.dirname(code), { recursive: true });
+  await fs.mkdir(path.join(install, 'delivery'), { recursive: true });
+  await fs.copyFile(path.join(__dirname, 'gateway.js'), code);
+  await fs.copyFile(path.join(__dirname, 'auth.js'), path.join(path.dirname(code), 'auth.js'));
+  await fs.writeFile(path.join(install, 'delivery', 'config.json'),
+    JSON.stringify({ allowedNetworks: ['192.168.1.0/24', '192.168.69.0/24'] }));
+  const installed = require(code).readConfig({ environment: {} });
+  assert.equal(boundaryError(syntheticRequest('192.168.69.230'), installed, '/healthz'), null);
+  assert.equal(installed.networkConfigFile, path.join(install, 'delivery', 'config.json'));
+  assert.equal(installed.authFile, path.join(install, 'shared', 'auth', 'users.json'));
+});
+
+test('company login guards APIs and sockets, persists Mark, and invalidates logout', async t => {
+  const app = await fixture(t, { authEnabled: true });
+  assert.equal((await request(app.port, '/healthz')).status, 200);
+  assert.equal((await request(app.port, '/api/positions')).status, 401);
+  assert.equal((await request(app.port, '/socket.io/?EIO=4&transport=polling')).status, 401);
+  assert.equal((await upgrade(app.port)).status, 401);
+  assert.equal((await request(app.port, '/api/auth/session')).status, 200);
+  const setupState = JSON.parse((await request(app.port, '/api/auth/session')).body).data;
+  assert.equal(setupState.setupRequired, true);
+  assert.equal(setupState.canSetup, true);
+  const password = 'Test-only-password-2026!';
+  const setup = await jsonRequest(app.port, '/api/auth/setup', { adminPassword: password });
+  assert.equal(setup.status, 200);
+  assert.match(setup.headers['set-cookie'][0], /HttpOnly; Path=\/; SameSite=Strict/);
+  assert.doesNotMatch(await fs.readFile(app.authFile, 'utf8'), /Test-only-password/);
+  const cookie = setup.headers['set-cookie'][0].split(';')[0];
+  const current = JSON.parse((await request(app.port, '/api/auth/session', { headers: { cookie } })).body).data;
+  assert.equal(current.user.name, 'Mark');
+  assert.equal(current.user.role, 'admin');
+  assert.equal(current.authenticated, true);
+  const proxied = await request(app.port, '/api/positions', { headers: { cookie } });
+  assert.equal(proxied.status, 201);
+  assert.equal(app.requests.at(-1).headers.cookie, undefined);
+  for (const route of ['/api/boss-zhipin/start-browsing', '/api/zhilian/start-browsing',
+    '/api/wuyou/collect-batch']) {
+    const started = await jsonRequest(app.port, route, { fixture: true }, { cookie });
+    assert.equal(started.status, 201, route);
+    assert.equal(app.requests.at(-1).url, route);
+  }
+  const model = await request(app.port, '/api/model-config', { method: 'PUT',
+    headers: { cookie, origin: PUBLIC_ORIGIN, 'content-type': 'application/json' },
+    chunks: [Buffer.from('{"model":"deepseek-chat"}')] });
+  assert.equal(model.status, 201);
+  const upload = await request(app.port, '/api/resume-library/delete-all', {
+    method: 'DELETE', headers: { cookie, origin: PUBLIC_ORIGIN }
+  });
+  assert.equal(upload.status, 201);
+  const upgraded = await upgrade(app.port, { cookie });
+  assert.equal(upgraded.status, 101);
+  upgraded.socket.on('error', () => {});
+  upgraded.socket.destroy();
+  const logout = await jsonRequest(app.port, '/api/auth/logout', {}, { cookie });
+  assert.equal(logout.status, 200);
+  assert.equal((await request(app.port, '/api/positions', { headers: { cookie } })).status, 401);
+  assert.equal((await upgrade(app.port, { cookie })).status, 401);
+  assert.equal((await jsonRequest(app.port, '/api/auth/login', {
+    username: 'HRwang', password
+  })).status, 401);
+  const login = await jsonRequest(app.port, '/api/auth/login', { username: 'Mark', password });
+  assert.equal(login.status, 200);
+  assert.equal((await request(app.port, '/api/positions', {
+    headers: { cookie: login.headers['set-cookie'][0].split(';')[0] }
+  })).status, 201);
+});
+
+test('failed logins are limited and an active browser renews its persistent login', async t => {
+  let time = 1_800_000_000_000;
+  const day = 24 * 60 * 60 * 1000;
+  const app = await fixture(t, { authEnabled: true, gatewayOptions: { authNow: () => time } });
+  const password = 'Example-password-2026!';
+  const setup = await jsonRequest(app.port, '/api/auth/setup', { adminPassword: password });
+  const cookie = setup.headers['set-cookie'][0].split(';')[0];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    assert.equal((await jsonRequest(app.port, '/api/auth/login', {
+      username: 'Mark', password: 'incorrect-password'
+    })).status, 401);
+  }
+  assert.equal((await jsonRequest(app.port, '/api/auth/login', {
+    username: 'Mark', password
+  })).status, 429);
+  time += 16 * 60 * 1000;
+  assert.equal((await jsonRequest(app.port, '/api/auth/login', {
+    username: 'Mark', password
+  })).status, 200);
+  time += 13 * 60 * 60 * 1000;
+  assert.equal((await request(app.port, '/api/recruitment-pipeline/candidates', {
+    headers: { cookie }
+  })).status, 201);
+  assert.equal((await request(app.port, '/api/auth/session', { headers: { cookie } })).headers['set-cookie'], undefined);
+  time += 336 * day;
+  const renewal = await request(app.port, '/api/auth/session', { headers: { cookie } });
+  assert.equal(renewal.status, 200);
+  const renewedCookie = renewal.headers['set-cookie'][0].split(';')[0];
+  assert.match(renewal.headers['set-cookie'][0], /Max-Age=31536000/);
+  time += 30 * day;
+  assert.equal((await request(app.port, '/api/recruitment-pipeline/candidates', {
+    headers: { cookie }
+  })).status, 401);
+  assert.equal((await request(app.port, '/api/recruitment-pipeline/candidates', {
+    headers: { cookie: renewedCookie }
+  })).status, 201);
+});
+
+test('a year-long session does not overflow the socket expiry timer', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-auth-timer-test-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const time = 1_800_000_000_000;
+  const auth = new CompanyAuth(path.join(directory, 'users.json'), { now: () => time });
+  const socket = new EventEmitter();
+  socket.destroyed = false;
+  socket.destroy = () => { socket.destroyed = true; socket.emit('close'); };
+  auth.trackSocket({ name: 'Mark', expiresAt: time + 365 * 24 * 60 * 60 * 1000 }, socket);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(socket.destroyed, false);
+  socket.destroy();
+});
+
+test('an existing twelve-hour login is renewed without asking for a password', async t => {
+  const time = 1_800_000_000_000;
+  const app = await fixture(t, { authEnabled: true, gatewayOptions: { authNow: () => time } });
+  assert.equal((await jsonRequest(app.port, '/api/auth/setup', {
+    adminPassword: 'Migration-test-password-2026!'
+  })).status, 200);
+  const state = JSON.parse(await fs.readFile(app.authFile, 'utf8'));
+  const payload = Buffer.from(JSON.stringify({ name: 'Mark', version: 1,
+    issuedAt: time - 60 * 60 * 1000, expiresAt: time + 11 * 60 * 60 * 1000,
+    nonce: 'existing-browser' })).toString('base64url');
+  const signature = crypto.createHmac('sha256', Buffer.from(state.secret, 'base64'))
+    .update(payload).digest('base64url');
+  const oldCookie = `hiresmart_session=${payload}.${signature}`;
+  const response = await request(app.port, '/api/auth/session', { headers: { cookie: oldCookie } });
+  assert.equal(response.status, 200);
+  assert.equal(JSON.parse(response.body).data.authenticated, true);
+  assert.match(response.headers['set-cookie'][0], /Max-Age=31536000/);
+});
+
+test('setup is server-local and password change revokes the old session', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-auth-test-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const authFile = path.join(directory, 'users.json');
+  const remote = await fixture(t, { gatewayOptions: { authFile, isServerBrowser: () => false } });
+  assert.equal((await jsonRequest(remote.port, '/api/auth/setup', {
+    adminPassword: 'Example-password-2026!'
+  })).status, 403);
+  assert.equal(JSON.parse((await request(remote.port, '/api/auth/session')).body).data.canSetup, false);
+  const local = await fixture(t, { gatewayOptions: { authFile, isServerBrowser: () => true } });
+  const setup = await jsonRequest(local.port, '/api/auth/setup', { adminPassword: 'Example-password-2026!' });
+  assert.equal(setup.status, 200);
+  const cookie = setup.headers['set-cookie'][0].split(';')[0];
+  assert.equal((await jsonRequest(local.port, '/api/auth/password', {
+    currentPassword: 'wrong', newPassword: 'Another-password-2026!'
+  }, { cookie })).status, 400);
+  assert.equal((await jsonRequest(local.port, '/api/auth/password', {
+    currentPassword: 'Example-password-2026!', newPassword: 'Another-password-2026!'
+  }, { cookie })).status, 200);
+  assert.equal((await request(local.port, '/api/positions', { headers: { cookie } })).status, 401);
+  assert.equal((await jsonRequest(local.port, '/api/auth/login', {
+    username: 'Mark', password: 'Example-password-2026!'
+  })).status, 401);
+  const renewed = await jsonRequest(local.port, '/api/auth/login', {
+    username: 'Mark', password: 'Another-password-2026!'
+  });
+  assert.equal(renewed.status, 200);
+  // A new gateway process reads the shared account file and accepts its session.
+  const restarted = await fixture(t, { gatewayOptions: { authFile } });
+  assert.equal((await request(restarted.port, '/api/positions', {
+    headers: { cookie: renewed.headers['set-cookie'][0].split(';')[0] }
+  })).status, 201);
+  const remoteAfterSetup = await fixture(t, { gatewayOptions: {
+    authFile, isServerBrowser: () => false
+  } });
+  const renewedCookie = renewed.headers['set-cookie'][0].split(';')[0];
+  assert.equal((await request(remoteAfterSetup.port, '/api/positions', {
+    headers: { cookie: renewedCookie }
+  })).status, 201);
+  assert.equal((await request(remoteAfterSetup.port, '/api/model-config', { method: 'PUT',
+    headers: { cookie: renewedCookie, origin: PUBLIC_ORIGIN }
+  })).status, 403);
+});
+
+test('模型配置只认本机 TCP 连接，转发头和 Host 不能伪装为服务器', async t => {
+  assert.equal(isServerBrowser({ socket: { remoteAddress: '192.168.1.24',
+    localAddress: '192.168.1.24' } }), true);
+  assert.equal(isServerBrowser({ socket: { remoteAddress: '::ffff:192.168.1.24',
+    localAddress: '::ffff:192.168.1.24' } }), true);
+  assert.equal(isServerBrowser({ socket: { remoteAddress: '192.168.1.58',
+    localAddress: '192.168.1.24' }, headers: { 'x-forwarded-for': '192.168.1.24' } }), false);
+  const app = await fixture(t);
+  const access = await request(app.port, '/api/model-config/access');
+  assert.equal(JSON.parse(access.body).data.canEdit, true);
+  const save = await request(app.port, '/api/model-config', { method: 'PUT',
+    headers: { origin: PUBLIC_ORIGIN, 'content-type': 'application/json' },
+    chunks: [Buffer.from('{"model":"deepseek-chat"}')] });
+  assert.equal(save.status, 201);
+  assert.equal(app.requests.at(-1).url, '/api/model-config');
+  const remote = await fixture(t, { gatewayOptions: { isServerBrowser: () => false } });
+  const remoteAccess = await request(remote.port, '/api/model-config/access');
+  assert.equal(JSON.parse(remoteAccess.body).data.canEdit, false);
+  for (const [url, method] of [['/api/model-config', 'PUT'], ['/api/model-config/test', 'POST']]) {
+    const denied = await request(remote.port, url, { method, headers: {
+      origin: PUBLIC_ORIGIN, 'x-forwarded-for': '127.0.0.1', 'x-real-ip': '192.168.1.24'
+    } });
+    assert.equal(denied.status, 403);
+  }
+  assert.equal(remote.requests.length, 0);
 });
 
 test('Host, Origin and fetch metadata prevent rebinding and cross-site access', () => {
@@ -202,6 +459,33 @@ test('SPA navigation works while missing assets, traversal and hidden files stay
   assert.equal((await request(app.port, '/', { method: 'HEAD' })).body, '');
 });
 
+test('large static assets use negotiated compression without changing API or identity responses', async t => {
+  const app = await fixture(t);
+  const source = 'window.fixture = "' + 'a'.repeat(20000) + '";';
+  await fs.writeFile(path.join(app.build, 'static', 'large.js'), source);
+  const br = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'gzip, br' } });
+  assert.equal(br.status, 200);
+  assert.equal(br.headers['content-encoding'], 'br');
+  assert.equal(br.headers.vary, 'Accept-Encoding');
+  assert.equal(zlib.brotliDecompressSync(br.raw).toString(), source);
+  assert.ok(br.raw.length < Buffer.byteLength(source) / 2);
+  const brAgain = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'gzip, br' } });
+  assert.deepEqual(brAgain.raw, br.raw);
+  const gzip = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'br;q=0, gzip' } });
+  assert.equal(gzip.headers['content-encoding'], 'gzip');
+  assert.equal(zlib.gunzipSync(gzip.raw).toString(), source);
+  const identity = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'br;q=0, gzip;q=0' } });
+  assert.equal(identity.headers['content-encoding'], undefined);
+  assert.equal(identity.body, source);
+  const head = await request(app.port, '/static/large.js', { method: 'HEAD', headers: { 'accept-encoding': 'br' } });
+  assert.equal(head.headers['content-encoding'], 'br');
+  assert.equal(head.raw.length, 0);
+  const changed = source + 'window.updated = true;';
+  await fs.writeFile(path.join(app.build, 'static', 'large.js'), changed);
+  const updated = await request(app.port, '/static/large.js', { headers: { 'accept-encoding': 'br' } });
+  assert.equal(zlib.brotliDecompressSync(updated.raw).toString(), changed);
+});
+
 test('static files cannot escape the build directory through a junction or symlink', async t => {
   const app = await fixture(t);
   const outside = path.join(app.directory, 'outside');
@@ -234,6 +518,38 @@ test('deployment health checks both frontend and the backend JSON result', async
 test('health never treats an HTTP-200 backend error payload as ready', async t => {
   const app = await fixture(t, { healthBody: 'error' });
   assert.equal((await request(app.port, '/healthz')).status, 503);
+});
+
+test('cleanup health reports verified registration and counters while authentication protects business APIs', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'recruitment-cleanup-health-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const app = await fixture(t, { authEnabled: true, gatewayOptions: { maintenanceDirectory: directory } });
+  assert.deepEqual(JSON.parse((await request(app.port, '/healthz')).body).cleanup, { registered: false });
+  await fs.writeFile(path.join(directory, 'cleanup-installation.json'), JSON.stringify({
+    installed: true, enabled: true, taskName: 'AutoRecru-Company-Cleanup', times: ['12:30', '20:00'],
+    timeZone: 'Asia/Shanghai', bundle: 'PRIVATE_PATH_SENTINEL', policy: { secret: 'PRIVATE_PATH_SENTINEL' }
+  }));
+  await fs.writeFile(path.join(directory, 'last-cleanup.json'), JSON.stringify({
+    status: 'complete', apply: true, finishedAtUtc: '2026-10-28T12:05:00.000Z', removedCount: 2, removedBytes: 4096,
+    errors: [{ message: 'PRIVATE_PATH_SENTINEL' }], protectedReleases: ['PRIVATE_PATH_SENTINEL']
+  }));
+  const response = await request(app.port, '/healthz');
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(response.body).cleanup, { registered: true, times: ['12:30', '20:00'], timeZone: 'Asia/Shanghai',
+    lastRun: { status: 'complete', apply: true, finishedAtUtc: '2026-10-28T12:05:00.000Z', removedCount: 2, removedBytes: 4096 } });
+  assert.ok(!response.body.includes('PRIVATE_PATH_SENTINEL'));
+  assert.equal((await request(app.port, '/api/company-maintenance/status')).status, 401);
+  await fs.writeFile(path.join(directory, 'cleanup-installation.json'), '{broken json');
+  assert.equal(JSON.parse((await request(app.port, '/healthz')).body).cleanup.registered, false);
+  assert.equal((await request(app.port, '/')).status, 200);
+});
+
+test('a rejected async health probe returns an error without killing the gateway', async t => {
+  const app = await fixture(t, { gatewayOptions: {
+    backendHealthy: async () => { throw new Error('simulated probe failure'); }
+  } });
+  assert.equal((await request(app.port, '/healthz')).status, 500);
+  assert.equal((await request(app.port, '/')).status, 200);
 });
 
 test('WebSocket upgrade shares the HTTP boundary and tunnels both directions', async t => {

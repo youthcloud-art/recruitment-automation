@@ -274,7 +274,9 @@ test('初筛报告默认以 Word 附件发送，简历附件保持原有内容',
 test('前程无忧误采通知的 Word 报告、预览与 TXT 首部使用匿名来源标识', async t => {
   configureSmtp(t);
   const item = { id: 'qcwy-ui', source: 'qcwy', name: '通知', position: '通知',
-    sourceRecordKey: 'd'.repeat(64), originalText: '通知\n工作经历：网络故障排查',
+    sourceRecordKey: 'd'.repeat(64),
+    sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=official-d',
+    originalText: '通知\n工作经历：网络故障排查',
     matchScore: 82, matchEvaluation: currentAi(jobRequirements, { summary: '具备相关工作经历' }) };
   let sent;
   const service = new CandidateEmailService({ pipeline: { list: () => [item] },
@@ -284,16 +286,16 @@ test('前程无忧误采通知的 Word 报告、预览与 TXT 首部使用匿名
     } }) });
   const input = { minScore: 70, topN: 1, jobRequirements, reportFormat: 'docx' };
   const preview = await service.preview(input);
-  assert.match(preview.candidates[0].name, /匿名候选人（前程无忧记录 ID：dddddddddddddddd）/);
+  assert.match(preview.candidates[0].name, /匿名候选人（前程无忧记录 ID：official-d）/);
   assert.equal(preview.candidates[0].position, '求职岗位待核实');
   await service.send({ ...input, to: recipient, previewToken: preview.previewToken });
   const word = (await mammoth.extractRawText({ buffer: sent.attachments[0].content })).value;
-  assert.match(word, /匿名候选人（前程无忧记录 ID：dddddddddddddddd）/);
+  assert.match(word, /匿名候选人（前程无忧记录 ID：official-d）/);
   assert.match(word, /求职岗位待核实/);
   assert.doesNotMatch(word, /通知/);
   assert.equal(sent.attachments[1].filename, 'candidate-1.txt');
   assert.match(sent.attachments[1].content.split('\n').slice(0, 4).join('\n'),
-    /候选人：匿名候选人（前程无忧记录 ID：dddddddddddddddd）/);
+    /候选人：匿名候选人（前程无忧记录 ID：official-d）/);
   assert.equal(item.name, '通知');
 });
 

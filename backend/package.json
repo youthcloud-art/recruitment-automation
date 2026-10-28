@@ -4,12 +4,12 @@
   "description": "招聘自动化后端服务",
   "main": "src/index.js",
   "scripts": {
-    "postinstall": "node ../deploy/company/install-maintenance.cjs",
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "build": "echo 'Backend build completed - Netlify Functions ready'",
     "lint": "echo 'Backend lint check passed'",
     "test": "node --test --test-concurrency=2 test/*.test.js",
+    "postinstall": "node scripts/check-ocr-assets.js && node ../deploy/company/install-maintenance.cjs",
     "db:migrate": "node src/database/migrate.js"
   },
   "dependencies": {

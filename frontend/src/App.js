@@ -18,44 +18,46 @@ import {
 import io from 'socket.io-client';
 import styled from 'styled-components';
 import COTReasoning from './components/COTReasoning';
-import ResumeLibrary from './components/ResumeLibrary';
-import KnowledgeBase from './components/KnowledgeBase';
 import { WEBSOCKET_CONFIG, API_ENDPOINTS } from './config/api';
 import { apiGet, apiPost } from './utils/apiClient';
 // import DocumentUpload from './components/DocumentUpload'; // 暂时未使用
-import ResumeRecommendationModal from './components/ResumeRecommendationModal';
 import CapabilityCards from './components/CapabilityCards';
 import TaskManagement from './components/TaskManagement';
-import ModelConfig from './components/ModelConfig';
 import ServerBrowserConsole from './components/ServerBrowserConsole';
+import CompanyAccountMenu from './components/CompanyAccountMenu';
 import KnowledgeSearchResult from './components/KnowledgeSearchResult';
-import JDDetailDrawer from './components/JDDetailModal';
-import Browser from './components/Browser';
-import SmartRecruitmentEntry from './components/SmartRecruitmentEntry';
-import BossZhipinControl from './components/BossZhipinControl';
-import ZhilianControl from './components/ZhilianControl';
-import WuyouControl from './components/WuyouControl';
-import RecruitmentPipeline from './components/RecruitmentPipeline';
-import RecruitmentAnalytics from './components/RecruitmentAnalytics';
-import PositionCreationModal from './components/PositionCreationModal';
 // 公司搜索组件已删除
-import PositionManagement from './components/PositionManagement';
 
 
 import { createCOTResponse } from './utils/cotUtils';
 import { classifyPositionOrAnalyticsIntent } from './utils/localMessageIntent';
 import './App.css';
 
+const ResumeLibrary = React.lazy(() => import('./components/ResumeLibrary'));
+const KnowledgeBase = React.lazy(() => import('./components/KnowledgeBase'));
+const ResumeRecommendationModal = React.lazy(() => import('./components/ResumeRecommendationModal'));
+const ModelConfig = React.lazy(() => import('./components/ModelConfig'));
+const JDDetailDrawer = React.lazy(() => import('./components/JDDetailModal'));
+const Browser = React.lazy(() => import('./components/Browser'));
+const SmartRecruitmentEntry = React.lazy(() => import('./components/SmartRecruitmentEntry'));
+const BossZhipinControl = React.lazy(() => import('./components/BossZhipinControl'));
+const ZhilianControl = React.lazy(() => import('./components/ZhilianControl'));
+const WuyouControl = React.lazy(() => import('./components/WuyouControl'));
+const RecruitmentPipeline = React.lazy(() => import('./components/RecruitmentPipeline'));
+const RecruitmentAnalytics = React.lazy(() => import('./components/RecruitmentAnalytics'));
+const PositionCreationModal = React.lazy(() => import('./components/PositionCreationModal'));
+const PositionManagement = React.lazy(() => import('./components/PositionManagement'));
+
 const { Header, Content, Sider } = Layout;
 const { Title } = Typography;
 
-// 样式组件 - 未来科技感设计
+// Keep the shell light enough for long candidate lists on office PCs.
 const StyledSider = styled(Sider)`
-  background: var(--glass-bg) !important;
-  backdrop-filter: var(--blur-lg) !important;
-  -webkit-backdrop-filter: var(--blur-lg) !important;
-  border-right: 1px solid var(--glass-border) !important;
-  box-shadow: var(--shadow-xl) !important;
+  background: #fff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-right: 1px solid #e2e9f3 !important;
+  box-shadow: 2px 0 12px rgba(34, 68, 111, 0.06) !important;
   z-index: 10;
   position: fixed;
   height: 100vh;
@@ -84,54 +86,29 @@ const StyledSider = styled(Sider)`
 
 const StyledLayout = styled(Layout)`
   height: 100vh;
-  background: var(--gradient-glass) !important;
+  background: #f3f6fb !important;
   overflow: hidden;
   position: relative;
   
-  &::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: var(--grid-background);
-    opacity: 0.03;
-    pointer-events: none;
-    z-index: 0;
-  }
 `;
 
 const StyledHeader = styled(Header).withConfig({
   shouldForwardProp: (prop) => prop !== 'hasModal'
 })`
-  background: var(--glass-bg) !important;
-  backdrop-filter: var(--blur-xl) !important;
-  -webkit-backdrop-filter: var(--blur-xl) !important;
-  border-bottom: 1px solid var(--glass-border) !important;
+  background: #fff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-bottom: 1px solid #e2e9f3 !important;
   display: flex;
   align-items: center;
   padding: 0 32px;
-  box-shadow: var(--shadow-lg) !important;
+  box-shadow: 0 2px 10px rgba(34, 68, 111, 0.06) !important;
   position: fixed;
   width: ${props => props.hasModal ? 'calc(100% - 256px - 33.33%)' : 'calc(100% - 256px)'};
   z-index: 9;
   top: 0;
   left: 256px;
-  transition: all var(--duration-normal) cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  will-change: width;
-  
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: var(--gradient-cyber);
-    opacity: 0.1;
-    pointer-events: none;
-  }
+  transition: width 180ms ease;
 `;
 
 const StyledContent = styled(Content).withConfig({
@@ -146,8 +123,7 @@ const StyledContent = styled(Content).withConfig({
   margin-top: 64px;
   margin-left: 256px;
   overflow: visible;
-  transition: all var(--duration-normal) cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  will-change: width;
+  transition: width 180ms ease;
   position: relative;
   z-index: 1;
 `;
@@ -472,7 +448,7 @@ const CombinedMessage = ({ thinkingContent, finalContent, isThinkingComplete = f
   );
 };
 
-function App() {
+function App({ companyAuth = null }) {
   const [socket, setSocket] = useState(null);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
@@ -844,6 +820,7 @@ function App() {
     return () => {
       // console.log('清理Socket.IO连接');
       if (newSocket) {
+        newSocket.removeAllListeners();
         newSocket.disconnect();
       }
     };
@@ -1397,6 +1374,7 @@ function App() {
           onSelect={({ key }) => {
             if (key === '8') setPositionManagementVisible(true);
             else {
+              setPositionManagementVisible(false);
               if (key === '4') setPipelineSourceRequest(null);
               setSelectedMenuKey(key);
             }
@@ -1476,9 +1454,13 @@ function App() {
           <HeaderTitle level={3}>
             <RobotOutlined /> Hi，我是HireSmart
           </HeaderTitle>
-          <div style={{ marginLeft: 'auto', position: 'relative', zIndex: 2 }}><ServerBrowserConsole /></div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center', position: 'relative', zIndex: 2 }}>
+            <ServerBrowserConsole />
+            <CompanyAccountMenu auth={companyAuth} />
+          </div>
         </StyledHeader>
         <StyledContent hasModal={hasAnyModal}>
+          <React.Suspense fallback={<div style={{ padding: 24 }}>页面加载中…</div>}>
           {selectedMenuKey === '1' ? (
             <TaskManagement
               onOpenPipeline={source => {
@@ -1579,27 +1561,29 @@ function App() {
               </div>
             </div>
           )}
+          </React.Suspense>
         </StyledContent>
       </Layout>
       
       {/* 简历推荐弹窗 */}
-      <ResumeRecommendationModal
+      <React.Suspense fallback={null}>
+      {recommendationVisible && <ResumeRecommendationModal
         visible={recommendationVisible}
         onClose={() => setRecommendationVisible(false)}
         onViewPipeline={() => {
           setRecommendationVisible(false);
           setSelectedMenuKey('4');
         }}
-      />
+      />}
       
       {/* JD详情抽屉 */}
-      <JDDetailDrawer
+      {jdDetailVisible && <JDDetailDrawer
         visible={jdDetailVisible}
         onClose={() => setJdDetailVisible(false)}
         positionData={currentPositionData}
-      />
+      />}
 
-      <PositionCreationModal
+      {positionCreationVisible && <PositionCreationModal
         visible={positionCreationVisible}
         initialText={positionCreationInitialText}
         onClose={() => {
@@ -1607,16 +1591,16 @@ function App() {
           setPositionCreationInitialText('');
         }}
         onCreated={() => fetchPositions()}
-      />
+      />}
       
       {/* 公司搜索相关弹窗已删除 */}
       
       {/* 职位管理弹窗 */}
-      <PositionManagement
+      {positionManagementVisible && <PositionManagement
         visible={positionManagementVisible}
         onClose={() => setPositionManagementVisible(false)}
         companyInfo={currentCompanyInfo}
-      />
+      />}
       
       {/* 智能寻聘入口弹窗 */}
       <Modal
@@ -1628,7 +1612,7 @@ function App() {
         style={{ top: 20 }}
         destroyOnHidden
       >
-        <SmartRecruitmentEntry 
+        {showSmartRecruitment && <SmartRecruitmentEntry
           onStartRecruitment={handleStartNewRecruitment}
           onOpenBossZhipinControl={() => {
             setShowSmartRecruitment(false);
@@ -1642,7 +1626,7 @@ function App() {
             setShowSmartRecruitment(false);
             setShowWuyouControl(true);
           }}
-        />
+        />}
       </Modal>
       
       {/* Boss 直聘控制弹窗 */}
@@ -1655,11 +1639,11 @@ function App() {
         style={{ top: 20 }}
         destroyOnHidden
       >
-        <BossZhipinControl onOpenPipeline={() => {
+        {showBossZhipinControl && <BossZhipinControl onOpenPipeline={() => {
           setPipelineSourceRequest({ source: 'boss' });
           setShowBossZhipinControl(false);
           setSelectedMenuKey('4');
-        }} />
+        }} />}
       </Modal>
 
       {/* 智联招聘控制弹窗 */}
@@ -1672,7 +1656,7 @@ function App() {
         style={{ top: 20 }}
         destroyOnHidden
       >
-        <ZhilianControl />
+        {showZhilianControl && <ZhilianControl />}
       </Modal>
 
       <Modal
@@ -1684,8 +1668,9 @@ function App() {
         style={{ top: 20 }}
         destroyOnHidden
       >
-        <WuyouControl />
+        {showWuyouControl && <WuyouControl />}
       </Modal>
+      </React.Suspense>
     </StyledLayout>
   );
 }

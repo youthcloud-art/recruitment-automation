@@ -1,3 +1,4 @@
+console.log('招聘后端启动中');
 require('dotenv').config({ path: require('./config/environmentFile').environmentFile() });
 // A saved UI configuration takes precedence over the legacy .env values.
 const { ModelConfigService } = require('./services/modelConfigService');
@@ -10,7 +11,9 @@ const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs-extra');
 const multer = require('multer');
+const resumeStoreStarted = Date.now();
 const resumeModel = require('./models/resumeModel');
+console.log(`简历库加载完成 (${Date.now() - resumeStoreStarted} ms)`);
 const { publicCandidate } = require('./utils/candidateDisplay');
 const { resolveBindHost } = require('./config/localBind');
 const HOST = resolveBindHost(process.env.HOST);
@@ -1090,6 +1093,7 @@ app.use('/api/tasks', taskRoutes);
 // 注册岗位路由
 app.use('/api/positions', positionRoutes);
 // 注册 Boss 直聘路由
+app.use(require('./services/collectionDeploymentGate').collectionDeploymentGate());
 const bossZhipinRoutes = require('./routes/bossZhipin');
 // 将io实例传递给Boss直聘路由
 bossZhipinRoutes.setIO(io);
@@ -1122,6 +1126,12 @@ const PORT = process.env.PORT || 5001;
 server.listen(PORT, HOST, () => {
   console.log(`服务器运行在端口 ${PORT}`);
   console.log(`存储目录: ${storageDir}`);
+  setTimeout(() => {
+    const {repairBossOcrWorkHistory}=require('./services/bossOcrWorkHistoryRepair');
+    void repairBossOcrWorkHistory().then(({scanned,updated}) => {
+      if (updated) console.log(`BOSS OCR 经历字段已按原文补全 ${updated}/${scanned} 份`);
+    }).catch(error => console.error('BOSS OCR 经历字段补全失败:',error));
+  },1500).unref();
 });
 
 // API路由：异步上传简历文件（优化版本，避免超时）

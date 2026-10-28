@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import { Button, Form, Input, Select, message, Table, Space, Modal, Tag } from 'antd';
+import { Button, Dropdown, Form, Input, Select, message, Table, Space, Modal, Tag } from 'antd';
 import { PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import { API_ENDPOINTS } from '../config/api';
 import { apiGet, apiPost, apiPut, apiDelete } from '../utils/apiClient';
 import ModalBasePattern from './ModalBasePattern';
 import PositionCreationModal from './PositionCreationModal';
 import { mergeActivePosition, sameCriteria } from '../utils/positionList';
+import { notifyActiveJobChanged } from '../utils/activeJobEvents';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -25,6 +26,8 @@ const PositionManagementContainer = styled.div`
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
     margin-bottom: 16px;
     
     .title {
@@ -55,16 +58,31 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [editingPosition, setEditingPosition] = useState(null);
-  const [addForm] = Form.useForm();
   const [editForm] = Form.useForm();
   const [revisingJob, setRevisingJob] = useState(null);
+  const [revisingMetadata, setRevisingMetadata] = useState(null);
+  const [revisingApplyTo, setRevisingApplyTo] = useState('all');
+  const [revisingPositionId, setRevisingPositionId] = useState(null);
   const [activeJob, setActiveJob] = useState(null);
+  const [platformJobs, setPlatformJobs] = useState({});
+  const [viewArchived, setViewArchived] = useState(false);
+
+  useEffect(() => {
+    if (visible) return;
+    setIsAddModalVisible(false);
+    setIsEditModalVisible(false);
+    setEditingPosition(null);
+    setRevisingJob(null);
+    setRevisingMetadata(null);
+    setRevisingApplyTo('all');
+    setRevisingPositionId(null);
+  }, [visible]);
 
   // 获取岗位列表
   const fetchPositions = async () => {
     setLoading(true);
     try {
-      const result = await apiGet(API_ENDPOINTS.POSITIONS.LIST);
+      const result = await apiGet(API_ENDPOINTS.POSITIONS.LIST, { includeArchived: 1 });
       
       if (result.success) {
         setPositions(result.data || []);
@@ -128,43 +146,26 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
   useEffect(() => {
     if (visible) {
       fetchPositions();
-      apiGet('/recruitment-pipeline/active-job')
-        .then(result => setActiveJob(result.data || null))
-        .catch(() => setActiveJob(null));
+      refreshActiveJobs();
     }
   }, [visible]);
 
-  const visiblePositions = mergeActivePosition(positions, activeJob);
-  const filteredPositions = companyInfo?.filters
-    ? applyFilters(visiblePositions, companyInfo.filters) : visiblePositions;
-
-  // 添加岗位
-  const handleAddPosition = async (values) => {
+  const refreshActiveJobs = async () => {
     try {
-      // 构建岗位数据
-      const requirements = [values.description?.trim(),
-        values.skills?.length ? `必需技能：${values.skills.join('、')}` : ''].filter(Boolean).join('\n');
-      const result = await apiPost('/positions/create-local', { job: {
-        title: values.name, searchKeywords: values.name,
-        location: values.location || '', education: values.education || '',
-        minExperienceYears: values.experience === undefined || values.experience === ''
-          ? null : Number(values.experience),
-        jobRequirements: requirements
-      }, metadata: { department: values.department || '', salary: values.salary || '' } });
-      if (result.success) {
-        message.success('岗位添加成功');
-        setIsAddModalVisible(false);
-        addForm.resetFields();
-        setActiveJob(result.job);
-        fetchPositions(); // 重新获取岗位列表
-      } else {
-        throw new Error(result.error || '添加岗位失败');
-      }
-    } catch (error) {
-      console.error('添加岗位失败:', error);
-      message.error(`添加岗位失败: ${error.message}`);
-    }
+      const [global, boss, zlzp, qcwy] = await Promise.all([
+        apiGet('/recruitment-pipeline/active-job'),
+        ...['boss', 'zlzp', 'qcwy'].map(platform =>
+          apiGet('/recruitment-pipeline/active-job', { platform }))
+      ]);
+      setActiveJob(global.data || null);
+      setPlatformJobs({ boss: boss.data, zlzp: zlzp.data, qcwy: qcwy.data });
+    } catch (error) { message.error('读取各平台当前岗位失败：' + error.message); }
   };
+
+  const visiblePositions = mergeActivePosition(positions, activeJob);
+  const scopedPositions = visiblePositions.filter(position => Boolean(position.archivedAt) === viewArchived);
+  const filteredPositions = companyInfo?.filters
+    ? applyFilters(scopedPositions, companyInfo.filters) : scopedPositions;
 
   // 编辑岗位
   const handleEditPosition = async (values) => {
@@ -197,7 +198,7 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     try {
       const result = await apiDelete(`${API_ENDPOINTS.POSITIONS.DELETE}/${positionId}`);
       if (result.success) {
-        message.success('岗位删除成功');
+        message.success('岗位已归档，简历已保留在三平台候选人的历史岗位中');
         fetchPositions(); // 重新获取岗位列表
       } else {
         throw new Error(result.error || '删除岗位失败');
@@ -208,29 +209,43 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     }
   };
 
+  const restorePosition = async positionId => {
+    try {
+      const result = await apiPost(`/positions/${encodeURIComponent(positionId)}/restore`);
+      if (!result.success) throw new Error(result.error || '恢复岗位失败');
+      message.success('岗位已恢复；需要采集时请再点击“应用”');
+      fetchPositions();
+    } catch (error) { message.error('恢复岗位失败：' + error.message); }
+  };
+
   // Keep the confirmation outside the table row. Refreshing the table while a
   // row-level Popconfirm is open can unmount that row before its onConfirm runs.
   const confirmDeletePosition = (positionId) => {
     Modal.confirm({
-      title: '确认删除',
-      content: '删除后无法恢复，确定要删除这个岗位吗？',
-      okText: '删除',
-      okType: 'danger',
+      title: '归档岗位并保留简历？',
+      content: '岗位将从在用列表移到历史岗位；已采集的候选人与评分仍可单独查看，也可以恢复岗位。',
+      okText: '归档岗位',
       cancelText: '取消',
-      zIndex: 1100,
+      zIndex: 1200,
       onOk: () => handleDeletePosition(positionId)
     });
   };
 
-  const applyPosition = async (positionId) => {
+  const applyPosition = async (positionId, applyTo) => {
     try {
-      const result = await apiPost(`/positions/${encodeURIComponent(positionId)}/apply-local`);
-      setActiveJob(result.job);
-      message.success('该岗位条件已应用到三平台采集');
+      const result = await apiPost(`/positions/${encodeURIComponent(positionId)}/apply-local`, { applyTo });
+      notifyActiveJobChanged(result.job, applyTo);
+      await refreshActiveJobs();
+      message.success(applyTo === 'all' ? '该岗位已应用到三平台' : '该岗位已应用到指定平台');
     } catch (error) { message.error('应用岗位失败：' + error.message); }
   };
 
-  const isActivePosition = position => sameCriteria(position.jobCriteria, activeJob);
+  const activePlatforms = position => Object.entries(platformJobs)
+    .filter(([, job]) => !position.archivedAt &&
+      (job?.positionId && !position.isVirtualCurrent
+        ? job.positionId === position.id : sameCriteria(position.jobCriteria, job)))
+    .map(([platform]) => platform);
+  const isActivePosition = position => activePlatforms(position).length > 0;
 
   // 打开编辑弹窗
   const openEditModal = (position) => {
@@ -257,7 +272,9 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
       width: 150,
       render: (text, record) => <>
         <strong>{record.title || text || '-'}</strong>
-        {isActivePosition(record) && <Tag color="green" style={{ marginLeft: 6 }}>当前使用</Tag>}
+        {activePlatforms(record).map(platform => <Tag color="green" key={platform} style={{ marginLeft: 6 }}>
+          {{ boss: 'BOSS', zlzp: '智联', qcwy: '前程无忧' }[platform]}</Tag>)}
+        {record.archivedAt && <Tag style={{ marginLeft: 6 }}>历史岗位</Tag>}
       </>
     },
     {
@@ -346,12 +363,26 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
       fixed: 'right',
       render: (_, record) => (
         <Space size="small">
-          {record.jobCriteria && <Button type="link" size="small"
-            disabled={isActivePosition(record)}
-            onClick={() => applyPosition(record.id)}>应用</Button>}
+          {record.archivedAt ? <Button type="link" size="small"
+            onClick={() => restorePosition(record.id)}>恢复岗位</Button> : <>
+          {record.jobCriteria && <Dropdown menu={{ items: [
+            { key: 'all', label: '应用到三平台' },
+            { key: 'zlzp', label: '仅应用到智联' },
+            { key: 'qcwy', label: '仅应用到前程无忧' },
+            { key: 'boss', label: '仅应用到 BOSS' }
+          ], onClick: ({ key }) => applyPosition(record.id, key) }}>
+            <Button type="link" size="small">应用到…</Button>
+          </Dropdown>}
           <Button type="link" size="small" icon={<EditOutlined />}
-            onClick={() => record.jobCriteria
-              ? setRevisingJob(record.jobCriteria) : openEditModal(record)}>
+            onClick={() => {
+              if (!record.jobCriteria) return openEditModal(record);
+              setRevisingPositionId(record.isVirtualCurrent ? null : record.id);
+              setRevisingJob(record.jobCriteria);
+              setRevisingMetadata({ department: record.department || '',
+                salary: record.salary || '' });
+              const scoped = activePlatforms(record);
+              setRevisingApplyTo(scoped.length === 1 ? scoped[0] : 'all');
+            }}>
             {record.jobCriteria ? '修订' : '编辑'}
           </Button>
           <Button
@@ -362,8 +393,9 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
             icon={<DeleteOutlined />}
             onClick={() => confirmDeletePosition(record.id)}
           >
-            删除
+            归档
           </Button>
+          </>}
         </Space>
       )
     }
@@ -379,9 +411,20 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
     >
       <PositionManagementContainer>
         <PositionCreationModal visible={Boolean(revisingJob)} initialJob={revisingJob}
-          onClose={() => setRevisingJob(null)} onCreated={result => {
+          initialMetadata={revisingMetadata}
+          initialApplyTo={revisingApplyTo}
+          revisingPositionId={revisingPositionId}
+          onClose={() => { setRevisingJob(null); setRevisingMetadata(null);
+            setRevisingPositionId(null); }} onCreated={result => {
             setActiveJob(result.job);
             fetchPositions();
+            refreshActiveJobs();
+          }} />
+        <PositionCreationModal visible={isAddModalVisible}
+          onClose={() => setIsAddModalVisible(false)} onCreated={result => {
+            setActiveJob(result.job);
+            fetchPositions();
+            refreshActiveJobs();
           }} />
         {/* 显示筛选条件摘要 */}
         {companyInfo && companyInfo.filters && Object.keys(companyInfo.filters).length > 0 && (
@@ -442,13 +485,14 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
               </span>
             )}
           </div>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setIsAddModalVisible(true)}
-          >
-            添加岗位
-          </Button>
+          <Space>
+            <Button type={viewArchived ? 'default' : 'primary'} onClick={() => setViewArchived(false)}>
+              在用岗位（{visiblePositions.filter(item => !item.archivedAt).length}）</Button>
+            <Button type={viewArchived ? 'primary' : 'default'} onClick={() => setViewArchived(true)}>
+              历史岗位（{visiblePositions.filter(item => item.archivedAt).length}）</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddModalVisible(true)}>
+              添加岗位</Button>
+          </Space>
         </div>
 
         <Table
@@ -466,110 +510,13 @@ const PositionManagement = ({ visible, onClose, companyInfo }) => {
           scroll={{ x: 1000 }}
         />
 
-        {/* 添加岗位弹窗 */}
-        <Modal
-          title="添加岗位"
-          open={isAddModalVisible}
-          onCancel={() => {
-            setIsAddModalVisible(false);
-            addForm.resetFields();
-          }}
-          footer={null}
-          width={600}
-        >
-          <Form
-            form={addForm}
-            layout="vertical"
-            onFinish={handleAddPosition}
-          >
-            <Form.Item
-              name="name"
-              label="岗位名称"
-              rules={[{ required: true, message: '请输入岗位名称' }]}
-            >
-              <Input placeholder="请输入岗位名称" />
-            </Form.Item>
-            
-            <Form.Item
-              name="description"
-              label="岗位描述"
-              rules={[{ required: true, min: 5, message: '请填写至少 5 字的岗位描述' }]}
-            >
-              <TextArea placeholder="请输入岗位描述" rows={3} />
-            </Form.Item>
-
-            <Form.Item
-              name="department"
-              label="所属部门"
-            >
-              <Input placeholder="请输入所属部门" />
-            </Form.Item>
-
-            <Form.Item
-              name="location"
-              label="工作地点"
-            >
-              <Input placeholder="请输入工作地点" />
-            </Form.Item>
-
-            <Form.Item
-              name="salary"
-              label="薪资范围"
-            >
-              <Input placeholder="如：8K-15K" />
-            </Form.Item>
-            
-            <Form.Item
-              name="education"
-              label="学历要求"
-            >
-              <Select placeholder="选择学历要求" allowClear>
-                <Option value="高中">高中</Option>
-                <Option value="大专">大专</Option>
-                <Option value="本科">本科</Option>
-                <Option value="硕士">硕士</Option>
-                <Option value="博士">博士</Option>
-              </Select>
-            </Form.Item>
-            
-            <Form.Item
-              name="experience"
-              label="工作经验要求（年）"
-            >
-              <Input type="number" placeholder="请输入工作经验要求" min={0} />
-            </Form.Item>
-            
-            <Form.Item
-              name="skills"
-              label="技能要求"
-            >
-              <Select 
-                mode="tags" 
-                placeholder="请输入技能要求，按回车添加"
-                tokenSeparators={[',']}
-              />
-            </Form.Item>
-            
-            <Form.Item>
-              <Space>
-                <Button type="primary" htmlType="submit">
-                  添加岗位
-                </Button>
-                <Button onClick={() => {
-                  setIsAddModalVisible(false);
-                  addForm.resetFields();
-                }}>
-                  取消
-                </Button>
-              </Space>
-            </Form.Item>
-          </Form>
-        </Modal>
-
         {/* 编辑岗位弹窗 */}
         <Modal
           title="编辑岗位"
           open={isEditModalVisible}
+          zIndex={1200}
+          style={{ top: 24 }}
+          styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' } }}
           onCancel={() => {
             setIsEditModalVisible(false);
             setEditingPosition(null);

@@ -14,7 +14,7 @@ const records = [
     matchEvaluation: { jobRequirements: currentRequirements, method: 'llm', evaluationVersion: 1,
       evaluatedAt: '2026-10-20T10:00:00+08:00' } },
   { source: 'qcwy', createdAt: '2026-10-20T11:00:00+08:00', workflowStatus: 'new',
-    originalText: '', matchScore: null, matchEvaluationJobTitle: '项目经理主管' },
+    originalText: '', matchScore: null, captureJobRequirements: currentRequirements },
   { source: 'boss', createdAt: '2026-09-19T10:00:00+08:00', workflowStatus: 'rejected',
     originalText: '历史简历', matchScore: 91, matchEvaluation: { jobRequirements: otherRequirements,
       method: 'llm', evaluationVersion: 1, evaluatedAt: '2026-09-19T11:00:00+08:00' } },
@@ -27,20 +27,22 @@ const service = new RecruitmentAnalyticsService({
   clock: () => new Date('2026-10-20T12:00:00+08:00')
 });
 
-test('当前岗位仅统计按完全相同岗位条件完成评估的记录', () => {
+test('当前岗位同时统计已采集但尚未评估的记录', () => {
   const data = service.snapshot();
   assert.equal(data.scope, 'active');
   assert.equal(data.job.title, '项目经理主管');
-  assert.equal(data.metrics.total, 2);
+  assert.equal(data.metrics.total, 3);
   assert.equal(data.metrics.evaluated, 2);
   assert.equal(data.metrics.passed, 1);
   assert.equal(data.metrics.scoreAverage, 74.5);
   assert.equal(data.metrics.withOriginalText, 2);
-  assert.equal(data.metrics.unevaluated, null);
-  assert.equal(data.metrics.evaluationRate, null);
-  assert.deepEqual(data.bySource.map(row => row.total), [0, 1, 1]);
+  assert.equal(data.metrics.unevaluated, 1);
+  assert.equal(data.metrics.evaluationRate, 66.7);
+  assert.deepEqual(data.bySource.map(row => row.total), [0, 1, 2]);
+  assert.equal(data.bySource.find(row => row.source === 'qcwy').nameNeedsReview, 1);
+  assert.equal(data.bySource.find(row => row.source === 'qcwy').positionNeedsReview, 2);
   assert.equal(data.byStatus.find(row => row.status === 'contacted').count, 1);
-  assert.equal(data.trend.reduce((sum, day) => sum + day.stored, 0), 2);
+  assert.equal(data.trend.reduce((sum, day) => sum + day.stored, 0), 3);
   assert.equal(data.trend.reduce((sum, day) => sum + day.evaluated, 0), 2);
 });
 
@@ -54,6 +56,20 @@ test('历史范围包含未评估记录，分母与通过线调整正确', () =>
   assert.equal(data.metrics.passRate, 100);
   assert.equal(data.metrics.originalTextRate, 75);
   assert.equal(data.scoreBands.reduce((sum, band) => sum + band.count, 0), 3);
+});
+
+test('完整入库的 BOSS OCR 简历仍提示结构化字段需核实', () => {
+  const analytics = new RecruitmentAnalyticsService({
+    store: { getResumes: () => [{ source: 'boss', parseMethod: 'ocr',
+      parseStatus: 'completed', captureJobRequirements: currentRequirements,
+      originalText: '已保存的完整简历原文' }] },
+    activeJobService: { current: () => ({ title: '项目经理主管',
+      jobRequirements: currentRequirements }) }
+  });
+  const boss = analytics.snapshot().bySource.find(row => row.source === 'boss');
+  assert.equal(boss.total, 1);
+  assert.equal(boss.withOriginalText, 1);
+  assert.equal(boss.parseNeedsReview, 1);
 });
 
 test('接口和报告只包含聚合统计，不输出候选人隐私或正文', () => {
@@ -113,4 +129,20 @@ test('失败或进行中的重评不会把旧分数计入已评估与达标', ()
   assert.equal(result.metrics.passed, 1);
   assert.equal(result.scoreBands.reduce((sum, row) => sum + row.count, 0), 1);
   assert.equal(result.bySource.find(row => row.source === 'zlzp').evaluated, 1);
+});
+
+test('当前岗位已采集但仍保留旧岗位评分的简历只算待评估', () => {
+  const analytics = new RecruitmentAnalyticsService({
+    store: { getResumes: () => [{ source: 'boss', captureJobRequirements: currentRequirements,
+      originalText: '完整简历', matchScore: 95,
+      matchEvaluation: { jobRequirements: otherRequirements, method: 'llm',
+        evaluationVersion: 1, evaluatedAt: '2026-10-20T11:00:00+08:00' } }] },
+    activeJobService: { current: () => ({ title: '项目经理主管',
+      jobRequirements: currentRequirements }) }
+  });
+  const result = analytics.snapshot();
+  assert.equal(result.metrics.total, 1);
+  assert.equal(result.metrics.unevaluated, 1);
+  assert.equal(result.metrics.evaluated, 0);
+  assert.equal(result.metrics.passed, 0);
 });

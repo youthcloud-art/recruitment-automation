@@ -1,10 +1,40 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { attachExistingVisibleChromeCdp, installedChromePath } = require('../src/services/visibleChromeCdp');
+const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
+const { attachExistingVisibleChromeCdp, installedChromePath,
+  startChrome } = require('../src/services/visibleChromeCdp');
 
 const OWNED_URL = 'ws://127.0.0.1:19222/devtools/browser/owned-test-session';
 const TABS = [{ url: 'https://www.zhipin.com/web/chat/recommend', title: 'BOSS直聘' }];
+
+test('Windows Chrome launcher does not block HTTP while waiting for its PID', async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.unref = () => {};
+  child.kill = () => {};
+  let ticked = false;
+  setTimeout(() => { ticked = true; child.stdout.write('4512\n'); }, 20);
+  const result = await startChrome({chromePath:'C:\\chrome.exe',profileDir:'C:\\profile',
+    initialUrl:'https://ehire.51job.com/',port:19224},
+  {platform:'win32',spawnProcess:() => child,timeoutMs:1000});
+  assert.equal(ticked,true);
+  assert.deepEqual(result,{pid:4512});
+});
+
+test('Windows Chrome launcher bounds a stalled PowerShell without blocking the event loop', async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  let killed = false;
+  child.kill = () => { killed = true; };
+  await assert.rejects(startChrome({chromePath:'C:\\chrome.exe',
+    profileDir:'C:\\profile',initialUrl:'https://ehire.51job.com/',port:19224},
+  {platform:'win32',spawnProcess:() => child,timeoutMs:20}),/启动超时/);
+  assert.equal(killed,true);
+});
 
 test('Windows Chrome detection accepts 32-bit Program Files installs after moving computers', () => {
   const x86Chrome = path.win32.join('D:\\Apps (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe');

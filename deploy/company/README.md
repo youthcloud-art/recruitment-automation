@@ -13,12 +13,19 @@
 - `shared\backend-uploads`：通过 `backend\uploads` junction 访问。
 - `shared\local`：通过根目录 `.local` junction 访问，保留本地业务库、模型设置及浏览器数据。
 - `shared\backend.env`：后端真实环境配置，运行时通过 `RECRUITMENT_ENV_FILE` 直接读写该绝对路径。这样网页保存邮箱配置的原子替换也会保存在 shared，不在 release 内创建 `.env` 或文件链接。
+- `shared\auth\users.json`：公司网页的管理员账号、加盐密码哈希和会话签名密钥。首次设置时由网关创建；不进入 Git、release 或日志。发布切换时保留，因此更新代码无需重新设置密码。
 - `control\current-release.json`：当前代码指针；`control\processes.json` 记录可核实的子进程身份。
 - `delivery`：固定维护脚本、配置、Gitee 只读部署密钥及执行结果。
 - `backups`：切换前 Node 服务停止后的 shared 业务副本及上一版代码指针；不包含仍可能被可见 Chrome 使用的 `local\browser-profiles`。
 - `logs`：网关与后端日志。
 
 不直接修改正在运行的 release。升级先安装新依赖、构建前端并检查 JavaScript 语法，通过后才停服；冷备份 shared 中的业务数据后切换代码指针，再检查 `/healthz`。失败会停止新实例，恢复业务数据和上一版代码，再启动旧版。备份与恢复均排除 `browser-profiles`，保持 Chrome 登录会话原位供新旧版本接管；会话记录与采集检查点仍随其他业务数据备份。首次替换旧觅才项目时，保留其整个目录和业务数据，不混入 AutoRecru。
+
+## 管理员登录
+
+公司正式版本启用单一管理员账号 `Mark`。新版首次发布后，在**公司服务器本机浏览器**打开 `http://192.168.1.24:4001/`，按页面提示设置密码一次；远端设备不能初始化或重设账号。初始密码不得写入代码、Git、命令行或工单。后续公司网段内的浏览器使用账号密码登录，右上角账号菜单可修改密码或退出。登录在该浏览器中持久保存，活跃使用时会自动续期；浏览器清除 Cookie、长期不使用、修改密码或退出后须重新登录。修改密码和退出都会使该账号现有登录窗口的会话失效。连续输错五次会暂时限制登录 15 分钟。健康检查 `/healthz` 保持匿名可用，所有简历 API 与 Socket.IO 在未登录时拒绝访问。
+
+当前入口为 HTTP；账号密码和候选人数据在公司网段传输时没有 TLS 加密。正式把它当作访问控制边界前，应由公司 IT 为此入口配置可信任的内部 HTTPS 反向代理或证书，并确认网关收到的仍是真实客户端地址及同源请求；不能仅依靠登录功能保护不可信网络传输。模型配置写入仍按此前要求只允许服务器本机浏览器。
 
 ## 一次性准备
 
@@ -48,6 +55,14 @@ $commit = '<已核对的40位提交SHA>'
 ```
 
 `-PrepareOnly` 创建新项目自身任务、部署公钥、依赖与构建，保留旧服务运行。自动镜像部署任务保持禁用。新安装器默认网关 4001；脚本创建的新防火墙规则仅允许这些已确认公司网段到服务器配置的网关端口；若已有同名规则则停止，不覆盖。不同 Wi-Fi 可能属于不同 VLAN，Wi-Fi 名本身不能证明所处网段或路由权限。后端端口不向局域网发布。
+
+### 新公司 Wi-Fi 无法访问 4001
+
+先在连接该 Wi-Fi 的电脑上记录 IPv4 地址、前缀长度、默认网关，并运行 `curl.exe --noproxy '*' --connect-timeout 4 --max-time 8 -i http://192.168.1.24:4001/healthz`。`HTTP 403` 且提示不在公司网段，说明请求到达了网关，但来源地址未获准；连接超时则先检查该 Wi-Fi 到 `192.168.1.24` 的 VLAN 路由、访客/客户端隔离和防火墙，不要直接扩大放行范围。服务器本机 `/healthz` 正常只能证明应用在运行，不能证明该 Wi-Fi 有路由。
+
+确认它是受信任的公司网段、存在到服务器的路由后，在服务器管理员 PowerShell 从**当前 release** 执行 `Add-CompanyNetwork.ps1 -Network '<该 Wi-Fi 的准确 IPv4 CIDR>'`。脚本核实本机服务器身份、当前网关支持动态加载和专用防火墙规则，暂缓镜像部署，再同时修改 `delivery/config.json` 与该规则的来源地址；待运行中的网关报告已加载新名单且健康检查通过后结束，失败时回滚。它不重启采集后端、网关或招聘平台 Chrome，也不暂停正在运行的采集。成功后必须再从该 Wi-Fi 的电脑访问 `/healthz` 和页面验证。若脚本输出 `NETWORK_ALREADY_ALLOWED` 但仍超时，应由公司网络管理员检查 Wi-Fi/VLAN 的互访策略；本项目不能绕过网络设备的隔离规则。不要改成 `Any` 或向所有来源开放端口。
+
+若服务器仍运行旧网关而新版已进入 `source`，管理员可运行 `source\deploy\company\Repair-And-Enable-CompanyNetwork.ps1 -ExpectedCommit <完整提交> -Network <准确 CIDR>`。它先将交付脚本的发布健康等待从 90 秒修正为 600 秒，等待新版真正通过健康检查，再调用上面的热加载脚本。公司数据量增长后实测后端冷启动约 4 分钟，原 90 秒等待会错误回滚。修正等待时间本身不重启当前服务；正式发布切换仍可能短暂不可用。
 
 把服务器 `delivery\gitee-readonly-ed25519.pub` 的**公钥**添加到 Gitee 仓库的只读部署公钥。私钥留在服务器，仅 SYSTEM 和管理员可读。
 
@@ -84,6 +99,20 @@ Start-ScheduledTask -TaskName 'AutoRecru-Company-MirrorDeploy'
 
 服务器的 `AutoRecru-Company-MirrorDeploy` 以 SYSTEM 身份准备新版本，再启动交互运行任务；构建失败时现有服务继续运行。固定 delivery 脚本不会随 Git 拉取自动覆盖，修改部署机制后应单独审阅并更新服务器 `delivery` 内脚本。
 
+### 已安装服务器的一次性运行可靠性更新
+
+当 `control\current-release.json` 指向包含 `Apply-CompanyReliability.ps1` 的新版本后，在**服务器本机管理员 PowerShell** 运行一次：
+
+```powershell
+$root = 'D:\App\SXF\Smart-Recruitment-Agent'
+$current = Get-Content "$root\control\current-release.json" -Raw | ConvertFrom-Json
+& (Join-Path $current.root 'deploy\company\Apply-CompanyReliability.ps1') -InstallRoot $root
+```
+
+脚本核对服务器 IP 和当前版本，暂时禁用后续镜像任务并最多等待 20 分钟让当前部署释放锁；随后备份旧维护脚本，更新固定 `delivery` 脚本，仅重启本项目后端和网关并校验 `/healthz`，再安装每 2 分钟检查一次的 `AutoRecru-Company-Watchdog`。脚本结束时恢复镜像任务原有的启用状态。招聘平台的独立 Chrome 窗口及浏览器资料不会被脚本关闭。若运行任务仍显示 Running 但健康检查失败，监测任务只记录异常，不杀进程；任务已停止且端口空闲时才尝试恢复。更新失败会恢复旧脚本并尝试启动旧运行任务。成功时显示 `RELIABILITY_UPDATE_OK`，详情写入 `delivery\last-reliability-update.json`。
+
+故障诊断依次查看 `control\runtime-failure.json`、`delivery\last-watchdog.json`、`logs\backend.stderr.log` 和 `logs\gateway.stderr.log`。每次重启会把非空的旧日志存成同目录带时间戳的文件，各流保留最近 10 份，便于定位重启前的异常。`node` 的 `ExperimentalWarning` 本身不能说明服务为何退出；应结合运行任务状态与故障记录判断。计划任务以交互账户启动浏览器相关进程，服务器重启或该账户注销后仍需先登录该 Windows 账户。
+
 服务器查看状态：
 
 ```powershell
@@ -107,7 +136,7 @@ Get-Content 'D:\App\SXF\Smart-Recruitment-Agent\control\current-release.json'
 
 `delivery/cleanup-policy.json` 可增加保留量或延长期限，不能低于上述安全下限。清理先取得 `sync.lock`、`switch.lock`、`cleanup.lock` 和 `maintenance-install.lock`；遇到更新、导出或另一轮清理就跳过，不停止任何业务进程。健康检查异常时不清理；执行中变为异常则停止后续项。删除器先完整检查目录树，遇到未知 reparse point 整项拒绝，已知 shared junction 仅移除链接，文件和空目录均逐项非递归删除，不遍历共享数据。
 
-安装结果记录在 `delivery/cleanup-installation.json`，每次预览或执行结果记录在 `delivery/last-cleanup.json`，包括候选/删除数量、字节数和前后磁盘剩余空间。公司平台只读接口 `/api/company-maintenance/status` 提供计划和汇总，不暴露文件名、配置内容或进程命令行。手动核对可读取这些 JSON 和 `Get-ScheduledTask -TaskName AutoRecru-Company-Cleanup`；手动预览运行安装记录对应 bundle 中的 `Invoke-CompanyCleanup.ps1 -InstallRoot ...`，只有额外传 `-Apply` 才删除。
+安装结果记录在 `delivery/cleanup-installation.json`，每次预览或执行结果记录在 `delivery/last-cleanup.json`，包括候选/删除数量、字节数和前后磁盘剩余空间。公司平台只读接口 `/api/company-maintenance/status` 提供计划和汇总，不暴露文件名、配置内容或进程命令行。网关 `/healthz` 另提供最小的 `cleanup` 注册标记、北京时间计划和上次删除计数，便于内网运维验证；业务接口仍须登录，详细路径、报错、配置和账号信息不进入健康响应。手动核对可读取这些 JSON 和 `Get-ScheduledTask -TaskName AutoRecru-Company-Cleanup`；手动预览运行安装记录对应 bundle 中的 `Invoke-CompanyCleanup.ps1 -InstallRoot ...`，只有额外传 `-Apply` 才删除。
 
 清理能控制历史部署文件的增长，正常业务数据、手动导出和当前活动日志仍会随使用增长；它们不会因磁盘空间低而被自动删除。
 
@@ -121,4 +150,4 @@ Get-Content 'D:\App\SXF\Smart-Recruitment-Agent\control\current-release.json'
 
 先在服务器核对新端口 `/healthz` 返回 200，后端只监听已配置的回环端口（当前 19501）；再分别从公司有线、`@Ruijie-s7661`、`Unionwell` 对应的实际办公网段访问新端口 4001。确认页面、API、Socket.IO、招聘网站登录、一次授权的简历采集和保存，以及断开远程桌面后继续访问。代理/TUN 环境应让公司地址直连；仅本机健康成功不能代替跨网段验收。
 
-每次升级的 `backups` 是单机业务数据切换恢复点，**浏览器 profile 不属于自动数据回退范围**。可见 Chrome 独立运行，不保证随 Node 停止；维护人员需要另外正常关闭这些 Chrome 窗口，再将完整 shared（含 browser-profiles）、backend.env、delivery 配置和所需 release 复制到公司受控备份位置，并验证恢复。不得在 Chrome 仍运行时覆盖 profile。脚本不会无限自动删除备份或旧 release。正常维护先禁用镜像任务，再使用 `Stop-CompanyRuntime`（dot-source `delivery\Common.ps1` 并读取配置）；恢复使用 `Start-CompanyRuntime`，随后验证 `/healthz`。新数据库的有意破坏性迁移应先独立验证恢复路径。
+每次升级的 `backups` 是单机业务数据切换恢复点，**浏览器 profile 不属于自动数据回退范围**。可见 Chrome 独立运行，不保证随 Node 停止；维护人员需要另外正常关闭这些 Chrome 窗口，再将完整 shared（含 browser-profiles）、backend.env、delivery 配置和所需 release 复制到公司受控备份位置，并验证恢复。不得在 Chrome 仍运行时覆盖 profile。历史自动备份与旧 release 按前述保留策略清理，独立异机备份仍须另行维护。正常维护先禁用镜像任务，再使用 `Stop-CompanyRuntime`（dot-source `delivery\Common.ps1` 并读取配置）；恢复使用 `Start-CompanyRuntime`，随后验证 `/healthz`。新数据库的有意破坏性迁移应先独立验证恢复路径。

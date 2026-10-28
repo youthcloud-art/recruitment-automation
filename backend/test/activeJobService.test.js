@@ -48,6 +48,27 @@ test('下载模板填写后可导入，岗位字段持久化并保持评估文�
   }
 });
 
+test('单个平台应用岗位时，其余两个平台保持原岗位；三平台应用可再次统一', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-job-test-'));
+  try {
+    const file = path.join(dir, 'active-job.json');
+    const service = new ActiveJobService({ file });
+    const first = service.save({ title: '磁轴销售工程师',
+      jobRequirements: '熟悉磁轴产品、客户开发与技术沟通' });
+    assert.throws(() => service.current('unknown'), /应用平台无效/);
+    const second = service.save({ title: 'IT网络运维',
+      jobRequirements: '负责网络故障排查和服务器维护' }, { applyTo: 'boss' });
+    assert.equal(service.current('boss').title, second.title);
+    assert.equal(service.current('zlzp').title, first.title);
+    assert.equal(service.current('qcwy').title, first.title);
+    assert.equal(new ActiveJobService({ file }).current('zlzp').title, first.title);
+    assert.throws(() => service.save(first, { applyTo: 'unknown' }), /应用平台无效/);
+    service.save(first, { applyTo: 'all' });
+    assert.deepEqual(Object.values(service.currentByPlatform()).map(job => job.title),
+      [first.title, first.title, first.title]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('原有岗位筛选条件 Excel 可兼容导入，不丢失职责和优先技能', () => {
   if (!fs.existsSync(priorWorkbookPath)) return;
   const imported = parseJobTemplate(fs.readFileSync(priorWorkbookPath));

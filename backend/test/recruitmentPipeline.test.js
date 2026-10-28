@@ -46,6 +46,32 @@ test('三平台候选人可按平台、状态、关键词查询，手动简历�
   assert.throws(() => service.update('a', { status: 'unknown' }), /不支持/);
 });
 
+test('大简历库按流筛选后才截取报告上限，末尾命中的候选人仍可读取', () => {
+  const store = {
+    getResumes: () => { throw new Error('不应把全部简历加载进内存'); },
+    forEachResume: (visit) => {
+      for (let index = 0; index < 10002; index++) visit({
+        id: String(index), source: 'boss', name: index === 10001 ? '目标候选人' : '其他人'
+      });
+    }
+  };
+  const service = new RecruitmentPipelineService({ store, activeJobService: noActiveJob });
+  assert.deepEqual(service.list({ keyword: '目标', limit: 1 }).map(item => item.id), ['10001']);
+});
+
+test('历史简历删除入口要求明确岗位和互异 ID，不允许空选或批量越界', () => {
+  const calls = [];
+  const service = new RecruitmentPipelineService({ store: {
+    deleteHistoricalResumes: (ids, title) => { calls.push({ ids, title });
+      return { success: true, count: ids.length }; }
+  }, activeJobService: noActiveJob });
+  assert.throws(() => service.deleteHistoricalCandidates({ ids: [], jobTitle: '网络运维' }), /选择/);
+  assert.throws(() => service.deleteHistoricalCandidates({ ids: ['a', 'a'], jobTitle: '网络运维' }), /选择/);
+  assert.throws(() => service.deleteHistoricalCandidates({ ids: ['a'], jobTitle: '' }), /岗位/);
+  assert.equal(service.deleteHistoricalCandidates({ ids: ['a'], jobTitle: '网络运维' }).count, 1);
+  assert.deepEqual(calls, [{ ids: ['a'], title: '网络运维' }]);
+});
+
 test('三平台候选人分页仅传输当前页，汇总使用按平台状态聚合', () => {
   const calls = [];
   const store = {
@@ -65,10 +91,32 @@ test('三平台候选人分页仅传输当前页，汇总使用按平台状态�
   const page = service.listPage({ keyword: '网络', limit: '20', offset: '20' });
   assert.equal(page.total, 61);
   assert.deepEqual(calls[0], { source: null, sources: ['boss', 'zlzp', 'qcwy'],
-    status: null, keyword: '网络', keywordFields: 'pipeline', limit: 20, offset: 20 });
+    hiringJobTitle: null, jobGroup: null, status: null, keyword: '网络', keywordFields: 'pipeline',
+    sortBy: 'createdAt', limit: 20, offset: 20 });
   assert.equal(service.summary().boss.total, 20);
   assert.equal(service.summary().qcwy.byStatus.shortlisted, 7);
   assert.throws(() => service.listPage({ limit: 0 }), /分页/);
+  service.listPage({ source: 'boss', jobTitle: '网络运维', sortBy: 'scoreDesc', limit: 10 });
+  assert.equal(calls[1].hiringJobTitle, '网络运维');
+  assert.equal(calls[1].jobGroup, null);
+  assert.equal(calls[1].sortBy, 'scoreDesc');
+  assert.throws(() => service.listPage({ sortBy: 'scoreRandom' }), /排序/);
+});
+
+test('岗位选项跨平台汇总，同名岗位不会重复', () => {
+  const service = new RecruitmentPipelineService({
+    store: { getHiringJobCounts: () => [
+      { title: '网络运维', source: 'boss', total: 2 },
+      { title: '网络运维', source: 'zlzp', total: 3 },
+      { title: '财务经理', source: 'qcwy', total: 1 }
+    ] }, activeJobService: noActiveJob
+  });
+  assert.deepEqual(service.jobs(), [
+    { title: '网络运维', jobGroup: 'current', total: 5,
+      bySource: { boss: 2, zlzp: 3, qcwy: 0 } },
+    { title: '财务经理', jobGroup: 'current', total: 1,
+      bySource: { boss: 0, zlzp: 0, qcwy: 1 } }
+  ]);
 });
 
 test('DeepSeek 岗位评估只保存可解析结果且屏蔽联系方式', async () => {
@@ -167,6 +215,7 @@ test('独立初筛报告用前程无忧稳定记录 ID 代替误采的通知标�
   const requirements = '岗位名称：IT网络运维\n必需技能：网络故障排查';
   const item = store.records[2];
   Object.assign(item, { name: '通知', position: '通知', sourceRecordKey: 'c'.repeat(64),
+    sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=official-123',
     originalText: '通知\n工作经历：网络故障排查', matchScore: 80,
     matchEvaluation: { jobRequirements: requirements, method: 'llm', evaluationVersion: 1,
       evaluatedAt: '2026-10-20T00:00:00.000Z', summary: '有相关证据' } });
@@ -174,7 +223,7 @@ test('独立初筛报告用前程无忧稳定记录 ID 代替误采的通知标�
     activeJobService: { current: () => ({ title: 'IT网络运维', jobRequirements: requirements,
       updatedAt: '2026-10-20T00:00:00.000Z' }) } });
   const report = service.report({ source: 'qcwy', minScore: 70 });
-  assert.match(report, /匿名候选人（前程无忧记录 ID：cccccccccccccccc）/);
+  assert.match(report, /匿名候选人（前程无忧记录 ID：official-123）/);
   assert.match(report, /求职岗位待核实/);
   assert.doesNotMatch(report, /通知/);
   assert.equal(item.originalText, '通知\n工作经历：网络故障排查');
@@ -279,4 +328,42 @@ test('三平台初筛报告默认排除人工淘汰者，指定淘汰状态仍�
   assert.match(audit, /符合条件：1 份；本报告展示：1 份/);
   assert.match(audit, /boss淘汰候选人/);
   assert.doesNotMatch(audit, /正常候选人|zlzp淘汰候选人|qcwy淘汰候选人/);
+});
+
+test('初筛报告按所选岗位与历史版本统计实际份数，不混入同名在用岗位', () => {
+  const currentRequirements = '岗位名称：磁轴销售工程师\n现行条件：销售经验';
+  const oldRequirements = '岗位名称：磁轴销售工程师\n旧版条件：磁轴销售';
+  const olderRequirements = '岗位名称：磁轴销售工程师\n更早条件：工业产品';
+  const evaluated = (id, title, group, requirements, score) => ({
+    id, source: 'boss', name: `候选人${id}`, captureJobTitle: title,
+    captureJobRequirements: requirements, jobGroup: group,
+    originalText: `完整简历 ${id}`.repeat(20), matchScore: score,
+    matchEvaluationStatus: 'completed', matchEvaluation: {
+      method: 'llm', evaluationVersion: 1, evaluatedAt: '2026-10-23T00:00:00.000Z',
+      jobRequirements: requirements, summary: '人工复核所需的初筛结论'
+    }
+  });
+  const records = [
+    evaluated('旧版', '磁轴销售工程师', 'historical', oldRequirements, 75),
+    evaluated('更早版', '磁轴销售工程师', 'historical', olderRequirements, 95),
+    evaluated('现行', '磁轴销售工程师', 'current', currentRequirements, 80),
+    evaluated('别岗', '财务管理经理', 'historical', oldRequirements, 99)
+  ];
+  const service = new RecruitmentPipelineService({
+    store: { getResumes: () => records },
+    activeJobService: { current: () => ({ title: '磁轴销售工程师',
+      jobRequirements: currentRequirements, updatedAt: '2026-10-23T00:00:00.000Z' }) }
+  });
+  const historical = { jobTitle: '磁轴销售工程师', jobGroup: 'historical', minScore: 0 };
+  assert.deepEqual(service.reportPreview(historical), {
+    jobTitle: '磁轴销售工程师', jobGroup: 'historical', source: '', status: '', keyword: '',
+    total: 2, eligibleCount: 2, selectedCount: 2, maxCount: 500, requirementsVersions: 2
+  });
+  const report = service.report({ ...historical, topN: 1 });
+  assert.match(report, /招聘岗位：磁轴销售工程师/);
+  assert.match(report, /有效评估且达到分数线：2 份；本报告展示：1 份/);
+  assert.match(report, /候选人旧版/);
+  assert.doesNotMatch(report, /候选人现行|候选人更早版|候选人别岗/);
+  assert.match(service.report({ jobTitle: '磁轴销售工程师', jobGroup: 'current' }), /候选人现行/);
+  assert.throws(() => service.reportPreview({ ...historical, topN: 501 }), /报告候选人份数/);
 });

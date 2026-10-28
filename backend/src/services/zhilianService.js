@@ -8,6 +8,20 @@ const { saveBrowserSession } = require('./browserSessionStore');
 const { openVisibleChromeCdp, launchVisibleChromeCdp, getCdpTabs } = require('./visibleChromeCdp');
 const { createHash } = require('node:crypto');
 const ZHILIAN_LOGIN_URL = 'https://passport.zhaopin.com/org/login?bkurl=https%3A%2F%2Frd6.zhaopin.com%2F';
+const ZHILIAN_EMPLOYER_HOSTS = new Set(['passport.zhaopin.com', 'rd.zhaopin.com', 'rd6.zhaopin.com']);
+
+function isZhilianEmployerTab(tab) {
+  try {
+    const url = new URL(tab?.url);
+    return url.protocol === 'https:' && ZHILIAN_EMPLOYER_HOSTS.has(url.hostname);
+  } catch { return false; }
+}
+
+function preferredZhilianEmployerTab(tabs) {
+  const official = tabs.filter(isZhilianEmployerTab);
+  return official.find(tab => /^https:\/\/rd6?\.zhaopin\.com\//.test(tab.url) &&
+    !/(?:^|\/)(?:login|passport|sso)(?:\/|$)/i.test(new URL(tab.url).pathname)) || official[0];
+}
 const SEARCH_CANDIDATE_SELECTORS = [
   'div.search-resume-item.resume-item-exp', '.search-resume-item',
   '.resume-item', '.resume-card', '.candidate-item',
@@ -130,14 +144,14 @@ class ZhilianService {
     const opened = await openVisibleChromeCdp({
       profileName: 'zhilian', initialUrl: ZHILIAN_LOGIN_URL, port: this.cdpPort
     });
-    const tab = opened.tabs.find(item => {
-      try {
-        const url = new URL(item.url);
-        return url.protocol === 'https:' &&
-          ['passport.zhaopin.com', 'rd.zhaopin.com', 'rd6.zhaopin.com'].includes(url.hostname) &&
-          /智联|招聘|登录/.test(item.title || '');
-      } catch { return false; }
-    });
+    // Browser tab titles change after login and can be empty while an SPA is
+    // loading. The official origin, not its presentation title, identifies the
+    // employer tab; prefer a dashboard when both login and dashboard are open.
+    let tab = preferredZhilianEmployerTab(opened.tabs);
+    for (let attempt = 0; !tab && attempt < 3; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 750));
+      tab = preferredZhilianEmployerTab(await getCdpTabs({ profileName: 'zhilian', port: this.cdpPort }));
+    }
     if (!tab) throw new Error('智联招聘企业登录页未正常显示；请检查 Chrome 窗口和网络连接');
     this.chromeWindowOpened = true;
     this.chromeTabUrl = tab.url.split(/[?#]/)[0];
@@ -761,7 +775,7 @@ class ZhilianService {
         throw new Error('用户尚未登录智联招聘');
       }
       try {
-        this.activeJobSnapshot = this.activeJobService.current();
+        this.activeJobSnapshot = this.activeJobService.current('zlzp');
       } catch (error) {
         this.activeJobSnapshot = null;
         logger.warn(`读取当前岗位条件失败，采集将继续但不自动评估: ${error.message}`);
@@ -1057,7 +1071,24 @@ class ZhilianService {
   async clearInheritedSearchFilters(filters = {}) {
     const clear = this.page.locator('a[zp-stat-id="talent_search_clear_all"]').first();
     if (await clear.isVisible().catch(() => false)) {
-      await clear.click({ timeout: 5000 });
+      try {
+        await clear.click({ timeout: 5000 });
+      } catch (error) {
+        // The site's sticky keyword panel and chat widget can cover its own
+        // clear-all anchor. Trigger that exact official anchor only when every
+        // reported blocker is one of those two known page elements. An unknown
+        // overlay (including a verification prompt) remains a hard failure.
+        const interceptors = String(error.message || '').split('\n')
+          .filter(line => line.includes('intercepts pointer events'));
+        if (!interceptors.length || interceptors.some(line =>
+          !/keyword-panel|im-widget/.test(line))) throw error;
+        await clear.evaluate(element => {
+          if (!element.isConnected || element.getAttribute('zp-stat-id') !== 'talent_search_clear_all') {
+            throw new Error('智联清除筛选按钮已变化');
+          }
+          element.click();
+        });
+      }
       await this.page.waitForTimeout(500);
     }
     if (filters.location && filters.location !== '不限') return;
@@ -1066,16 +1097,32 @@ class ZhilianService {
     const cityChip = this.page.locator('.search-condition-result-new__item')
       .filter({ hasText: '期望工作地：' }).first();
     if (await cityChip.isVisible().catch(() => false)) {
-      const close = cityChip.locator('i.sati-times-circle-s').first();
-      if (!await close.isVisible().catch(() => false)) {
+      let close = null;
+      for (const selector of ['i.sati-times-circle-s', '[class*="times-circle"]',
+        '[class*="close"]', '[aria-label*="关闭"]', '[aria-label*="清除"]',
+        'button', 'svg']) {
+        const candidate = cityChip.locator(selector);
+        if (await candidate.count().catch(() => 0) !== 1 ||
+            !await candidate.isVisible().catch(() => false)) continue;
+        close = candidate;
+        break;
+      }
+      if (!close) {
         throw new Error('智联保留了上一个岗位的工作地点，无法清除；已停止当前搜索');
       }
       await close.click({ timeout: 5000 });
-      await this.page.waitForTimeout(500);
+      await cityChip.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {
+        throw new Error('智联保留了上一个岗位的工作地点，无法清除；已停止当前搜索');
+      });
     }
     const city = this.page.locator('.keyword-panel__city').first();
     if (await city.isVisible().catch(() => false)) {
-      const label = (await city.innerText()).trim();
+      let label = '';
+      for (let poll = 0; poll < 6; poll++) {
+        label = (await city.innerText()).trim();
+        if (label === '不限') break;
+        await this.page.waitForTimeout(500);
+      }
       if (label !== '不限') {
         throw new Error(`智联工作地点仍为“${label}”，与当前岗位“不限”不符；已停止当前搜索`);
       }
@@ -5529,7 +5576,7 @@ class ZhilianService {
       // 验证和重置状态
       this.validateAndResetState();
       try {
-        this.activeJobSnapshot = this.activeJobService.current();
+        this.activeJobSnapshot = this.activeJobService.current('zlzp');
       } catch (error) {
         this.activeJobSnapshot = null;
         logger.warn(`读取当前岗位条件失败，采集将继续但不自动评估: ${error.message}`);
@@ -7232,3 +7279,5 @@ class ZhilianService {
 }
 
 module.exports = ZhilianService;
+module.exports.isZhilianEmployerTab = isZhilianEmployerTab;
+module.exports.preferredZhilianEmployerTab = preferredZhilianEmployerTab;

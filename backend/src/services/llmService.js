@@ -38,7 +38,7 @@ class LLMService {
    * @param {Function} finalAnswerCallback - 最终建议回调函数
    * @returns {Promise<string>} 最终响应内容
    */
-  async chatWithLLM(messages, thinkingCallback = null, finalAnswerCallback = null) {
+  async chatWithLLM(messages, thinkingCallback = null, finalAnswerCallback = null, options = {}) {
     try {
       console.log('LLM服务调用开始，API地址:', this.apiUrl);
       console.log('使用模型:', this.model);
@@ -92,7 +92,8 @@ class LLMService {
       const response = await axios.post(this.apiUrl, requestBody, {
         headers: headers,
         responseType: 'stream',
-        timeout: 300000 // 设置300秒超时，优化简历解析性能
+        timeout: options.timeout || 300000,
+        signal: options.signal
       });
 
       console.log('LLM API响应状态:', response.status);

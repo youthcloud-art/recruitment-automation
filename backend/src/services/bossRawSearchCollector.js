@@ -108,6 +108,8 @@ function searchCardsExpression(cardWindowStart = 0) { return `(() => { /* bossRa
         clickText:links.length===1
           ? (links[0].textContent||'').replace(/\\s+/g,' ').trim() : '',
         displayName:names.length===1 ? (names[0].textContent||'').trim() : '',
+        sourceCardIdHint:links.length===1
+          ? (links[0].getAttribute?.('data-expect') || '') : '',
         expectedPosition:roles.length===2 ? (roles[1].textContent||'').trim() : ''};
     }).filter(item=>item.text)};
 })()`; }
@@ -211,6 +213,10 @@ const SEARCH_MODAL = `(() => { /* bossRaw:searchModal */
       .forEach(el=>el.remove());
     text=(clone.textContent||'').trim();
   }
+  // Some search-resume layouts render their sections as visible iframe text
+  // without any of the older wrapper classes. Read only this verified official
+  // resume iframe; the collector still checks content quality and scroll end.
+  if (!text && doc?.body) text=(doc.body.innerText||'').trim();
   const canvas=doc?.querySelector('canvas#resume');
   return {active:true,iframeSrc:iframe.src,iframeLiveUrl,
     outerOrigin:performance.timeOrigin,resumeOrigin,frameReady:!!doc,text,
@@ -464,10 +470,19 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     // the existing official-request and result checks before opening resumes.
     // An interrupted verification resume must never submit a new search.
     if (this.status.phase!=='validating_resume') {
-      const state=await this.readOnlyExpression(SEARCH_STATE,'prepare_search_keyword');
-      if (state?.state==='ready' &&
-          (normalized(state.value)!==normalized(title) ||
-           state.matchingSearchRequests<1)) {
+      let state;
+      for (let poll=0;poll<20;poll++) {
+        state=await this.readOnlyExpression(SEARCH_STATE,'prepare_search_keyword');
+        if (state?.state==='ready' && state.selectedFiltersReady) break;
+        if (!['frame_unavailable','input_unavailable','ready'].includes(state?.state)) break;
+        await this.assertPage({allowMissingFrame:true});
+        await this.wait(500);
+      }
+      if (state?.state!=='ready' || !state.selectedFiltersReady) throw fail(
+        'BOSS_SEARCH_PAGE_UNAVAILABLE',
+        'BOSS 官方搜索控件未加载完成，未提交岗位搜索；请在平台页面确认后重试');
+      if (normalized(state.value)!==normalized(title) ||
+          state.matchingSearchRequests<1) {
         await this.submitOfficialSearch(title,state);
       }
     }
@@ -486,7 +501,8 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     if ((await this.readModal()).active) throw fail('BOSS_RESUME_DIALOG_BLOCKED',
       'BOSS 当前有简历弹窗，未更改搜索关键词');
     await this.session.assertUsableRecruiterWindow({frameSelector:SEARCH_FRAME});
-    await this.session.clickUnique({selector:'input.search-input',frameSelector:SEARCH_FRAME});
+    await this.clickStableSearchControl('input.search-input',before.value,
+      before.frameOrigin);
     // Trusted keyboard input preserves the official site's search handlers.
     // A failed or uncertain edit stops before clicking the search icon.
     await this.session.send('Input.dispatchKeyEvent',{
@@ -514,8 +530,8 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       'BOSS 搜索框未准确写入当前岗位，未提交搜索');
     // The SPA can replace the focused input while applying the new value.
     // Its visible search icon submits without depending on that focus.
-    await this.session.clickUnique({selector:'.search-input-wrap .icon-search',
-      frameSelector:SEARCH_FRAME});
+    await this.clickStableSearchControl('.search-input-wrap .icon-search',title,
+      before.frameOrigin);
     for (let poll=0;poll<20;poll++) {
       await this.wait(500);
       await this.assertPage({allowMissingFrame:true});
@@ -528,6 +544,38 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     }
     throw fail('BOSS_SEARCH_RESULTS_UNAVAILABLE',
       'BOSS 官方岗位搜索未返回可确认的候选结果，未打开任何简历');
+  }
+
+  async clickStableSearchControl(selector,expectedValue,expectedFrameOrigin) {
+    const click=()=>this.session.clickUnique({selector,frameSelector:SEARCH_FRAME});
+    for (let attempt=0;attempt<3;attempt++) {
+      try { return await click(); }
+      catch (error) {
+        // A pre-click probe/recheck has sent no mouse press. The official
+        // search panel may briefly hide, move or replace a control while
+        // rendering. Never retry an uncertain click or a changed document.
+        const transient=['missing','hidden','obscured','out_of_view'];
+        const safe=error.code==='BOSS_CDP_TARGET_UNSTABLE' &&
+          error.stage==='pre_click_recheck' &&
+          (error.reason==='position_moved' ||
+            (error.reason==='target_not_ready' &&
+              transient.includes(error.targetState))) ||
+          error.code==='BOSS_CDP_TARGET_UNAVAILABLE' &&
+          error.stage==='pre_click_probe' &&
+          transient.includes(error.targetState);
+        if (!safe || attempt===2) throw error;
+        await this.wait(500+attempt*250);
+        await this.assertPage();
+        const state=await this.readOnlyExpression(SEARCH_STATE,
+          'recheck_search_control');
+        if (state?.state!=='ready' ||
+            state.frameOrigin!==expectedFrameOrigin ||
+            normalized(state.value)!==normalized(expectedValue) ||
+            !state.selectedFiltersReady || state.nonDefaultSelected>0 ||
+            state.checkedCount>0 || state.activeCustomSliderCount>0 ||
+            (await this.readModal()).active) throw error;
+      }
+    }
   }
 
   async readCandidateCards(title,id,path,signal) {
@@ -564,7 +612,7 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       if (this.windowRestoreUsed) throw fail('BOSS_CDP_WINDOW_MINIMIZED',
         'BOSS 专用 Chrome 本轮已自动恢复一次，再次最小化后已暂停；请手动恢复窗口并重新开始采集');
       if (!this.runIdentity || !this.lastCandidateWindow) throw error;
-      const currentJob=this.jobService.current();
+      const currentJob=this.jobService.current('boss');
       if (this.runIdentity.title!==title || this.runIdentity.chosenId!==id ||
           this.runIdentity.jobSignature!==jobResumeSignature(currentJob)) throw fail(
         'BOSS_CDP_WINDOW_RESTORE_UNAVAILABLE',
@@ -925,6 +973,33 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     return {image,fingerprint:crypto.createHash('sha256').update(image).digest('hex')};
   }
 
+  async verifiedViewport(expectedUrl,expectedTop) {
+    const inspect=async()=>{
+      const page=await this.assertPage();
+      const modal=await this.readModal();
+      const identity=await this.readOnlyExpression(SEARCH_CANVAS_IDENTITY,
+        'viewport_preflight');
+      if (page.visibilityState!=='visible' || !modal.active ||
+          modal.url?.href!==expectedUrl || identity?.state!=='ready' ||
+          officialResumeUrl(identity.resumeUrl)?.href!==expectedUrl ||
+          Math.abs(modal.scrollTop-expectedTop)>2 ||
+          Math.abs(identity.scrollTop-expectedTop)>2) {
+        throw fail('BOSS_RESUME_DIALOG_BLOCKED',
+          'BOSS 搜索简历可见区域或位置已变化，已暂停采集');
+      }
+      return identity;
+    };
+    const before=await inspect();
+    const image=await this.session.captureSearchResumeViewportPng({
+      expectedResumeUrl:expectedUrl,expectedTop,timeoutMs:15000
+    });
+    const after=await inspect();
+    if (before.outerOrigin!==after.outerOrigin ||
+        before.resumeOrigin!==after.resumeOrigin) throw fail(
+      'BOSS_RESUME_DIALOG_BLOCKED','BOSS 搜索简历区域截图期间已切换');
+    return {image,fingerprint:crypto.createHash('sha256').update(image).digest('hex')};
+  }
+
   async setSearchResumeScrollTop(targetTop,expectedUrl) {
     await this.ensureVisibleSearchResume();
     const modal=await this.readModal();
@@ -1016,13 +1091,43 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       modal=await this.readModal();
     }
     if (assessBossResumeText(modal.text).valid) {
-      return {text:modal.text,url:modal.url,method:'dom'};
+      const firstText=modal.text;
+      const max=Math.max(0,modal.scrollHeight-modal.clientHeight);
+      if (max<=2) return {text:firstText,url:modal.url,method:'dom'};
+      await this.setSearchResumeScrollTop(max,expectedUrl);
+      await this.wait(500);
+      const last=await this.readModal();
+      if (!last.active || last.url?.href!==expectedUrl ||
+          Math.abs(last.scrollTop-max)>2) throw fail('BOSS_RESUME_DIALOG_BLOCKED',
+        'BOSS 搜索简历在核对正文末尾时发生变化');
+      const prefix=firstText.slice(0,Math.min(120,firstText.length));
+      if (assessBossResumeText(last.text).valid &&
+          last.text.length>=firstText.length &&
+          (last.text===firstText || last.text.includes(prefix))) {
+        return {text:last.text,url:last.url,method:'dom'};
+      }
+      // A virtualized body may contain only one viewport. Fall back to the
+      // verified screenshot path instead of saving that partial DOM text.
+      await this.setSearchResumeScrollTop(0,expectedUrl);
+      modal=await this.readModal();
     }
     const texts=[];
     const hashes=new Set();
     let reachedEnd=false;
     let previousAcceptedTop=null;
     let duplicateRecoveryShifts=0;
+    const stableViewport=async currentTop=>{
+      if (typeof this.session?.captureSearchResumeViewportPng!=='function') return null;
+      for (let attempt=0;attempt<3 && this.now()<deadlineAt;attempt++) {
+        const first=await this.verifiedViewport(expectedUrl,currentTop);
+        await this.wait(300);
+        const second=await this.verifiedViewport(expectedUrl,currentTop);
+        if (first.fingerprint===second.fingerprint &&
+            !hashes.has(first.fingerprint)) return second;
+        await this.wait(350);
+      }
+      return null;
+    };
     for (let page=0;page<12;page++) {
       if (this.now()>=deadlineAt) throw fail('BOSS_CANDIDATE_TIMEOUT',
         'BOSS 搜索多页简历超过单份时间上限');
@@ -1034,7 +1139,7 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
         'BOSS_RESUME_DIALOG_BLOCKED','BOSS 搜索简历弹窗已变化');
       const currentTop=modal.scrollTop;
       let stable=null;
-      for (let attempt=0;attempt<20 && this.now()<deadlineAt;attempt++) {
+      for (let attempt=0;attempt<6 && this.now()<deadlineAt;attempt++) {
         const first=await this.verifiedCanvas(expectedUrl,currentTop);
         await this.wait(300);
         const second=await this.verifiedCanvas(expectedUrl,currentTop);
@@ -1042,8 +1147,9 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
             !hashes.has(first.fingerprint)) {stable=second;break;}
         await this.wait(350);
       }
+      if (!stable) stable=await stableViewport(currentTop);
       if (!stable) throw fail('BOSS_RESUME_CANVAS_STALLED',
-        'BOSS 搜索简历画布未稳定更新，未入库');
+        'BOSS 搜索简历画布和可见区域均未稳定更新，未入库');
       let recognized=await this.ocr.recognizeTextFromImage(stable.image);
       if (repeatedScreenText(recognized,texts)) {
         // A settled Canvas may finish painting a moment after its dimensions
@@ -1057,6 +1163,16 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
             !hashes.has(refreshedSecond.fingerprint)) {
           recognized=await this.ocr.recognizeTextFromImage(refreshedSecond.image);
           stable=refreshedSecond;
+        }
+      }
+      if (repeatedScreenText(recognized,texts)) {
+        const viewport=await stableViewport(currentTop);
+        if (viewport && viewport.fingerprint!==stable.fingerprint) {
+          const visibleText=await this.ocr.recognizeTextFromImage(viewport.image);
+          if (!repeatedScreenText(visibleText,texts)) {
+            recognized=visibleText;
+            stable=viewport;
+          }
         }
       }
       if (repeatedScreenText(recognized,texts)) {

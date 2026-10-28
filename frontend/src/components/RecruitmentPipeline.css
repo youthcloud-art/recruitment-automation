@@ -1,0 +1,80 @@
+.recruitment-pipeline {
+  box-sizing: border-box;
+  height: calc(100vh - 64px);
+  overflow: auto;
+  padding: clamp(16px, 2vw, 28px);
+  scrollbar-gutter: stable;
+}
+
+.pipeline-heading,
+.pipeline-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.pipeline-heading { margin-bottom: 14px; }
+.pipeline-guide, .pipeline-summary, .pipeline-toolbar { margin-bottom: 14px; }
+.pipeline-toolbar { display: flex; width: 100%; }
+
+.pipeline-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  padding: 11px 14px;
+  margin-bottom: 12px;
+  border: 1px solid #cfe0f8;
+  border-radius: 10px;
+  background: #f5f9ff;
+}
+
+.pipeline-context .ant-typography:last-child { margin-left: auto; }
+.pipeline-report { margin-bottom: 14px; }
+.pipeline-report-note { margin-top: 9px; }
+.pipeline-job-section { margin-top: 18px; scroll-margin-top: 16px; }
+.pipeline-section-heading { margin-bottom: 12px; }
+
+/* Large translucent cards and hover translations made table scrolling feel
+   sticky on office PCs. Keep the visual hierarchy without repaints per row. */
+.recruitment-pipeline .ant-card {
+  background: rgba(255, 255, 255, 0.94) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: 0 3px 12px rgba(35, 70, 120, 0.08) !important;
+}
+
+.recruitment-pipeline .ant-card:hover,
+.recruitment-pipeline .ant-btn:hover {
+  transform: none !important;
+}
+
+.recruitment-pipeline .ant-input,
+.recruitment-pipeline .ant-table {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.recruitment-pipeline .ant-table-wrapper {
+  margin-bottom: 16px;
+  border: 1px solid #dde7f2;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+@media (max-width: 900px) {
+  .pipeline-heading,
+  .pipeline-section-heading { align-items: stretch; }
+  .pipeline-context .ant-typography:last-child { margin-left: 0; }
+}
+
+@media (max-width: 620px) {
+  .recruitment-pipeline { padding: 12px; }
+  .pipeline-toolbar .ant-select,
+  .pipeline-toolbar .ant-input-search { width: 100% !important; }
+  .pipeline-report .ant-space { width: 100%; }
+  .pipeline-report .ant-space-item { max-width: 100%; }
+}

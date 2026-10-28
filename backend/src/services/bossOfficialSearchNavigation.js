@@ -21,8 +21,9 @@ function isSearchPage(value) {
 }
 
 async function ensureOfficialSearchPage({ connect = connectOwnedBossPage,
+  session: borrowedSession = null,
   wait = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
-  const session = await connect();
+  const session = borrowedSession || await connect();
   try {
     const before = await session.assertRecruiterReady();
     if (isSearchPage(before)) return { navigated: false, url: before };
@@ -30,8 +31,30 @@ async function ensureOfficialSearchPage({ connect = connectOwnedBossPage,
       'BOSS 当前不在推荐页或搜索页；请在招聘后台打开“搜索”后重试');
     // The official menu is in the outer recruiter document. Check that the
     // existing authenticated window is visible, then click this menu once.
-    await session.assertUsableRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
-    await session.clickUnique({ selector: 'a[ka="menu-geek-search"]' });
+    if (typeof session.assertOrRestoreInitialRecruiterWindow === 'function') {
+      await session.assertOrRestoreInitialRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
+    } else {
+      await session.assertUsableRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await session.clickUnique({ selector: 'a[ka="menu-geek-search"]' });
+        break;
+      } catch (error) {
+        // The pre-click recheck has sent no mouse event. A menu shifting
+        // during layout may be read again, but an uncertain press must never
+        // be replayed.
+        const safelyUnsent = error.code === 'BOSS_CDP_TARGET_UNSTABLE' &&
+          error.stage === 'pre_click_recheck' && error.reason === 'position_moved';
+        if (!safelyUnsent || attempt === 2) throw error;
+        await wait(600 + attempt * 300);
+        if (await session.assertRecruiterReady() !== before) {
+          throw navigationError('BOSS_SEARCH_PAGE_REQUIRED',
+            'BOSS 招聘页面在搜索菜单稳定前发生变化，请确认页面后重试');
+        }
+        await session.assertUsableRecruiterWindow({ frameSelector: RECOMMEND_FRAME });
+      }
+    }
     for (let attempt = 0; attempt < 20; attempt++) {
       await wait(500);
       const url = await session.assertRecruiterReady();
@@ -52,7 +75,7 @@ async function ensureOfficialSearchPage({ connect = connectOwnedBossPage,
     }
     throw navigationError('BOSS_SEARCH_PAGE_UNAVAILABLE',
       'BOSS 官方搜索页未加载完成；请在浏览器中确认平台状态');
-  } finally { session.close(); }
+  } finally { if (!borrowedSession) session.close(); }
 }
 
 module.exports = { ensureOfficialSearchPage, isSearchPage };

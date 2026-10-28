@@ -2,15 +2,17 @@
 // Playwright to the recruiter tab has caused repeated reloads in practice;
 // this collector uses one raw CDP connection and deliberately never navigates.
 const crypto = require('node:crypto');
+const { bossCardId, platformLocator } = require('../utils/platformLocator');
 const { connectOwnedBossPage } = require('./bossRawCdp');
 const { ActiveJobService } = require('./activeJobService');
 const resumeModel = require('../models/resumeModel');
 const resumeParserService = require('./resumeParserService');
-const CanvasOcrService = require('./canvasOcrService');
+const IsolatedCanvasOcrService = require('./isolatedCanvasOcrService');
 const { postCaptureEvaluationQueue } = require('./postCaptureEvaluationQueue');
 const { assessBossResumeText } = require('./bossResumeQuality');
 const { BossCardQuarantine } = require('./bossCardQuarantine');
 const { verifiedBossOcrName } = require('../utils/bossCandidateName');
+const { extractBossOcrWorkExperience } = require('./bossOcrWorkExperience');
 
 const FRAME = 'iframe[src*="/web/frame/recommend/"]';
 const MAX_RUNTIME_MS = 90 * 60 * 1000;
@@ -48,7 +50,21 @@ function jobResumeSignature(job) {
 
 function verifiedCardName(value) {
   const name = String(value || '').normalize('NFKC').replace(/\s+/g,'').trim();
-  return /^[\u4e00-\u9fff]{2,4}$/.test(name) ? name : '';
+  if (!/^[\u4e00-\u9fff]{2,4}$/.test(name) ||
+      /(?:先生|女士|小姐|同学)$/.test(name) ||
+      /^(?:姓名|候选人|求职者|未公开|未识别|匿名|保密|工作经历|个人信息|简历详情)$/.test(name)) return '';
+  return name;
+}
+
+function platformCardAlias(value) {
+  const alias = String(value || '').normalize('NFKC').replace(/\s+/g, '').trim();
+  if (/^[\u4e00-\u9fff]{1,2}\*{1,3}$/.test(alias)) {
+    return { value: alias, type: 'masked' };
+  }
+  if (/^[\u4e00-\u9fff]{1,2}(?:先生|女士|小姐|同学)$/.test(alias)) {
+    return { value: alias, type: 'honorific' };
+  }
+  return null;
 }
 
 function verifiedCardPosition(value) {
@@ -101,7 +117,7 @@ function chooseExactJob(options, title) {
   const matches = (options || []).filter(item =>
     normalizeTitle(item.label) === title && /^[A-Za-z0-9_-]{1,128}$/.test(item.value || ''));
   if (matches.length !== 1) throw fail('BOSS_RECOMMENDED_JOB_UNAVAILABLE',
-    `BOSS 企业账号下没有唯一的“${title}”岗位，已暂停采集`);
+    `BOSS 企业账号下没有唯一的“${title}”在招岗位；请改用“官方搜索结果”模式，或在平台确认同名在招岗位`);
   return matches[0];
 }
 
@@ -176,6 +192,9 @@ function buildExpressions(frameSelector, cardSelector, cardWindowStart = 0) { re
           clickText:resumeLinks.length === 1
             ? (resumeLinks[0].textContent || '').replace(/\\s+/g,' ').trim() : '',
           displayName:names.length === 1 ? (names[0].textContent || '').trim() : '',
+          sourceCardIdHint:resumeLinks.length === 1
+            ? (resumeLinks[0].getAttribute?.('data-expect') ||
+              resumeLinks[0].getAttribute?.('data-geek-id') || '') : '',
           expectedPosition:expected.length === 2
             ? (expected[1].textContent || '').trim() : ''};
       })
@@ -268,7 +287,7 @@ const EXPRESSIONS = buildExpressions(FRAME,'li.card-item');
 class BossRawRecommendCollector {
   constructor({ connect = connectOwnedBossPage, store = resumeModel,
     jobService = new ActiveJobService(), queue = postCaptureEvaluationQueue,
-    ocr = new CanvasOcrService(), wait = sleep, now = Date.now,
+    ocr = new IsolatedCanvasOcrService(), wait = sleep, now = Date.now,
     quarantine = new BossCardQuarantine(),onProgress = () => {} } = {}) {
     this.connect = connect;
     this.frameSelector = FRAME;
@@ -373,7 +392,21 @@ class BossRawRecommendCollector {
 
   async readOnlyExpression(expression, stage, timeoutMs = 15000) {
     try { return await this.session.evaluate(expression,{timeoutMs}); }
-    catch (error) { if (!error.stage) error.stage = stage; throw error; }
+    catch (error) {
+      if (error.code !== 'BOSS_CDP_TIMEOUT') {
+        if (!error.stage) error.stage = stage;
+        throw error;
+      }
+      // Runtime.evaluate only reads the current official page. A delayed
+      // response can safely be retried once; clicks and other mutations never
+      // use this path. Downstream page, job and candidate checks still apply.
+      await this.wait(350);
+      try { return await this.session.evaluate(expression,{timeoutMs}); }
+      catch (retryError) {
+        if (!retryError.stage) retryError.stage = stage;
+        throw retryError;
+      }
+    }
   }
 
   async assertPage({allowMissingFrame=false}={}) {
@@ -995,7 +1028,12 @@ class BossRawRecommendCollector {
 
   async saveResume(captured, job, sourceCardFingerprint = '', cardMeta = {}) {
     const parsed = resumeParserService.parseResumeText(captured.text);
+    if (captured.method === 'ocr' && !parsed.workExperience?.length) {
+      const partialHistory=extractBossOcrWorkExperience(captured.text);
+      if (partialHistory.length) parsed.workExperience=partialHistory;
+    }
     const cardName = verifiedCardName(cardMeta.displayName);
+    const cardAlias = cardName ? null : platformCardAlias(cardMeta.displayName);
     const cardPosition = verifiedCardPosition(cardMeta.expectedPosition);
     const ocrName = verifiedBossOcrName(parsed.name, captured.text);
     const ocrPosition = verifiedCardPosition(parsed.expectedPosition?.position);
@@ -1003,17 +1041,27 @@ class BossRawRecommendCollector {
     parsed.expectedPosition = {...(parsed.expectedPosition || {}),
       position:cardPosition || ocrPosition || null};
     const sourceFingerprint = hashText(captured.text);
-    const sourceCandidateId = candidateIdFromUrl(captured.url);
+    const urlCandidateId = candidateIdFromUrl(captured.url);
+    const sourceCandidateId = urlCandidateId ||
+      bossCardId(cardMeta.sourceCardIdHint);
+    if (!sourceCandidateId) throw fail('BOSS_PLATFORM_ID_UNAVAILABLE',
+      'BOSS 官方详情和候选卡均未提供可验证的平台记录号，本份简历未入库；请在平台核查该候选人');
     let result;
     try {
       result = await this.store.addResume({
         ...parsed,
         source:'boss',platform:'BOSS直聘',sourceUrl:captured.url.href,
-        sourceCandidateId,sourceFingerprint,sourceCardFingerprint,
+        sourceCandidateId,sourceCandidateIdSource:urlCandidateId ? 'official_url' : 'platform_card',
+        sourceFingerprint,sourceCardFingerprint,
         nameSource:cardName ? `boss_${this.pageSegment}_card` : ocrName ? 'ocr' : 'unverified',
+        platformAlias:cardAlias?.value || null,
+        platformAliasType:cardAlias?.type || null,
         positionSource:cardPosition ? `boss_${this.pageSegment}_card`
           : ocrPosition ? 'ocr' : 'unverified',
         originalText:captured.text,
+        captureJobRequirements:String(job?.jobRequirements || '').trim() || null,
+        captureJobTitle:String(job?.title || '').trim() || null,
+        capturePositionId:job?.positionId || null,
         qualityScore:parsed.qualityScore,parseMethod:captured.method,
         parseStatus:'completed'
       }, {returnStatus:true});
@@ -1022,6 +1070,18 @@ class BossRawRecommendCollector {
         throw fail('BOSS_STORAGE_ERROR', '本地简历存储不可用，已暂停采集');
       }
       throw error;
+    }
+    // Historical BOSS captures predate platform-card IDs. Revisit the exact
+    // resume/card once and attach the observed official ID only when stored
+    // content or a previously verified unique card fingerprint matches.
+    if (!result.created && result.resume?.id && !result.resume.sourceCandidateId &&
+        (result.resume.sourceFingerprint === sourceFingerprint ||
+          (sourceCardFingerprint && result.resume.sourceCardFingerprint === sourceCardFingerprint)) &&
+        typeof this.store.updateCandidateMetadata === 'function') {
+      const updated = await this.store.updateCandidateMetadata(result.resume.id, {
+        sourceCandidateId, sourceCandidateIdSource: urlCandidateId ? 'official_url' : 'platform_card'
+      });
+      if (updated) result.resume = updated;
     }
     // Existing records created before card fingerprints were introduced are
     // still fully OCRed once. Only bind the new card to a duplicate when the
@@ -1039,6 +1099,15 @@ class BossRawRecommendCollector {
         this.progress({lastFailureCode:'BOSS_CARD_INDEX_DEFERRED',
           lastError:'简历已存在，但卡片去重索引暂未更新；下次仍会完整核验'});
       }
+    }
+    if (!result.created && cardAlias && result.resume?.id &&
+        !result.resume.platformAlias &&
+        typeof this.store.updateCandidateMetadata === 'function') {
+      try {
+        const updated = await this.store.updateCandidateMetadata(result.resume.id,
+          {platformAlias:cardAlias.value,platformAliasType:cardAlias.type});
+        if (updated) result.resume = updated;
+      } catch (_) { /* Full resume identity and saved text remain intact. */ }
     }
     this.queueEvaluation(result.resume, job);
     return result;
@@ -1095,7 +1164,7 @@ class BossRawRecommendCollector {
       throw new Error('采集时间上限无效');
     }
     const runtimeLimitMs=Math.min(Math.max(maxRuntimeMs,1000),this.maxRuntimeCapMs);
-    const job = this.jobService.current();
+    const job = this.jobService.current('boss');
     const title = String(job?.title || '').trim();
     if (!title || !job.jobRequirements) throw fail('BOSS_JOB_REQUIRED',
       '请先保存岗位条件，再启动 BOSS 采集');
@@ -1131,9 +1200,14 @@ class BossRawRecommendCollector {
     let targetUnavailableStreak = 0;
     let targetUnavailableWithoutSave = 0;
     let candidateErrorStreak = 0;
+    let incompleteCandidateStreak = 0;
     try {
       this.session = await this.connect();
-      await this.session.assertUsableRecruiterWindow({frameSelector:this.frameSelector});
+      if (typeof this.session.assertOrRestoreInitialRecruiterWindow === 'function') {
+        await this.session.assertOrRestoreInitialRecruiterWindow({frameSelector:this.frameSelector});
+      } else {
+        await this.session.assertUsableRecruiterWindow({frameSelector:this.frameSelector});
+      }
       await this.ensureVisibleRecruiterPage();
       const pageBeforeSelection=await this.assertPage();
       const expectedPagePath = new URL(pageBeforeSelection.url).pathname;
@@ -1188,13 +1262,18 @@ class BossRawRecommendCollector {
         }
         this.rememberCandidateWindow(cards);
         const cardCounts = new Map();
+        const platformIdCounts = new Map();
         for (const card of cards) {
           const key = hashText(`${chosen.value}\n${card.text}`);
           cardCounts.set(key,(cardCounts.get(key) || 0)+1);
+          const platformId=bossCardId(card.sourceCardIdHint);
+          if (platformId) platformIdCounts.set(platformId,(platformIdCounts.get(platformId) || 0)+1);
         }
         let attemptedThisRound = 0;
         const savedBeforeRound = this.status.saved;
         for (const card of cards) {
+          const platformId=bossCardId(card.sourceCardIdHint);
+          if (platformId && platformIdCounts.get(platformId) > 1) card.sourceCardIdHint='';
           if (this.stopRequested || signal?.aborted || this.status.saved >= targetCount) break;
           // Cards have no stable DOM ID. Scope their normalized full-text
           // fingerprint to the exact posted job selected in this run.
@@ -1219,14 +1298,23 @@ class BossRawRecommendCollector {
             .replace(/\s+/g,' ').trim().length >= 300;
           if (specificCard && cardCounts.get(identity) === 1 &&
               typeof this.store.findBossCardMatch === 'function') {
-            const prior = await this.store.findBossCardMatch(identity);
+            let prior = await this.store.findBossCardMatch(identity);
             const capturedAt = Date.parse(prior?.createdAt || '');
             const ageMs = this.now() - capturedAt;
-            if (prior?.source === 'boss' &&
+            if (prior?.source === 'boss' && (!platformId || platformLocator(prior).id) &&
                 prior.sourceCardFingerprint === identity &&
                 prior.parseStatus === 'completed' && prior.sourceFingerprint &&
                 String(prior.originalText || '').length >= 100 &&
                 Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 24*60*60*1000) {
+              const alias=platformCardAlias(card.displayName);
+              if (alias && !prior.platformAlias &&
+                  typeof this.store.updateCandidateMetadata === 'function') {
+                try {
+                  prior=await this.store.updateCandidateMetadata(prior.id,{
+                    platformAlias:alias.value,platformAliasType:alias.type
+                  }) || prior;
+                } catch (_) { /* A known stored resume remains available. */ }
+              }
               this.queueEvaluation(prior,job);
               this.completedCardFingerprints.add(identity);
               this.progress({attempted:this.status.attempted+1,
@@ -1295,6 +1383,7 @@ class BossRawRecommendCollector {
             this.completedCardFingerprints.add(identity);
             blankCanvasStreak = 0;
             candidateErrorStreak = 0;
+            incompleteCandidateStreak = 0;
             if (saved.created) {
               targetUnavailableWithoutSave = 0;
               this.progress({saved:this.status.saved+1});
@@ -1349,6 +1438,20 @@ class BossRawRecommendCollector {
             }
             blankCanvasStreak = 0;
             if (/^BOSS_(VERIFICATION|RATE_LIMITED|LOGIN|PAGE|SEARCH_|RECOMMENDED_JOB|RESUME_DIALOG|CANDIDATE_TIMEOUT|CARD_IDENTITY|STORAGE|CDP_(?!TARGET_UNAVAILABLE))/.test(error.code || '')) throw error;
+            if (['BOSS_RESUME_CONTENT_INVALID', 'BOSS_PLATFORM_ID_UNAVAILABLE'].includes(error.code)) {
+              // These describe one candidate, not a broken recruiter page.
+              // Keep searching for a complete, identifiable resume; still
+              // bound a run of bad cards so an OCR/layout regression is visible.
+              incompleteCandidateStreak++;
+              candidateErrorStreak = 0;
+              if (incompleteCandidateStreak >= 20) {
+                error.message = `连续 ${incompleteCandidateStreak} 张 BOSS 候选卡缺少完整正文或平台记录号，已暂停采集；请检查招聘页面`;
+                throw error;
+              }
+              this.progress({skipped:this.status.skipped+1,
+                lastFailureCode:error.code,lastError:error.message});
+              continue;
+            }
             candidateErrorStreak++;
             if (candidateErrorStreak >= 5) {
               error.message = `连续 ${candidateErrorStreak} 张 BOSS 候选卡处理失败，已暂停采集；请检查招聘页面状态`;
@@ -1417,9 +1520,15 @@ class BossRawRecommendCollector {
         this.resumeCheckpoint=null;
       }
       const pausedAtPhase = safePhase(error.pausedAtPhase || this.status.phase);
+      const targetState = /^[a-z_]{1,40}$/.test(error.targetState || '')
+        ? error.targetState : '';
+      const targetReason = /^[a-z_]{1,40}$/.test(error.reason || '')
+        ? error.reason : '';
       this.progress({state:'paused',phase:'paused',
         pausedAtPhase,
         pausedAtStage:error.stage ? safePhase(error.stage) : '',
+        lastTargetState:targetState,
+        lastTargetReason:targetReason,
         lastFailureCode:error.code || 'BOSS_UNEXPECTED_ERROR',
         lastError:error.message || 'BOSS 采集暂停',finishedAt:new Date().toISOString()});
       return this.getStatus();
@@ -1438,5 +1547,5 @@ class BossRawRecommendCollector {
 
 module.exports = { BossRawRecommendCollector, normalizeTitle, chooseExactJob,
   officialResumeUrl, candidateIdFromUrl, hashText, jobResumeSignature, joinScreenText,
-  repeatedScreenText,verifiedCardName, verifiedCardPosition, FRAME, EXPRESSIONS,
+  repeatedScreenText,verifiedCardName,platformCardAlias, verifiedCardPosition, FRAME, EXPRESSIONS,
   buildExpressions };

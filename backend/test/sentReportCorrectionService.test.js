@@ -14,14 +14,18 @@ const requirements = '岗位名称：IT网络运维\n必需技能：网络设备
 function fixture(directory) {
   const candidates = [
     { id: 'one', source: 'qcwy', name: '通知', position: '通知',
-      sourceRecordKey: 'a'.repeat(64), originalText: '网络设备维护经验。'.repeat(10),
+      sourceRecordKey: 'a'.repeat(64),
+      sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=official-a',
+      originalText: '网络设备维护经验。'.repeat(10),
       matchScore: 87, matchEvaluation: { summary: '有相关经验',
         strengths: ['设备维护'], gaps: ['夜间值班待核实'] } },
     { id: 'two', source: 'zlzp', name: '测试候选人', position: '网络运维',
       originalText: '网络设备维护经验。'.repeat(10), matchScore: 81,
       matchEvaluation: { summary: '有运维经验', strengths: [], gaps: [] } },
     { id: 'three', source: 'qcwy', name: '通知', position: '通知',
-      sourceRecordKey: 'b'.repeat(64), originalText: '故障排查经验。'.repeat(10),
+      sourceRecordKey: 'b'.repeat(64),
+      sourceUrl: 'https://ehire.51job.com/Revision/talent/resume/detail?resumeId=official-b',
+      originalText: '故障排查经验。'.repeat(10),
       matchScore: 76, matchEvaluation: { summary: '需核实深度', strengths: [], gaps: [] } }
   ];
   const job = { title: 'IT网络运维', jobRequirements: requirements,
@@ -89,7 +93,7 @@ test('更正报告把前程无忧页面标签替换为稳定匿名标识，并�
   const markdown = renderCorrectedReport({ title: 'IT网络运维', jobRequirements: requirements },
     { offset: 0, nextOffset: 2, total: 3, updatedAt: '2026-10-20T00:01:00.000Z' },
     candidates.slice(0, 2), 0, 2);
-  assert.match(markdown, /匿名候选人（前程无忧记录 ID：aaaaaaaaaaaaaaaa）/);
+  assert.match(markdown, /匿名候选人（前程无忧记录 ID：official-a）/);
   assert.match(markdown, /求职岗位待核实/);
   assert.match(markdown, /原附件序号/);
   assert.match(markdown, /第 1 行对应 candidate-1/);

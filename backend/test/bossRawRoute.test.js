@@ -52,7 +52,8 @@ test('BOSS route uses raw login and exact-job recommendation collection without 
   }
   const stubs = new Map([
     [servicePath,FakeService],
-    [collectorPath,{BossRawRecommendCollector:FakeCollector}],
+    [collectorPath,{BossRawRecommendCollector:FakeCollector,
+      jobResumeSignature:() => 'a'.repeat(64)}],
     [searchCollectorPath,{BossRawSearchCollector:FakeCollector}],
     [cdpPath,{connectOwnedBossPage:async () => {
       rawLoginCalls++;
@@ -129,6 +130,7 @@ test('BOSS route uses raw login and exact-job recommendation collection without 
     assert.equal(progress.data.isActive,true);
     assert.equal(progress.data.targetCount,500);
     assert.equal(progress.data.mode,'search');
+    assert.deepEqual(progress.data.filters,{position:'成本核算经理'});
     liveCollector.status={...liveCollector.status,
       lastFailureCode:'BOSS_RESUME_CONTENT_INVALID',
       lastError:'该份简历正文不完整，已跳过'};
@@ -172,6 +174,7 @@ test('BOSS route uses raw login and exact-job recommendation collection without 
     assert.equal(paused.data.lastCardIndex,68);
     assert.equal(paused.data.lastTargetState,'obscured');
     assert.equal(paused.data.lastSkippedCode,'');
+    assert.deepEqual(paused.data.filters,{position:'成本核算经理'});
     liveCollector.status={...liveCollector.status,
       lastFailureCode:'BOSS_VERIFICATION_REQUIRED'};
     const resumable=await (await fetch(`${base}/browsing-status`)).json();

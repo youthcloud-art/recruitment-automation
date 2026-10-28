@@ -51,7 +51,7 @@ if (Test-Path -LiteralPath $configPath) {
     if ($Resume) { throw 'No incomplete installation configuration was found to resume.' }
     if ((Test-Path -LiteralPath $InstallRoot) -and @(Get-ChildItem -LiteralPath $InstallRoot -Force).Count -gt 0) { throw 'Initial installation requires an empty, dedicated directory.' }
 }
-foreach ($taskName in @('AutoRecru-Company-Runtime','AutoRecru-Company-MirrorDeploy')) {
+foreach ($taskName in @('AutoRecru-Company-Runtime','AutoRecru-Company-MirrorDeploy','AutoRecru-Company-Watchdog')) {
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($existingTask -and -not $Resume) { throw "Task already exists and was not replaced: $taskName" }
     if ($existingTask -and $existingTask.State -eq 'Running') { throw "Wait for the incomplete installation task to finish before resuming: $taskName" }
@@ -85,7 +85,7 @@ $config = @{
     installRoot=$InstallRoot; companyHost=$CompanyHost; backendPort=$BackendPort; gatewayPort=$GatewayPort; allowedNetworks=$AllowedNetworks;
     repositoryUrl=$RepositoryUrl; branch='main'; nodePath=$nodePath; npmPath=$npmPath; gitPath=$gitPath;
     sshPath=$sshPath; deployKeyPath=$keyPath; runAs=$RunAs; bootstrapCommit=$Commit;
-    runtimeTask='AutoRecru-Company-Runtime'; syncTask='AutoRecru-Company-MirrorDeploy'
+    runtimeTask='AutoRecru-Company-Runtime'; syncTask='AutoRecru-Company-MirrorDeploy'; watchdogTask='AutoRecru-Company-Watchdog'
 }
 if (-not $Resume) { Write-JsonFile $configPath $config }
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
@@ -93,11 +93,16 @@ $runtimeAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\Wind
 $runtimePrincipal = New-ScheduledTaskPrincipal -UserId $RunAs -LogonType Interactive -RunLevel Limited
 $syncAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallRoot 'delivery\Sync-Company.ps1') + '" -InstallRoot "' + $InstallRoot + '"') -WorkingDirectory $InstallRoot
 $syncPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+$watchAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $InstallRoot 'delivery\Watch-Company.ps1') + '" -InstallRoot "' + $InstallRoot + '"') -WorkingDirectory $InstallRoot
+$watchPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+$watchTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 2) -RepetitionDuration (New-TimeSpan -Days 3650)
+$watchSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 1) -StartWhenAvailable
 $periodic = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
 $syncSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2) -StartWhenAvailable
 foreach ($definition in @(
     @{name=$config.runtimeTask; action=$runtimeAction; principal=$runtimePrincipal; settings=$settings; triggers=@((New-ScheduledTaskTrigger -AtLogOn -User $RunAs)); description='Company recruitment gateway and loopback backend. Interactive identity keeps Chrome available for platform sign-in.'},
-    @{name=$config.syncTask; action=$syncAction; principal=$syncPrincipal; settings=$syncSettings; triggers=@($periodic,(New-ScheduledTaskTrigger -AtStartup)); description='Pull Gitee main, prepare dependencies/build before downtime, verify and roll back failed releases.'}
+    @{name=$config.syncTask; action=$syncAction; principal=$syncPrincipal; settings=$syncSettings; triggers=@($periodic,(New-ScheduledTaskTrigger -AtStartup)); description='Pull Gitee main, prepare dependencies/build before downtime, verify and roll back failed releases.'},
+    @{name=$config.watchdogTask; action=$watchAction; principal=$watchPrincipal; settings=$watchSettings; triggers=@($watchTrigger); description='Restart the company recruitment runtime only when stopped and unhealthy; preserve browser profiles.'}
 )) {
     $existingTask = Get-ScheduledTask -TaskName $definition.name -ErrorAction SilentlyContinue
     if ($existingTask) {

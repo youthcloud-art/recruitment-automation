@@ -33,9 +33,16 @@ $changed = $false
 $stopped = $false
 $snapshotComplete = $false
 $switchLock = $null
+$drainPath = Join-Path $InstallRoot 'shared\local\deploy-drain.request'
+$drainOwned = $false
 try {
     $switchLock = [IO.File]::Open((Join-Path $InstallRoot 'control\switch.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     # All dependency installation/build work has already completed at this point.
+    if ($previous) {
+        [IO.File]::WriteAllText($drainPath, 'deployment pending')
+        $drainOwned = $true
+        Assert-CompanyCollectionIdle $config
+    }
     if ($previous) { Stop-CompanyRuntime $config; $stopped = $true }
     foreach ($old in $oldTasks) {
         Disable-ScheduledTask -TaskName $old.name | Out-Null
@@ -72,5 +79,6 @@ try {
     }
     throw $failure
 } finally {
+    if ($drainOwned) { Remove-Item -LiteralPath $drainPath -Force -ErrorAction SilentlyContinue }
     if ($switchLock) { $switchLock.Dispose() }
 }

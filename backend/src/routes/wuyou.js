@@ -3,7 +3,8 @@ const { WuyouService } = require('../services/wuyouService');
 
 const router = express.Router();
 const service = new WuyouService();
-const MAX_TARGET_COUNT = 30;
+let batchStarting = false;
+const MAX_TARGET_COUNT = 50;
 const MAX_KEYWORDS = 10;
 
 function handleError(res, error) {
@@ -12,7 +13,7 @@ function handleError(res, error) {
   return res.status(status).json({ success: false, message });
 }
 
-function parseTargetCount(value, defaultValue = MAX_TARGET_COUNT) {
+function parseTargetCount(value, defaultValue = 30) {
   if (value === undefined) return defaultValue;
   if (value === null || value === '' || typeof value === 'boolean') return null;
   const count = Number(value);
@@ -30,7 +31,11 @@ function parseKeywords(value) {
 
 router.get('/status', async (req, res) => {
   try {
-    res.json({ success: true, data: await service.getStatus({ persistSession: req.query.readOnly !== '1' }) });
+    const data = await service.getStatus({ persistSession: req.query.readOnly !== '1' });
+    if (batchStarting && !data.batch.running) {
+      data.batch = { ...data.batch, running: true };
+    }
+    res.json({ success: true, data });
   } catch (error) {
     handleError(res, error);
   }
@@ -116,11 +121,13 @@ router.post('/collect-batch', async (req, res) => {
   if (targetCount === null) {
     return res.status(400).json({ success: false, message: `目标简历数量需为 1～${MAX_TARGET_COUNT} 份` });
   }
+  if (batchStarting) return res.status(409).json({ success: false, message: '前程无忧采集正在启动' });
+  batchStarting = true;
   try {
     res.json({ success: true, data: await service.startBatch({ targetCount }) });
   } catch (error) {
     handleError(res, error);
-  }
+  } finally { batchStarting = false; }
 });
 
 router.post('/keyword-batch', async (req, res) => {
@@ -140,13 +147,15 @@ router.post('/keyword-batch', async (req, res) => {
       !['不限', '大专及以上', '本科及以上', '硕士及以上'].includes(req.body.education)) {
     return res.status(400).json({ success: false, message: '前程无忧学历筛选值无效' });
   }
+  if (batchStarting) return res.status(409).json({ success: false, message: '前程无忧采集正在启动' });
+  batchStarting = true;
   try {
     res.json({ success: true, data: await service.startKeywordBatch({ keywords, targetCount,
       ...(req.body.jobRequirements === undefined ? {} : { jobRequirements: req.body.jobRequirements }),
       ...(req.body.education === undefined ? {} : { education: req.body.education }) }) });
   } catch (error) {
     handleError(res, error);
-  }
+  } finally { batchStarting = false; }
 });
 
 router.post('/stop-batch', async (_req, res) => {

@@ -154,6 +154,68 @@ test('owned BOSS window restores once and observes the same window after an unce
   assert.equal(setCalls,1,'uncertain ACK must not replay setWindowBounds');
 });
 
+test('restored BOSS window may be maximized by Windows', async () => {
+  const session = Object.create(BossRawCdpSession.prototype);
+  session.owned = true;
+  session.verifiedWindowId = 73;
+  let state = 'minimized';
+  session.assertRecruiterReady = async () => RECRUITER_URL;
+  session.send = async method => {
+    if (method === 'Browser.getWindowForTarget') {
+      return {windowId:73,bounds:{windowState:state}};
+    }
+    assert.equal(method,'Browser.setWindowBounds');
+    state = 'maximized';
+  };
+  assert.deepEqual(await session.restoreMinimizedOwnedWindow({expectedUrl:RECRUITER_URL}),
+    {attempted:true,ackUncertain:false});
+});
+
+test('initial minimized owned BOSS window is restored before the first candidate action', async () => {
+  const session = Object.create(BossRawCdpSession.prototype);
+  session.owned = true;
+  session.verifiedWindowId = null;
+  let state = 'minimized';
+  let restoreCalls = 0;
+  session.assertRecruiterReady = async () => RECRUITER_URL;
+  session.evaluate = async () => ({state:'ready',viewportWidth:1824,
+    viewportHeight:905,frameWidth:1656,visibleWidth:1656,
+    visibleHeight:865,frameFullyVisible:true});
+  session.send = async (method, args) => {
+    if (method === 'Browser.getWindowForTarget') {
+      return {windowId:73,bounds:{windowState:state}};
+    }
+    assert.equal(method,'Browser.setWindowBounds');
+    assert.deepEqual(args,{windowId:73,bounds:{windowState:'normal'}});
+    restoreCalls++;
+    state = 'normal';
+  };
+  assert.equal(await session.assertOrRestoreInitialRecruiterWindow(),true);
+  assert.equal(session.verifiedWindowId,73);
+  assert.equal(restoreCalls,1);
+});
+
+test('initial BOSS restore rejects an unowned or changed window without mutation', async () => {
+  const session = Object.create(BossRawCdpSession.prototype);
+  let setCalls = 0;
+  session.assertRecruiterReady = async () => RECRUITER_URL;
+  session.send = async method => {
+    if (method === 'Browser.getWindowForTarget') {
+      return {windowId:74,bounds:{windowState:'minimized'}};
+    }
+    setCalls++;
+  };
+  session.owned = false;
+  session.verifiedWindowId = null;
+  await assert.rejects(session.restoreInitialMinimizedOwnedWindow({expectedUrl:RECRUITER_URL}),
+    error => error.code === 'BOSS_CDP_WINDOW_RESTORE_UNAVAILABLE');
+  session.owned = true;
+  session.assertRecruiterReady = async () => 'https://www.zhipin.com/web/chat/search';
+  await assert.rejects(session.restoreInitialMinimizedOwnedWindow({expectedUrl:RECRUITER_URL}),
+    error => error.code === 'BOSS_CDP_WINDOW_RESTORE_UNAVAILABLE');
+  assert.equal(setCalls,0);
+});
+
 test('window restoration refuses unowned or changed BOSS window before any mutation', async () => {
   const session = Object.create(BossRawCdpSession.prototype);
   let setCalls=0;
@@ -334,6 +396,41 @@ test('captureCanvasPng keeps candidate pixels in memory and rejects malformed da
     : { state: 'ready', dataUrl: 'data:image/png;base64,not-a-png' };
   await assert.rejects(session.captureCanvasPng(),
     error => error.code === 'BOSS_CDP_CANVAS_INVALID');
+  session.close();
+});
+
+test('search resume viewport screenshot requires the exact official iframe and stable clip', async () => {
+  const socket = new FakeWebSocket(PAGE_SOCKET);
+  const session = new BossRawCdpSession(socket);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+    + 'AAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
+  const resumeUrl='https://www.zhipin.com/web/frame/c-resume/123';
+  let clip={x:400,y:0,width:1,height:1,scale:1};
+  session.assertRecruiterReady=async()=>RECRUITER_URL;
+  session.assertUsableRecruiterWindow=async()=>true;
+  session.evaluate=async expression=>{
+    assert.doesNotThrow(()=>new vm.Script(expression));
+    assert.match(expression,/canvas#resume/);
+    return {state:'ready',clip,outerOrigin:1,resumeOrigin:2,scrollTop:700};
+  };
+  const calls=[];
+  session.send=async (method,params)=>{
+    calls.push(method);
+    return method==='Page.captureScreenshot' ? {data:png.toString('base64')} : {};
+  };
+  assert.deepEqual(await session.captureSearchResumeViewportPng({
+    expectedResumeUrl:resumeUrl,expectedTop:700
+  }),png);
+  assert.deepEqual(calls,['Page.enable','Page.captureScreenshot']);
+  await assert.rejects(session.captureSearchResumeViewportPng({
+    expectedResumeUrl:'https://example.com/web/frame/c-resume/123',expectedTop:700
+  }),error=>error.code==='BOSS_CDP_INVALID_TARGET');
+  let reads=0;
+  session.evaluate=async()=>({state:'ready',clip:reads++ ?
+    {...clip,x:clip.x+10}:clip,outerOrigin:1,resumeOrigin:2,scrollTop:700});
+  await assert.rejects(session.captureSearchResumeViewportPng({
+    expectedResumeUrl:resumeUrl,expectedTop:700
+  }),error=>error.code==='BOSS_CDP_REGION_UNSTABLE');
   session.close();
 });
 

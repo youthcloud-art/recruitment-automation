@@ -1,12 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Input, Modal, Space, Typography, message } from 'antd';
+import { Alert, Button, Input, Modal, Select, Space, Typography, message } from 'antd';
 import { apiGet, apiPost } from '../utils/apiClient';
 import JobCriteriaEditor, { EMPTY_JOB } from './JobCriteriaEditor';
+import { notifyActiveJobChanged } from '../utils/activeJobEvents';
 
 const { Paragraph, Text } = Typography;
 
-export default function PositionCreationModal({ visible, onClose, onCreated, initialText = '', initialJob = null }) {
+export default function PositionCreationModal({ visible, onClose, onCreated, initialText = '', initialJob = null,
+  initialMetadata = null, initialApplyTo = 'all', revisingPositionId = null }) {
   const [job, setJob] = useState({ ...EMPTY_JOB });
+  const [metadata, setMetadata] = useState({ department: '', salary: '' });
+  const [applyTo, setApplyTo] = useState('all');
   const [draftText, setDraftText] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -17,7 +21,10 @@ export default function PositionCreationModal({ visible, onClose, onCreated, ini
       !/我想创建一个新的岗位|请帮我生成岗位描述/.test(description) ? description : '';
     setDraftText(usefulDescription);
     setJob(initialJob ? { ...EMPTY_JOB, ...initialJob, updatedAt: null } : { ...EMPTY_JOB });
-  }, [visible, initialText, initialJob]);
+    setMetadata({ department: initialMetadata?.department || '',
+      salary: initialMetadata?.salary || '' });
+    setApplyTo(initialApplyTo);
+  }, [visible, initialText, initialJob, initialMetadata, initialApplyTo]);
 
   const loadCurrent = async () => {
     try {
@@ -38,9 +45,14 @@ export default function PositionCreationModal({ visible, onClose, onCreated, ini
     }
     setBusy(true);
     try {
-      const result = await apiPost('/positions/create-local', { job });
+      const result = await apiPost(revisingPositionId
+        ? `/positions/${encodeURIComponent(revisingPositionId)}/revise-local`
+        : '/positions/create-local', { job, metadata, applyTo });
       if (!result.success) throw new Error(result.message || '创建岗位失败');
-      message.success(result.reused ? '已有岗位已重新应用到三平台' : '本地岗位已创建并应用到三平台');
+      notifyActiveJobChanged(result.job, applyTo);
+      message.success(result.archivedPrevious ? '新版岗位已应用，旧版简历已移入历史岗位'
+        : result.reused ? '已有岗位已重新应用' : '本地岗位已创建并应用');
+      if (result.warning) message.warning(result.warning);
       onCreated?.(result);
       onClose?.();
     } catch (error) { message.error('创建岗位失败：' + error.message); }
@@ -60,15 +72,18 @@ export default function PositionCreationModal({ visible, onClose, onCreated, ini
   };
 
   return (
-    <Modal title="创建本地招聘岗位" open={visible} onCancel={onClose} width={920}
+    <Modal title={revisingPositionId ? '修订本地招聘岗位' : '创建本地招聘岗位'} open={visible} onCancel={onClose} width={920} zIndex={1200}
       style={{ top: 24 }} styles={{ body: { maxHeight: 'calc(100vh - 210px)', overflowY: 'auto' } }}
       destroyOnClose footer={[
         <Button key="cancel" onClick={onClose} disabled={busy}>取消</Button>,
-        <Button key="create" type="primary" loading={busy} onClick={create}>创建并应用到三平台</Button>
+        <Button key="create" type="primary" loading={busy} onClick={create}>
+          {revisingPositionId ? '保存新版并应用' : '创建并应用'}</Button>
       ]}>
       <Alert type="info" showIcon style={{ marginBottom: 12 }}
         message="创建的是本机岗位与采集筛选条件，不会自动在招聘平台发布职位。"
-        description="可描述岗位生成可编辑草稿、手填条件、用 Excel 模板导入，或载入当前岗位继续编辑。只有点击“创建并应用到三平台”才会替换当前采集岗位。" />
+        description={revisingPositionId
+          ? '修改筛选条件会建立新版并应用；旧版岗位及其候选人会单独保留在历史岗位。'
+          : '可描述岗位生成可编辑草稿、手填条件、用 Excel 模板导入，或载入当前岗位继续编辑。保存时选择应用到三平台或指定平台。'} />
       <Input.TextArea value={draftText} onChange={event => setDraftText(event.target.value)}
         rows={3} maxLength={5000} disabled={busy}
         placeholder="例如：招聘项目经理主管，至少 5 年项目管理经验，本科及以上，负责项目计划、交付和团队协调；希望获取 18 份简历。" />
@@ -80,6 +95,28 @@ export default function PositionCreationModal({ visible, onClose, onCreated, ini
       </Space>
       <JobCriteriaEditor value={job} onChange={setJob} disabled={busy}
         persistImport={false} showSave={false} title="填写岗位条件 / 导入 Excel 模板" />
+      <Space style={{ marginBottom: 16 }} wrap>
+        <Text strong>应用范围</Text>
+        <Select aria-label="应用范围" value={applyTo} onChange={setApplyTo}
+          disabled={busy} style={{ width: 260 }} options={[
+            { value: 'all', label: '智联、前程无忧、BOSS 三平台' },
+            { value: 'zlzp', label: '仅智联招聘' },
+            { value: 'qcwy', label: '仅前程无忧' },
+            { value: 'boss', label: '仅 BOSS 直聘' }
+          ]} />
+        <Text type="secondary">未选中的平台继续使用原有岗位条件。</Text>
+      </Space>
+      <Space direction="vertical" style={{ width: '100%', marginBottom: 16 }}>
+        <Text type="secondary">以下资料用于本地岗位列表展示，不作为平台搜索或 AI 评分条件。</Text>
+        <Space wrap>
+          <Input aria-label="所属部门" placeholder="所属部门（选填）" maxLength={100}
+            style={{ width: 220 }} disabled={busy} value={metadata.department}
+            onChange={event => setMetadata(current => ({ ...current, department: event.target.value }))} />
+          <Input aria-label="薪资范围" placeholder="薪资范围（选填）" maxLength={100}
+            style={{ width: 220 }} disabled={busy} value={metadata.salary}
+            onChange={event => setMetadata(current => ({ ...current, salary: event.target.value }))} />
+        </Space>
+      </Space>
       {job.title && job.jobRequirements &&
         <div style={{ maxHeight: 160, overflowY: 'auto', whiteSpace: 'pre-wrap', padding: 12,
           background: '#f5f7fa', borderRadius: 6 }}>

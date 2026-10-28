@@ -93,6 +93,10 @@ test('51Job collection routes invoke the browser service and omit candidate iden
   assert.equal(batch.body.data.targetCount, 5);
   assert.deepEqual(calls.at(-1), { action: 'collect-batch', data: { targetCount: 5 } });
 
+  const largerBatch = await request(baseUrl, '/collect-batch', { targetCount: 34 });
+  assert.equal(largerBatch.status, 200);
+  assert.equal(largerBatch.body.data.targetCount, 34);
+
   const defaultBatch = await request(baseUrl, '/collect-batch', {});
   assert.equal(defaultBatch.body.data.targetCount, 30);
 
@@ -123,7 +127,7 @@ test('51Job collection routes invoke the browser service and omit candidate iden
 test('51Job batch request validation rejects excessive counts and malformed keywords before service calls', async t => {
   const calls = [];
   const baseUrl = await withServer(t, calls);
-  for (const value of [0, 31, 1.5, null, '', false, 'not-a-number']) {
+  for (const value of [0, 51, 1.5, null, '', false, 'not-a-number']) {
     const result = await request(baseUrl, '/collect-batch', { targetCount: value });
     assert.equal(result.status, 400, `targetCount=${String(value)}`);
   }

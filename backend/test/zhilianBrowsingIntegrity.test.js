@@ -17,6 +17,62 @@ function readyService() {
   return service;
 }
 
+test('智联清理旧岗位城市筛选时接受新版关闭图标并确认已变成不限', async () => {
+  const service = readyService();
+  let chipVisible = true;
+  let cityLabel = '惠州';
+  let clicks = 0;
+  const chip = {
+    first: () => chip,
+    filter: () => chip,
+    isVisible: async () => chipVisible,
+    locator: selector => ({
+      count: async () => selector === '[class*="times-circle"]' ? 1 : 0,
+      isVisible: async () => true,
+      click: async () => { clicks++; chipVisible = false; cityLabel = '不限'; }
+    }),
+    waitFor: async ({ state }) => { assert.equal(state, 'hidden'); assert.equal(chipVisible, false); }
+  };
+  service.page.locator = selector => {
+    if (selector === '.search-condition-result-new__item') return chip;
+    if (selector === '.keyword-panel__city') return {
+      first: () => ({ isVisible: async () => true, innerText: async () => cityLabel })
+    };
+    return { first: () => ({ isVisible: async () => false }) };
+  };
+  await service.clearInheritedSearchFilters({ location: '不限' });
+  assert.equal(clicks, 1);
+  assert.equal(cityLabel, '不限');
+});
+
+test('智联仅在官方悬浮栏遮挡清除按钮时改用同一按钮的 DOM 点击', async () => {
+  const service = readyService();
+  let clicks = 0;
+  const clear = {
+    isVisible: async () => true,
+    click: async () => { throw new Error('<div class="keyword-panel sticky-pane"> intercepts pointer events\n<div class="im-widget"> intercepts pointer events'); },
+    evaluate: async fn => fn({ isConnected: true,
+      getAttribute: () => 'talent_search_clear_all', click: () => { clicks++; } })
+  };
+  service.page.locator = selector => selector.includes('talent_search_clear_all')
+    ? { first: () => clear }
+    : { first: () => ({ isVisible: async () => false }), filter: () => ({ first: () => ({ isVisible: async () => false }) }) };
+  await service.clearInheritedSearchFilters({ location: '惠州' });
+  assert.equal(clicks, 1);
+});
+
+test('智联不穿透未知遮挡层来清除筛选', async () => {
+  const service = readyService();
+  let forced = false;
+  service.page.locator = selector => selector.includes('talent_search_clear_all')
+    ? { first: () => ({ isVisible: async () => true,
+      click: async () => { throw new Error('<div class="security-verify"> intercepts pointer events'); },
+      evaluate: async () => { forced = true; } }) }
+    : { first: () => ({ isVisible: async () => false }) };
+  await assert.rejects(service.clearInheritedSearchFilters({ location: '惠州' }), /security-verify/);
+  assert.equal(forced, false);
+});
+
 test('智联多关键词让当前关键词采集全部剩余额度，达到目标后停止', async () => {
   const service = readyService();
   const calls = [];

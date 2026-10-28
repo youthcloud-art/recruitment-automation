@@ -1,6 +1,6 @@
 const ResumeModel = require('../models/resumeModel');
 const NodeCache = require('node-cache');
-const { ActiveJobService, normalizeJob } = require('./activeJobService');
+const { ActiveJobService, normalizeJob, PLATFORM_IDS, normalizeApplyTo } = require('./activeJobService');
 
 // 岗位服务缓存，TTL为10分钟
 const positionCache = new NodeCache({ stdTTL: 600 });
@@ -81,7 +81,8 @@ class PositionService {
 
   // Create a local, reusable job record and apply exactly the same criteria to
   // the three platform collectors. No third-party vacancy is published here.
-  async createLocalPosition(input, metadata = {}) {
+  async createLocalPosition(input, metadata = {}, { applyTo = 'all' } = {}) {
+    applyTo = normalizeApplyTo(applyTo);
     const job = normalizeJob(input);
     const checkedMetadata = {};
     for (const key of ['department', 'salary']) {
@@ -92,24 +93,24 @@ class PositionService {
     }
     const previous = this.activeJobService.current();
     const existing = this.resumeModel.getPositions();
-    const match = existing.find(position => this.sameJob(position.jobCriteria, job));
+    const match = existing.find(position => !position.archivedAt && this.sameJob(position.jobCriteria, job));
     const added = [];
     try {
       // Preserve a job set through the older active-job editor before it is
       // replaced, so it can later be selected again from the local job list.
       if (previous.title && previous.jobRequirements &&
           !this.sameJob(previous, job) &&
-          !existing.some(position => this.sameJob(position.jobCriteria, previous))) {
+          !existing.some(position => !position.archivedAt && this.sameJob(position.jobCriteria, previous))) {
         added.push(await this.resumeModel.addPosition(this.positionDataFromJob(previous)));
       }
       const position = match || await this.resumeModel.addPosition(this.positionDataFromJob(job, checkedMetadata));
       if (!match) added.push(position);
-      const savedJob = this.activeJobService.save(job);
+      const savedJob = this.activeJobService.save(job, { positionId: position.id, applyTo });
       positionCache.del('all_positions');
-      return { position, job: savedJob, reused: Boolean(match) };
+      return { position, job: savedJob, reused: Boolean(match), applyTo };
     } catch (error) {
       for (const position of added.reverse()) {
-        const rollback = await this.resumeModel.deletePosition(position.id);
+        const rollback = await this.resumeModel.removeUncommittedPosition(position.id);
         if (!rollback.success) error.message += '；本地岗位记录回滚失败，请检查岗位列表';
       }
       positionCache.del('all_positions');
@@ -117,12 +118,50 @@ class PositionService {
     }
   }
 
-  applyLocalPosition(positionId) {
+  applyLocalPosition(positionId, { applyTo = 'all' } = {}) {
+    applyTo = normalizeApplyTo(applyTo);
     const position = this.resumeModel.getPositionById(positionId);
-    if (!position) throw new Error('岗位不存在');
+    if (!position || position.archivedAt) throw new Error('岗位不存在或已归档');
     if (!position.jobCriteria) throw new Error('该岗位没有可应用的三平台筛选条件');
-    const job = this.activeJobService.save(position.jobCriteria);
-    return { position, job };
+    const job = this.activeJobService.save(position.jobCriteria, { positionId: position.id, applyTo });
+    return { position, job, applyTo };
+  }
+
+  async reviseLocalPosition(positionId, input, metadata = {}, { applyTo = 'all' } = {}) {
+    applyTo = normalizeApplyTo(applyTo);
+    const original = this.resumeModel.getPositionById(positionId);
+    if (!original || original.archivedAt || !original.jobCriteria) {
+      throw new Error('只能修订在用的本地招聘岗位');
+    }
+    const job = normalizeJob(input);
+    if (this.sameJob(original.jobCriteria, job)) {
+      if (metadata && Object.keys(metadata).length) {
+        const updates = {};
+        for (const key of ['department', 'salary']) {
+          const value = metadata[key];
+          if (value !== undefined) {
+            if (typeof value !== 'string' || value.length > 100 || /[\x00-\x1f]/.test(value)) {
+              throw new Error(`${key}格式无效`);
+            }
+            updates[key] = value.trim();
+          }
+        }
+        if (Object.keys(updates).some(key => updates[key] !== (original[key] || ''))) {
+          updates.description = this.positionDataFromJob(job, { ...original, ...updates }).description;
+          const saved = await this.updatePosition(positionId, updates);
+          if (!saved.success) throw new Error(saved.error || '岗位资料保存失败');
+        }
+      }
+      const applied = this.applyLocalPosition(positionId, { applyTo });
+      return { ...applied, reused: true, archivedPrevious: false };
+    }
+    const result = await this.createLocalPosition(job,
+      { department: metadata.department ?? original.department ?? '',
+        salary: metadata.salary ?? original.salary ?? '' }, { applyTo });
+    if (result.position.id === positionId) return { ...result, archivedPrevious: false };
+    const archived = await this.deletePosition(positionId);
+    return { ...result, archivedPrevious: Boolean(archived.success),
+      ...(archived.success ? {} : { warning: '新版已应用，但旧版归档失败：' + archived.error }) };
   }
   
   // 延迟初始化LLM服务
@@ -401,19 +440,19 @@ ${positionInfo.salary || '面议'}
     };
   }
 
-  async getPositions() {
+  async getPositions({ includeArchived = false } = {}) {
     const cacheKey = 'all_positions';
     let cachedPositions = positionCache.get(cacheKey);
     
     if (cachedPositions) {
       console.log('📦 使用缓存的岗位数据');
-      return cachedPositions;
+      return includeArchived ? cachedPositions : cachedPositions.filter(position => !position.archivedAt);
     }
     
     const positions = await this.resumeModel.getPositions();
     positionCache.set(cacheKey, positions);
     
-    return positions;
+    return includeArchived ? positions : positions.filter(position => !position.archivedAt);
   }
 
   async getPositionById(positionId) {
@@ -454,6 +493,13 @@ ${positionInfo.salary || '面议'}
 
   async deletePosition(positionId) {
     try {
+      const activeJobs = [this.activeJobService.current(),
+        ...PLATFORM_IDS.map(platform => this.activeJobService.current(platform))];
+      const position = this.resumeModel.getPositionById(positionId);
+      if (position && activeJobs.some(active => active.positionId === positionId ||
+          (!active.positionId && this.sameJob(position.jobCriteria, active)))) {
+        return { success: false, error: '当前使用的岗位不能归档，请先应用另一个岗位' };
+      }
       const result = await this.resumeModel.deletePosition(positionId);
       if (result.success) {
         positionCache.del('all_positions');
@@ -467,6 +513,15 @@ ${positionInfo.salary || '面议'}
         error: error.message
       };
     }
+  }
+
+  async restorePosition(positionId) {
+    const result = await this.resumeModel.restorePosition(positionId);
+    if (result.success) {
+      positionCache.del('all_positions');
+      positionCache.del(`position_${positionId}`);
+    }
+    return result;
   }
 }
 

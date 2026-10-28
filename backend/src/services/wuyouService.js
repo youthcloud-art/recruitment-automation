@@ -3,16 +3,20 @@ const fs = require('fs');
 const { chromium } = require('playwright');
 const resumeModel = require('../models/resumeModel');
 const resumeParserService = require('./resumeParserService');
+const { idFromOfficialUrl, platformLocator } = require('../utils/platformLocator');
 const { RecruitmentPipelineService } = require('./recruitmentPipelineService');
 const { loadBrowserSession, saveBrowserSession } = require('./browserSessionStore');
 const { launchVisibleChromeCdp } = require('./visibleChromeCdp');
-const { isQcwyPageLabel } = require('../utils/candidateDisplay');
+const { isQcwyPageLabel, jobTitleFromRequirements } = require('../utils/candidateDisplay');
+const { extractQcwyExpectedPosition } = require('../utils/qcwyExpectedPosition');
+const { qcwyHeaderAlias } = require('../utils/qcwyHeaderAlias');
+const { ActiveJobService } = require('./activeJobService');
 
 const HOME_URL = 'https://ehire.51job.com/';
 const TALENT_SEARCH_URL = 'https://ehire.51job.com/Revision/talent/search';
 const TALENT_SEARCH_PATH = '/Revision/talent/search';
 const MAX_RESUME_LENGTH = 100000;
-const MAX_BATCH_SIZE = 30;
+const MAX_BATCH_SIZE = 50;
 const MAX_BATCH_ATTEMPTS = 120;
 const MAX_SCROLL_ROUNDS = 80;
 const RESULT_LIST_SELECTOR = '.talent-search-container .list-box .virtual_list';
@@ -49,7 +53,7 @@ function parseLlmJson(value) {
 
 const NAME_LABELS = new Set(['姓名', '名字', '个人信息', '基本信息', '求职意向', '工作经历',
   '教育经历', '项目经历', '技能特长', '人才简历', '简历详情', '人才搜索', '保密',
-  '通知']);
+  '通知', '匿名', '未公开', '未识别', '待核实', '保密姓名']);
 
 function validName(value) {
   const name = String(value || '').trim();
@@ -99,7 +103,8 @@ class WuyouService {
   constructor({ resumeStore = resumeModel, parser = resumeParserService, pipeline = null,
     browserType = chromium, visibleChromeLauncher = launchVisibleChromeCdp,
     useVisibleCdp = process.platform === 'win32' && browserType === chromium,
-    sessionLoader = loadBrowserSession, sessionSaver = saveBrowserSession } = {}) {
+    sessionLoader = loadBrowserSession, sessionSaver = saveBrowserSession,
+    activeJobService = new ActiveJobService() } = {}) {
     this.resumeStore = resumeStore;
     this.parser = parser;
     this.pipeline = pipeline || new RecruitmentPipelineService({ store: resumeStore });
@@ -108,6 +113,7 @@ class WuyouService {
     this.useVisibleCdp = useVisibleCdp;
     this.sessionLoader = sessionLoader;
     this.sessionSaver = sessionSaver;
+    this.activeJobService = activeJobService;
     this.browser = null;
     this.context = null;
     this.page = null;
@@ -688,6 +694,7 @@ class WuyouService {
         index,
         text: (card.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 800),
         populated: Boolean(card.querySelector('.el-card .name')),
+        displayName: (card.querySelector('.el-card .name')?.innerText || '').trim(),
         stableId: card.getAttribute('data-id') || card.getAttribute('data-key') ||
           card.getAttribute('data-resume-id') || card.querySelector('[data-id]')?.getAttribute('data-id') || '',
         virtualIndex: card.getAttribute('data-index') || card.getAttribute('aria-posinset') ||
@@ -842,11 +849,15 @@ class WuyouService {
     return { text: completeResumeText(best.text), url: best.url, title: await page.title() };
   }
 
-  async collectPage(page) {
+  async collectPage(page, jobRequirements = '', cardNameHint = '') {
     const resume = await this.captureVisibleResume(page);
     const normalizedText = resume.text.replace(/\s+/g, ' ').trim().toLowerCase();
     const fingerprint = crypto.createHash('sha256').update(normalizedText).digest('hex');
     const sourceUrl = safeResumeUrl(resume.url);
+    const sourceCandidateId = idFromOfficialUrl('qcwy', sourceUrl);
+    if (!sourceCandidateId) {
+      throw new Error('前程无忧详情页未提供可验证的 resumeId，未入库；请在平台打开完整候选人详情后重试');
+    }
     const canonical = new URL(sourceUrl);
     const hasStableId = canonical.searchParams.size > 0 ||
       /\/(?:resume|candidate)\/detail\/[\w-]{4,}/i.test(canonical.pathname);
@@ -860,11 +871,41 @@ class WuyouService {
     const existing = typeof this.resumeStore.findWuyouDuplicate === 'function'
       ? this.resumeStore.findWuyouDuplicate(identity, { hasStableId })
       : this.resumeStore.getResumes().find(item =>
-        item.source === 'qcwy' && (item.sourceRecordKey === sourceRecordKey ||
+        item.source === 'qcwy' &&
+        !(sourceCandidateId && platformLocator(item).id &&
+          sourceCandidateId !== platformLocator(item).id) &&
+        (item.sourceRecordKey === sourceRecordKey ||
           (hasStableId && item.sourceUrl === sourceUrl) ||
           item.sourceFingerprint === fingerprint ||
           item.originalText?.replace(/\s+/g, ' ').trim().toLowerCase() === normalizedText));
-    if (existing) return { saved: false, duplicate: true, resume: existing };
+    const detailName = validName(resume.nameHint) ? resume.nameHint.trim() :
+      nameFromResumeText(resume.text);
+    const cardName = validName(cardNameHint) ? cardNameHint.trim() : '';
+    const detailAlias = qcwyHeaderAlias(resume.text);
+    const verifiedName = detailName || cardName || detailAlias || '';
+    const nameSource = detailName ? 'qcwy_detail' : cardName ? 'qcwy_card' :
+      detailAlias ? 'qcwy_detail_alias' : 'unverified';
+    if (existing) {
+      if (existing.sourceCandidateId && existing.sourceCandidateId !== sourceCandidateId) {
+        throw new Error('前程无忧相同简历内容对应不同平台简历 ID，已暂停该记录以避免误关联');
+      }
+      const needsName = !validName(existing.name);
+      const jobTitle = jobTitleFromRequirements(jobRequirements);
+      const changes = {};
+      if (!existing.sourceCandidateId) changes.sourceCandidateId = sourceCandidateId;
+      if (needsName && verifiedName) {
+        changes.name = verifiedName;
+        changes.nameSource = nameSource;
+      }
+      if (!existing.captureJobTitle && jobTitle &&
+          existing.captureJobRequirements === String(jobRequirements || '').trim()) {
+        changes.captureJobTitle = jobTitle;
+      }
+      const enriched = Object.keys(changes).length &&
+        typeof this.resumeStore.updateCandidateMetadata === 'function'
+        ? await this.resumeStore.updateCandidateMetadata(existing.id, changes) : existing;
+      return { saved: false, duplicate: true, resume: enriched || existing };
+    }
     const { rawText: _rawText, ...parsed } = this.parser.parseResumeText(resume.text);
     // Do not persist navigation chrome as structured resume metadata. Keep
     // originalText unchanged for audit and later manual identity verification.
@@ -874,18 +915,33 @@ class WuyouService {
         isQcwyPageLabel(parsed.expectedPosition.position)) {
       parsed.expectedPosition = { ...parsed.expectedPosition, position: '' };
     }
+    const intentPosition = extractQcwyExpectedPosition(resume.text);
+    if (intentPosition && (!parsed.position || isQcwyPageLabel(parsed.position))) {
+      parsed.position = intentPosition;
+    }
+    if (intentPosition && (!parsed.expectedPosition ||
+        !parsed.expectedPosition.position || isQcwyPageLabel(parsed.expectedPosition.position))) {
+      parsed.expectedPosition = { ...(typeof parsed.expectedPosition === 'object' &&
+        parsed.expectedPosition ? parsed.expectedPosition : {}), position: intentPosition };
+    }
+    const activeJob = jobRequirements && this.activeJobService.current('qcwy');
     const result = await this.resumeStore.addResume({
       ...parsed,
-      name: (validName(resume.nameHint) ? resume.nameHint.trim() : null) ||
-        nameFromResumeText(resume.text) ||
-        '未识别姓名',
+      name: verifiedName || '未识别姓名',
+      nameSource,
       source: 'qcwy',
       platform: '前程无忧',
       sourceUrl,
+      sourceCandidateId,
+      sourceCandidateIdSource: 'official_url',
       sourceRecordKey,
       sourceFingerprint: fingerprint,
       sourceTitle: resume.title,
       originalText: resume.text,
+      captureJobRequirements: String(jobRequirements || '').trim() || null,
+      captureJobTitle: jobTitleFromRequirements(jobRequirements) || null,
+      capturePositionId: activeJob?.jobRequirements === String(jobRequirements || '').trim()
+        ? activeJob.positionId || null : null,
       parseMethod: 'local',
       parseStatus: 'completed'
     }, { returnStatus: true });
@@ -1027,7 +1083,7 @@ class WuyouService {
                 tab = null;
                 break;
               }
-              const result = await this.collectPage(tab);
+              const result = await this.collectPage(tab, jobRequirements);
               if (result.saved) this.batch.saved++;
               else {
                 this.batch.skipped++;
@@ -1174,7 +1230,7 @@ class WuyouService {
               this.page = detailPage;
               break;
             }
-            const result = await this.collectPage(detailPage);
+            const result = await this.collectPage(detailPage, jobRequirements, card.displayName);
             if (result.saved) {
               this.batch.saved++;
               await this.evaluateCaptured(result.resume, jobRequirements);

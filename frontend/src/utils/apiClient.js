@@ -16,6 +16,7 @@ export const apiCall = async (endpoint, options = {}) => {
   const config = {
     ...REQUEST_CONFIG,
     ...options,
+    credentials: 'same-origin',
     headers: {
       ...REQUEST_CONFIG.headers,
       ...options.headers
@@ -26,10 +27,27 @@ export const apiCall = async (endpoint, options = {}) => {
     delete config.headers['Content-Type'];
   }
 
+  const readOnly = String(config.method || 'GET').toUpperCase() === 'GET' &&
+    !endpoint.startsWith('/browser-console/') && options.retryOnTransient !== false;
+  let response;
   try {
-    const response = await fetch(url, config);
+    for (let attempt = 0; attempt < (readOnly ? 2 : 1); attempt++) {
+      try {
+        response = await fetch(url, config);
+        if (!readOnly || ![502, 503, 504].includes(response.status) || attempt) break;
+      } catch (error) {
+        // Never replay writes or a caller-cancelled request. A single GET
+        // retry hides a short gateway/network handoff without duplicating a
+        // collection start or an email delivery.
+        if (!readOnly || attempt || config.signal?.aborted || error.name === 'AbortError') throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
     
     if (!response.ok) {
+      if (response.status === 401) {
+        window.dispatchEvent(new Event('hiresmart:unauthorized'));
+      }
       const errorBody = await response.clone().json().catch(() => null);
       throw new Error(errorBody?.message || errorBody?.error || `HTTP ${response.status}: ${response.statusText}`);
     }

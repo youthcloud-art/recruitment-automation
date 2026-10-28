@@ -45,6 +45,62 @@ test('BOSS search navigation leaves an existing search page untouched', async ()
   assert.equal(clicks, 0);
 });
 
+test('BOSS search navigation keeps a borrowed CDP session open', async () => {
+  let closed = 0;
+  const session = {
+    assertRecruiterReady: async () => 'https://www.zhipin.com/web/chat/search',
+    close: () => { closed++; }
+  };
+  const result = await ensureOfficialSearchPage({ session });
+  assert.equal(result.navigated, false);
+  assert.equal(closed, 0);
+});
+
+test('BOSS search menu retries only a pre-click layout movement on the same page', async () => {
+  let url = 'https://www.zhipin.com/web/chat/recommend';
+  let clicks = 0;
+  let windowChecks = 0;
+  const session = {
+    assertRecruiterReady: async () => url,
+    assertUsableRecruiterWindow: async () => { windowChecks++; },
+    clickUnique: async () => {
+      clicks++;
+      if (clicks === 1) {
+        const error = new Error('menu moved before click');
+        Object.assign(error, { code: 'BOSS_CDP_TARGET_UNSTABLE',
+          stage: 'pre_click_recheck', reason: 'position_moved' });
+        throw error;
+      }
+      url = 'https://www.zhipin.com/web/chat/search';
+    },
+    evaluate: async () => true,
+    close: () => {}
+  };
+  const result = await ensureOfficialSearchPage({ connect: async () => session,
+    wait: async () => {} });
+  assert.equal(result.navigated, true);
+  assert.equal(clicks, 2);
+  assert.equal(windowChecks, 2);
+});
+
+test('BOSS search menu never replays a click with uncertain acknowledgement', async () => {
+  let clicks = 0;
+  const session = {
+    assertRecruiterReady: async () => 'https://www.zhipin.com/web/chat/recommend',
+    assertUsableRecruiterWindow: async () => {},
+    clickUnique: async () => {
+      clicks++;
+      const error = new Error('press acknowledgement unknown');
+      error.code = 'BOSS_CDP_CLICK_UNCERTAIN';
+      throw error;
+    },
+    close: () => {}
+  };
+  await assert.rejects(ensureOfficialSearchPage({ connect: async () => session,
+    wait: async () => {} }), error => error.code === 'BOSS_CDP_CLICK_UNCERTAIN');
+  assert.equal(clicks, 1);
+});
+
 test('BOSS search navigation refuses other pages and does not click repeatedly', async () => {
   let clicks = 0;
   const session = {

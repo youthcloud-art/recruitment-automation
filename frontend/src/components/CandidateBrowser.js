@@ -18,6 +18,7 @@ import { apiPost, apiGet, apiPut } from '../utils/apiClient';
 import { API_ENDPOINTS } from '../config/api';
 import useFilters from '../hooks/useFilters';
 import JobCriteriaEditor, { EMPTY_JOB } from './JobCriteriaEditor';
+import { ACTIVE_JOB_CHANGED, notifyActiveJobChanged } from '../utils/activeJobEvents';
 import CaptureTargetNotice from './CaptureTargetNotice';
 import { getFilterConfig } from '../config/filterConfig';
 
@@ -329,6 +330,32 @@ const CandidateBrowser = ({ platform = 'boss-zhipin', onOpenPipeline }) => {
     }
   };
 
+  useEffect(() => {
+    const onJobChanged = event => {
+      const scopedPlatform = platform === 'boss-zhipin' ? 'boss' : 'zlzp';
+      if (!['all', scopedPlatform].includes(event.detail?.applyTo)) return;
+      const job = event.detail?.job;
+      if (!job?.title) return;
+      setJobCriteria(job);
+      updateFilter('position', job.searchKeywords || job.title);
+      const config = getFilterConfig(platform);
+      const education = String(job.education || '').trim();
+      const normalizedEducation = education === '本科' ? '本科及以上'
+        : education === '大专' ? '大专及以上'
+          : education === '硕士' || education === '研究生' ? '硕士及以上' : education;
+      if (config.education?.options?.some(option => option.value === normalizedEducation)) {
+        updateFilter('education', normalizedEducation);
+      }
+      if (config.location?.options?.some(option => option.value === job.location)) {
+        updateFilter('location', job.location);
+      }
+      setTargetResumeCount(Number.isInteger(job.targetCount) && job.targetCount > 0
+        ? job.targetCount : 3);
+    };
+    window.addEventListener(ACTIVE_JOB_CHANGED, onJobChanged);
+    return () => window.removeEventListener(ACTIVE_JOB_CHANGED, onJobChanged);
+  }, [platform, updateFilter]);
+
   // 智联招聘初始化相关函数
   const startZhilianService = async () => {
     if (platform !== 'zhilian') return;
@@ -573,8 +600,10 @@ const CandidateBrowser = ({ platform = 'boss-zhipin', onOpenPipeline }) => {
       // changes the evaluation context even when the criteria did not change.
       const activeJob = jobCriteria.updatedAt
         ? jobCriteria
-        : (await apiPut('/recruitment-pipeline/active-job', jobCriteria)).data;
+        : (await apiPut('/recruitment-pipeline/active-job',
+          { ...jobCriteria, applyTo: platform === 'boss-zhipin' ? 'boss' : 'zlzp' })).data;
       setJobCriteria(activeJob);
+      notifyActiveJobChanged(activeJob, platform === 'boss-zhipin' ? 'boss' : 'zlzp');
       const searchFilters = resume ? checkpoint?.filters
         : platform === 'boss-zhipin'
           ? {position:activeJob.title}
@@ -675,7 +704,12 @@ const CandidateBrowser = ({ platform = 'boss-zhipin', onOpenPipeline }) => {
       clearInterval(pollingInterval);
     }
     
+    let inFlight = false;
     const interval = setInterval(async () => {
+      // A slow server response must not start another request every two
+      // seconds: stacked polls can make an otherwise recoverable pause worse.
+      if (inFlight || document.hidden) return;
+      inFlight = true;
       try {
         // 根据平台调用不同的API
         const apiEndpoint = platform === 'zhilian' ? API_ENDPOINTS.ZHILIAN.BROWSING_STATUS : API_ENDPOINTS.BOSS_ZHIPIN.BROWSING_STATUS;
@@ -766,6 +800,8 @@ const CandidateBrowser = ({ platform = 'boss-zhipin', onOpenPipeline }) => {
         }
       } catch (error) {
         console.error('获取浏览状态失败:', error);
+      } finally {
+        inFlight = false;
       }
     }, 2000);
     
@@ -884,7 +920,8 @@ const CandidateBrowser = ({ platform = 'boss-zhipin', onOpenPipeline }) => {
 
 
   useEffect(() => {
-    apiGet('/recruitment-pipeline/active-job')
+    apiGet('/recruitment-pipeline/active-job',
+      { platform: platform === 'boss-zhipin' ? 'boss' : 'zlzp' })
       .then(result => {
         const job = result.data || EMPTY_JOB;
         handleJobCriteriaChange(job);
@@ -986,7 +1023,8 @@ const CandidateBrowser = ({ platform = 'boss-zhipin', onOpenPipeline }) => {
         <Steps current={currentStep} items={getSteps()} />
       </StepsContainer>
 
-      <JobCriteriaEditor value={jobCriteria} onChange={handleJobCriteriaChange} disabled={isBrowsing} />
+      <JobCriteriaEditor value={jobCriteria} onChange={handleJobCriteriaChange}
+        platform={platform === 'boss-zhipin' ? 'boss' : 'zlzp'} disabled={isBrowsing} />
       <CaptureTargetNotice job={jobCriteria} platform={platform} refreshKey={isBrowsing} />
       {isBrowsing && batchTargetCount > 0 &&
         Number.isInteger(jobCriteria.targetCount) && jobCriteria.targetCount > 0 &&

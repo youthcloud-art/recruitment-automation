@@ -5,7 +5,9 @@ const NodeCache = require('node-cache');
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
 const { sameBossNearDuplicate,
   chooseBossNearDuplicate } = require('../utils/bossResumeIdentity');
-const { SqliteResumeStore } = require('./sqliteResumeStore');
+const { SqliteResumeStore, resumeJobState } = require('./sqliteResumeStore');
+const { hiringJobTitle } = require('../utils/candidateDisplay');
+const { platformLocator } = require('../utils/platformLocator');
 
 // 简历数据缓存，TTL为5分钟
 const resumeCache = new NodeCache({ stdTTL: 300 });
@@ -25,8 +27,14 @@ function exactDuplicateInArray(resumes, incoming) {
         incoming.sourceCandidateId !== item.sourceCandidateId));
     return compatible.length === 1 ? compatible[0] : null;
   }
+  if (incoming.sourceCandidateId) {
+    const byId = sameSource.find(item => item.sourceCandidateId === incoming.sourceCandidateId);
+    if (byId) return byId;
+  }
   return sameSource.find(item =>
-    (incoming.sourceFingerprint && item.sourceFingerprint === incoming.sourceFingerprint) ||
+    (incoming.sourceFingerprint && item.sourceFingerprint === incoming.sourceFingerprint &&
+      !(incoming.sourceCandidateId && item.sourceCandidateId &&
+        incoming.sourceCandidateId !== item.sourceCandidateId)) ||
     isSameZhilianResume(item, incoming)) || null;
 }
 
@@ -280,38 +288,52 @@ class ResumeModel {
     return resumes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
-  forEachResume(visitor, { source = null, jobRequirements = null } = {}) {
+  forEachResume(visitor, { source = null, status = null, jobRequirements = null,
+    jobGroup = null } = {}) {
     if (typeof visitor !== 'function') throw new TypeError('简历读取回调无效');
     if (this.sqliteStore) {
-      return this.sqliteStore.forEachResume(visitor, { source, jobRequirements });
+      return this.sqliteStore.forEachResume(visitor, { source, status, jobRequirements, jobGroup });
     }
     let count = 0;
+    const positions = jobGroup ? this.getPositions() : null;
     for (const item of this.getResumes(null, source)) {
+      if (status !== null && (item.workflowStatus || 'new') !== status) continue;
       if (jobRequirements !== null &&
-          item.matchEvaluation?.jobRequirements !== jobRequirements) continue;
+          item.matchEvaluation?.jobRequirements !== jobRequirements &&
+          item.captureJobRequirements !== jobRequirements) continue;
+      if (jobGroup && (jobGroup === 'current'
+        ? resumeJobState(item, positions) !== 'current'
+        : resumeJobState(item, positions) === 'current')) continue;
       visitor(item);
       count++;
     }
     return count;
   }
 
-  getResumesPage({ position = null, source = null, sources = null, status = null,
+  getResumesPage({ position = null, hiringJobTitle: jobTitle = null, jobGroup = null,
+    source = null, sources = null, status = null,
     keyword = '', keywordFields = 'library', sortBy = 'createdAt', limit = 100, offset = 0 } = {}) {
     if (this.sqliteStore) {
-      return this.sqliteStore.getResumesPage({ position, source, sources, status,
+      return this.sqliteStore.getResumesPage({ position, hiringJobTitle: jobTitle, jobGroup,
+        source, sources, status,
         keyword, keywordFields, sortBy, limit, offset });
     }
     if (!Number.isInteger(limit) || limit < 1 || limit > 500 ||
         !Number.isInteger(offset) || offset < 0) throw new Error('分页参数无效');
-    if (!['createdAt', 'name', 'experience', 'education', 'age'].includes(sortBy)) {
+    if (!['createdAt', 'name', 'experience', 'education', 'age', 'scoreAsc', 'scoreDesc'].includes(sortBy)) {
       throw new Error('排序方式无效');
     }
     if (!['library', 'pipeline'].includes(keywordFields)) throw new Error('搜索范围无效');
     const term = String(keyword).trim().toLowerCase();
+    const positions = jobGroup ? this.getPositions() : null;
     const items = this.getResumes(position, source)
       .filter(item => !sources || sources.includes(item.source))
+      .filter(item => !jobTitle || hiringJobTitle(item) === jobTitle)
+      .filter(item => !jobGroup || (jobGroup === 'current'
+        ? resumeJobState(item, positions) === 'current'
+        : resumeJobState(item, positions) !== 'current'))
       .filter(item => !status || (item.workflowStatus || 'new') === status)
-      .filter(item => !term || [item.name, item.position, item.expectedPosition?.position,
+      .filter(item => !term || [item.name, item.position, hiringJobTitle(item), item.expectedPosition?.position,
         typeof item.expectedPosition === 'string' ? item.expectedPosition : '',
         ...(Array.isArray(item.skills) ? item.skills : []),
         ...(keywordFields === 'library' ? [item.selfIntroduction,
@@ -322,6 +344,13 @@ class ResumeModel {
       const educationOrder = { '博士': 5, '硕士': 4, '本科': 3, '大专': 2, '高中': 1 };
       items.sort((a, b) => {
         if (sortBy === 'name') return String(a.name || '').localeCompare(String(b.name || ''));
+        if (sortBy === 'scoreAsc' || sortBy === 'scoreDesc') {
+          const left = Number.isFinite(a.matchScore) ? a.matchScore : null;
+          const right = Number.isFinite(b.matchScore) ? b.matchScore : null;
+          if (left === null) return right === null ? 0 : 1;
+          if (right === null) return -1;
+          return sortBy === 'scoreAsc' ? left - right : right - left;
+        }
         if (sortBy === 'experience') return (parseInt(b.workYears, 10) || 0) -
           (parseInt(a.workYears, 10) || 0);
         if (sortBy === 'education') return (educationOrder[b.education] || 0) -
@@ -329,7 +358,10 @@ class ResumeModel {
         return (parseInt(a.age, 10) || 0) - (parseInt(b.age, 10) || 0);
       });
     }
-    return { items: items.slice(offset, offset + limit), total: items.length,
+    const viewPositions = positions || this.getPositions();
+    return { items: items.slice(offset, offset + limit).map(item => ({ ...item,
+      jobGroup: resumeJobState(item, viewPositions) === 'current' ? 'current' : 'historical' })),
+      total: items.length,
       limit, offset };
   }
 
@@ -345,6 +377,23 @@ class ResumeModel {
     return [...counts].map(([key, total]) => {
       const [source, status] = key.split('\u0000');
       return { source, status, total };
+    });
+  }
+
+  getHiringJobCounts(sources) {
+    if (this.sqliteStore) return this.sqliteStore.getHiringJobCounts(sources);
+    const counts = new Map();
+    const positions = this.getPositions();
+    for (const resume of this.readDatabase().resumes) {
+      if (!sources.includes(resume.source)) continue;
+      const title = hiringJobTitle(resume);
+      const jobGroup = resumeJobState(resume, positions) === 'current' ? 'current' : 'historical';
+      const key = `${title}\u0000${resume.source}\u0000${jobGroup}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return [...counts].map(([key, total]) => {
+      const [title, source, jobGroup] = key.split('\u0000');
+      return { title, source, jobGroup, total };
     });
   }
 
@@ -379,6 +428,8 @@ class ResumeModel {
     if (this.sqliteStore) return this.sqliteStore.findWuyouDuplicate(incoming, { hasStableId });
     const normalized = incoming.originalText?.replace(/\s+/g, ' ').trim().toLowerCase();
     return this.getResumes().find(item => item.source === 'qcwy' &&
+      !(platformLocator(incoming).id && platformLocator(item).id &&
+        platformLocator(incoming).id !== platformLocator(item).id) &&
       ((incoming.sourceRecordKey && item.sourceRecordKey === incoming.sourceRecordKey) ||
         (hasStableId && incoming.sourceUrl && item.sourceUrl === incoming.sourceUrl) ||
         (incoming.sourceFingerprint && item.sourceFingerprint === incoming.sourceFingerprint) ||
@@ -677,6 +728,8 @@ class ResumeModel {
         const positionIndex = positions.findIndex(p => p.id === positionId);
         if (positionIndex === -1) return { changed: false,
           result: { success: false, error: '岗位不存在' } };
+        if (positions[positionIndex].archivedAt) return { changed: false,
+          result: { success: false, error: '岗位已归档' } };
         const updatedPosition = { ...positions[positionIndex], ...updatedData,
           updatedAt: new Date().toISOString() };
         positions[positionIndex] = updatedPosition;
@@ -691,6 +744,9 @@ class ResumeModel {
           success: false,
           error: '岗位不存在'
         };
+      }
+      if (db.positions[positionIndex].archivedAt) {
+        return { success: false, error: '岗位已归档' };
       }
 
       // 更新岗位数据
@@ -759,6 +815,21 @@ class ResumeModel {
     }
   }
 
+  deleteHistoricalResumes(ids, expectedTitle) {
+    if (this.sqliteStore) return this.sqliteStore.deleteHistoricalResumes(ids, expectedTitle);
+    const db = this.readDatabase();
+    const selected = db.resumes.filter(item => ids.includes(item.id));
+    if (selected.length !== ids.length || selected.some(item =>
+      !['boss', 'zlzp', 'qcwy'].includes(item.source) ||
+      hiringJobTitle(item) !== expectedTitle ||
+      resumeJobState(item, db.positions) === 'current')) {
+      throw new Error('所选简历已变化，或不属于该历史岗位；请刷新后重选');
+    }
+    db.resumes = db.resumes.filter(item => !ids.includes(item.id));
+    this.writeDatabase(db);
+    return { success: true, count: selected.length };
+  }
+
   /**
    * 清空所有简历
    * @returns {Object} 清空结果
@@ -797,16 +868,7 @@ class ResumeModel {
    */
   async deletePosition(positionId) {
     try {
-      if (this.sqliteStore) return this.sqliteStore.mutatePositions(positions => {
-        const positionIndex = positions.findIndex(p => p.id === positionId);
-        if (positionIndex === -1) return { changed: false,
-          result: { success: false, error: '岗位不存在' } };
-        if (this.sqliteStore.hasResumeForPositionId(positionId)) return { changed: false,
-          result: { success: false, error: '该岗位还有关联的简历，无法删除' } };
-        const [deletedPosition] = positions.splice(positionIndex, 1);
-        return { changed: true, result: { success: true, position: deletedPosition,
-          message: '岗位删除成功' } };
-      });
+      if (this.sqliteStore) return this.sqliteStore.archivePosition(positionId);
       const db = this.readDatabase();
       const positionIndex = db.positions.findIndex(p => p.id === positionId);
       
@@ -816,25 +878,26 @@ class ResumeModel {
           error: '岗位不存在'
         };
       }
-
-      // 检查是否有简历关联此岗位
-      const hasRelatedResumes = db.resumes.some(resume => resume.positionId === positionId);
-      if (hasRelatedResumes) {
-        return {
-          success: false,
-          error: '该岗位还有关联的简历，无法删除'
-        };
+      if (db.positions[positionIndex].archivedAt) {
+        return { success: false, error: '岗位已归档' };
       }
 
-      // 删除岗位
-      const deletedPosition = db.positions[positionIndex];
-      db.positions.splice(positionIndex, 1);
+      const deletedPosition = { ...db.positions[positionIndex],
+        archivedAt: new Date().toISOString(), status: '已归档' };
+      db.positions[positionIndex] = deletedPosition;
+      for (const resume of db.resumes) {
+        if (resume.capturePositionId === positionId || resume.positionId === positionId ||
+            (!resume.capturePositionId && hiringJobTitle(resume) === deletedPosition.title &&
+              resume.captureJobRequirements === deletedPosition.jobCriteria?.jobRequirements)) {
+          resume.jobArchiveState = 'archived';
+        }
+      }
       this.writeDatabase(db);
 
       return {
         success: true,
         position: deletedPosition,
-        message: '岗位删除成功'
+        message: '岗位已归档，相关简历已保留'
       };
     } catch (error) {
       console.error('删除岗位失败:', error);
@@ -843,6 +906,48 @@ class ResumeModel {
         error: error.message
       };
     }
+  }
+
+  // Internal transaction compensation for a job that was never applied.
+  async removeUncommittedPosition(positionId) {
+    if (this.sqliteStore) return this.sqliteStore.mutatePositions(positions => {
+      const index = positions.findIndex(item => item.id === positionId);
+      if (index < 0 || this.sqliteStore.hasResumeForPositionId(positionId)) {
+        return { changed: false, result: { success: false } };
+      }
+      positions.splice(index, 1);
+      return { changed: true, result: { success: true } };
+    });
+    const db = this.readDatabase();
+    const index = db.positions.findIndex(item => item.id === positionId);
+    if (index < 0 || db.resumes.some(item => item.capturePositionId === positionId ||
+        item.positionId === positionId)) return { success: false };
+    db.positions.splice(index, 1);
+    this.writeDatabase(db);
+    return { success: true };
+  }
+
+  async restorePosition(positionId) {
+    try {
+      if (this.sqliteStore) return this.sqliteStore.restorePosition(positionId);
+      const db = this.readDatabase();
+      const position = db.positions.find(item => item.id === positionId);
+      if (!position?.archivedAt) return { success: false, error: '未找到已归档岗位' };
+      delete position.archivedAt;
+      position.status = '招聘中';
+      const uniqueCriteria = db.positions.filter(item => item.title === position.title &&
+        item.jobCriteria?.jobRequirements === position.jobCriteria?.jobRequirements).length === 1;
+      for (const resume of db.resumes) {
+        if (resume.capturePositionId === positionId || resume.positionId === positionId ||
+            (uniqueCriteria && !resume.capturePositionId && !resume.positionId &&
+              resume.jobArchiveState === 'archived' && hiringJobTitle(resume) === position.title &&
+              resume.captureJobRequirements === position.jobCriteria?.jobRequirements)) {
+          resume.jobArchiveState = 'current';
+        }
+      }
+      this.writeDatabase(db);
+      return { success: true, position, message: '岗位已恢复' };
+    } catch (error) { return { success: false, error: error.message }; }
   }
 }
 

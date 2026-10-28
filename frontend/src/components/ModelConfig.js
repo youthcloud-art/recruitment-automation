@@ -7,15 +7,17 @@ const { Title, Paragraph, Text } = Typography;
 export default function ModelConfig() {
   const [form] = Form.useForm();
   const [config, setConfig] = useState(null);
+  const [canEdit, setCanEdit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
   useEffect(() => {
     let mounted = true;
-    apiGet('/model-config').then(result => {
+    Promise.all([apiGet('/model-config'), apiGet('/model-config/access')]).then(([result, access]) => {
       if (!mounted) return;
       setConfig(result.data);
+      setCanEdit(Boolean(access.data?.canEdit));
       form.setFieldsValue({ model: result.data.model?.startsWith('deepseek-') ? result.data.model : 'deepseek-chat' });
     }).catch(error => message.error(error.message));
     return () => { mounted = false; };
@@ -48,18 +50,21 @@ export default function ModelConfig() {
 
   return <div style={{ padding: 24, maxWidth: 780, margin: '0 auto', overflowY: 'auto', height: '100%' }}>
     <Title level={2}>模型配置</Title>
-    <Paragraph>DeepSeek 用于候选人简历评估、智能对话和相关 AI 功能。配置保存在本机，保存后立即用于新的请求。</Paragraph>
+    <Paragraph>DeepSeek 用于候选人简历评估、智能对话和相关 AI 功能。配置保存在公司服务器，保存后立即用于新的请求。</Paragraph>
+    {!canEdit && <Alert style={{ marginBottom: 16 }} type="info" showIcon
+      message="仅公司服务器本机可修改模型配置"
+      description="当前为局域网访问，可查看配置状态。请在公司服务器的浏览器中打开招聘助手进行设置；其他电脑无法保存密钥或发起连接测试。" />}
     <Card title="DeepSeek API" extra={<Tag color={config?.configured ? 'success' : 'warning'}>{config?.configured ? '已配置' : '未配置'}</Tag>}>
       <Form form={form} layout="vertical" onFinish={save} initialValues={{ model: 'deepseek-chat' }}>
         <Form.Item name="apiKey" label="API Key" extra={config?.configured ? '已存在密钥；留空可沿用当前密钥。页面不会显示现有密钥。' : '请填写 DeepSeek 控制台创建的 API Key。'}>
-          <Input.Password placeholder={config?.configured ? '留空保持现有密钥' : 'sk-…'} autoComplete="new-password" />
+          <Input.Password disabled={!canEdit} placeholder={config?.configured ? '留空保持现有密钥' : 'sk-…'} autoComplete="new-password" />
         </Form.Item>
         <Form.Item name="model" label="模型" rules={[{ required: true }]}>
-          <Select options={[{ value: 'deepseek-flash', label: 'DeepSeek Flash / deepseek-flash' }, { value: 'deepseek-chat', label: 'DeepSeek Chat / deepseek-chat' }, { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner / deepseek-reasoner' }]} />
+          <Select disabled={!canEdit} options={[{ value: 'deepseek-flash', label: 'DeepSeek Flash / deepseek-flash' }, { value: 'deepseek-chat', label: 'DeepSeek Chat / deepseek-chat' }, { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner / deepseek-reasoner' }]} />
         </Form.Item>
         <Space>
-          <Button type="primary" htmlType="submit" loading={saving}>保存配置</Button>
-          <Button onClick={test} loading={testing} disabled={!config?.configured}>测试真实连接</Button>
+          <Button type="primary" htmlType="submit" loading={saving} disabled={!canEdit}>保存配置</Button>
+          <Button onClick={test} loading={testing} disabled={!canEdit || !config?.configured}>测试真实连接</Button>
         </Space>
       </Form>
       {testResult && <Alert style={{ marginTop: 16 }} type={testResult.type} showIcon message={testResult.text} />}

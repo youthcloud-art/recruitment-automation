@@ -1106,6 +1106,7 @@ app.use('/api/zhilian', zhilianRoutes);
 // 前程无忧企业端登录、人才搜索和本机简历采集；也支持官方邮件导入。
 app.use('/api/wuyou', require('./routes/wuyou'));
 app.use('/api/browser-console', require('./routes/browserConsole').createBrowserConsoleRouter());
+app.use('/api/company-maintenance', require('./routes/companyMaintenance').createCompanyMaintenanceRouter());
 app.use('/api/qcwy-inbox', require('./routes/qcwyInbox'));
 app.use('/api/recruitment-pipeline', require('./routes/recruitmentPipeline'));
 

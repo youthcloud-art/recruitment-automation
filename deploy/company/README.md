@@ -97,6 +97,20 @@ Get-Content 'D:\App\SXF\Smart-Recruitment-Agent\control\current-release.json'
 
 ## 验收与恢复
 
+### 每日清理旧部署文件
+
+清理任务固定为 `AutoRecru-Company-Cleanup`，以 SYSTEM 在北京时间每天 **12:30、20:00** 执行。XML 的两个 CalendarTrigger 都明确包含 `+08:00`，不依赖服务器当前显示时区；错过的任务可在服务器可用时补执行。它不需要本地电脑或 Codex 开机。
+
+发布本功能后，服务器既有 SYSTEM 镜像任务执行 `backend npm ci` 时，由 `postinstall` 调用受限安装器。只有 `D:\App\SXF\Smart-Recruitment-Agent\releases\<标准版本目录>`、已初始化的指定 Gitee 仓库、服务器 IP 和 SYSTEM 身份全部吻合时才安装；开发电脑的 npm install 直接跳过。安装器将维护脚本保存为 `delivery/maintenance/<内容哈希>` 的不可变副本，避免正在运行的 release 更新或清理影响计划任务。若已有同名但不属于本安装器的任务则拒绝覆盖。
+
+默认策略为：至少保留最近 3 个完整版本，另外保护当前版本、待切换版本、进程正在引用的版本和最近 2 个历史回滚版本；24 小时内的版本不删。自动切换备份至少保留最新 7 份、最近 7 天的全部备份及当前部署/保留回滚链所需备份。48 小时前的遗留 release ZIP，以及 14 天前的非活动日志可以清理。当前版本、整个 shared（含数据库、简历附件、模型/邮箱配置和浏览器登录资料）、source Git 仓库、手动 data-export 包、setup 备份、活动后端/网关日志和未知目录全部保留。只清除这些已审阅范围内的旧文件，不清整个 D 盘，也不清其他项目。
+
+`delivery/cleanup-policy.json` 可增加保留量或延长期限，不能低于上述安全下限。清理先取得 `sync.lock`、`switch.lock`、`cleanup.lock` 和 `maintenance-install.lock`；遇到更新、导出或另一轮清理就跳过，不停止任何业务进程。健康检查异常时不清理；执行中变为异常则停止后续项。删除器先完整检查目录树，遇到未知 reparse point 整项拒绝，已知 shared junction 仅移除链接，文件和空目录均逐项非递归删除，不遍历共享数据。
+
+安装结果记录在 `delivery/cleanup-installation.json`，每次预览或执行结果记录在 `delivery/last-cleanup.json`，包括候选/删除数量、字节数和前后磁盘剩余空间。公司平台只读接口 `/api/company-maintenance/status` 提供计划和汇总，不暴露文件名、配置内容或进程命令行。手动核对可读取这些 JSON 和 `Get-ScheduledTask -TaskName AutoRecru-Company-Cleanup`；手动预览运行安装记录对应 bundle 中的 `Invoke-CompanyCleanup.ps1 -InstallRoot ...`，只有额外传 `-Apply` 才删除。
+
+清理能控制历史部署文件的增长，正常业务数据、手动导出和当前活动日志仍会随使用增长；它们不会因磁盘空间低而被自动删除。
+
 ### 一次性将服务器业务数据同步到本地
 
 此功能由操作人员按需运行，不创建定时数据同步，也不通过 GitHub/Gitee 传输业务文件。使用专用工具包中的 `Export-Server-Data.cmd`，以管理员身份在公司服务器执行。它先拒绝正在进行的采集，取得部署锁并暂时禁用镜像更新任务，短暂停止新助手，把固定白名单中的业务数据复制到 `backups/data-export-.../snapshot`；对副本中的 SQLite WAL 完成检查点和完整性检查后恢复服务，再生成 ZIP 与 SHA-256。原服务及镜像任务状态在正常或异常退出时都会尝试恢复。浏览器 profile 保留原位，导出不关闭 Chrome；若应用之外还有进程直接写业务目录，须先停止该写入者。

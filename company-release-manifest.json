@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-22T02:52:00.516Z",
+  "generatedAt": "2026-10-28T10:03:34.777Z",
   "source": "Auto-Recru current working tree; fresh history required",
   "files": [
     {
@@ -43,14 +43,14 @@
     },
     {
       "path": "backend/package-lock.json",
-      "sha256": "fd7ce20f7b158e461bc1c74d5e07369de4b86a3ed5d9fabe77cefb6cc7542f3f",
-      "sourceSha256": "fd7ce20f7b158e461bc1c74d5e07369de4b86a3ed5d9fabe77cefb6cc7542f3f",
+      "sha256": "2927c0aea6adb093a8754afc79e5793c2eefec06de4aefd09f3d5b44fb85e08f",
+      "sourceSha256": "2927c0aea6adb093a8754afc79e5793c2eefec06de4aefd09f3d5b44fb85e08f",
       "transformations": []
     },
     {
       "path": "backend/package.json",
-      "sha256": "061753cefe7d037c87b0d6cd974aceadbb54c971ef91e56598073c464d5eaca6",
-      "sourceSha256": "171c1f3eb59a733987089d78b50d9ef1baad35336d0eea206517124702fae348",
+      "sha256": "e6dd8ba4954ee44496f14afc61769fe5687f13a91550d59da292c6329e91926b",
+      "sourceSha256": "562d313b5a793795708de9430212859628adc52be263c11038c87e1f3fc5233c",
       "transformations": [
         "remove-obsolete-launch-scripts"
       ]
@@ -105,8 +105,8 @@
     },
     {
       "path": "backend/src/index.js",
-      "sha256": "399dbfde9258601b7ecdac237c21c35eab84419794c769f631a25b3ac652360f",
-      "sourceSha256": "399dbfde9258601b7ecdac237c21c35eab84419794c769f631a25b3ac652360f",
+      "sha256": "c7f0918311b889edcb763de1a9aa245e855553c5fd2e465370bae441019ceef7",
+      "sourceSha256": "c7f0918311b889edcb763de1a9aa245e855553c5fd2e465370bae441019ceef7",
       "transformations": []
     },
     {
@@ -149,6 +149,12 @@
       "path": "backend/src/routes/browserConsole.js",
       "sha256": "d3e8f187f71c4abb2fcedbce8ac7b40b8a6b88a133ae29cf6e0dece05b5c8646",
       "sourceSha256": "d3e8f187f71c4abb2fcedbce8ac7b40b8a6b88a133ae29cf6e0dece05b5c8646",
+      "transformations": []
+    },
+    {
+      "path": "backend/src/routes/companyMaintenance.js",
+      "sha256": "989ae6822ccbe0eeb73805b7c16983b9673e29055f1b802f9701328c3545a40d",
+      "sourceSha256": "989ae6822ccbe0eeb73805b7c16983b9673e29055f1b802f9701328c3545a40d",
       "transformations": []
     },
     {
@@ -824,9 +830,21 @@
       "transformations": []
     },
     {
+      "path": "backend/test/companyCleanup.test.js",
+      "sha256": "266c023b2496b704b62c05f86e28846a8e7e42110df36f4eddf7eda1a84b7a41",
+      "sourceSha256": "266c023b2496b704b62c05f86e28846a8e7e42110df36f4eddf7eda1a84b7a41",
+      "transformations": []
+    },
+    {
       "path": "backend/test/companyDataSync.test.js",
       "sha256": "eb2a25f59144a17e5601c2b9ece6d48fa9749f8cf93588cc43164a5a00aa7c92",
       "sourceSha256": "eb2a25f59144a17e5601c2b9ece6d48fa9749f8cf93588cc43164a5a00aa7c92",
+      "transformations": []
+    },
+    {
+      "path": "backend/test/companyMaintenance.test.js",
+      "sha256": "6139072a4dc57f47739f53cea2899c0fe558f99c53f356a9c0febf39876497a1",
+      "sourceSha256": "6139072a4dc57f47739f53cea2899c0fe558f99c53f356a9c0febf39876497a1",
       "transformations": []
     },
     {
@@ -1118,6 +1136,42 @@
       "transformations": []
     },
     {
+      "path": "deploy/company/Install-CompanyCleanup.ps1",
+      "sha256": "956b511c2f44532f02f98bf6681030241a0cfcfa69f32fffb4e7ec662fed9b38",
+      "sourceSha256": "956b511c2f44532f02f98bf6681030241a0cfcfa69f32fffb4e7ec662fed9b38",
+      "transformations": []
+    },
+    {
+      "path": "deploy/company/install-maintenance.cjs",
+      "sha256": "2db91b1e09c6cf3978082730a0675e3953a29e93aae503ea764e1826ddde0b8a",
+      "sourceSha256": "2db91b1e09c6cf3978082730a0675e3953a29e93aae503ea764e1826ddde0b8a",
+      "transformations": []
+    },
+    {
+      "path": "deploy/company/maintenance/cleanup-engine.cjs",
+      "sha256": "8fcbf91c387f1698554b66a0afaea45466a386dfa9201123520e331074dc8dc2",
+      "sourceSha256": "8fcbf91c387f1698554b66a0afaea45466a386dfa9201123520e331074dc8dc2",
+      "transformations": []
+    },
+    {
+      "path": "deploy/company/maintenance/cleanup-policy.default.json",
+      "sha256": "6872650a25f1353080fd5b2913cefff0a0698118ea6f407d23446ca00b39720e",
+      "sourceSha256": "6872650a25f1353080fd5b2913cefff0a0698118ea6f407d23446ca00b39720e",
+      "transformations": []
+    },
+    {
+      "path": "deploy/company/maintenance/Invoke-CompanyCleanup.ps1",
+      "sha256": "3ac82d9bf6e2963c0b7247d32a145c6901ce9f4e9d3b9ce406d58ac3d1bce79d",
+      "sourceSha256": "3ac82d9bf6e2963c0b7247d32a145c6901ce9f4e9d3b9ce406d58ac3d1bce79d",
+      "transformations": []
+    },
+    {
+      "path": "deploy/company/maintenance/Remove-CompanyArtifact.ps1",
+      "sha256": "ec1edbba3f696f1112426946b35c4689a873aaf536fc60f89332db4a9d40698e",
+      "sourceSha256": "ec1edbba3f696f1112426946b35c4689a873aaf536fc60f89332db4a9d40698e",
+      "transformations": []
+    },
+    {
       "path": "deploy/company/Prepare-CompanyServer.ps1",
       "sha256": "4906f1068c0aa910437711eaa993fd3637395873bb52176d96bb1207cef29251",
       "sourceSha256": "4906f1068c0aa910437711eaa993fd3637395873bb52176d96bb1207cef29251",
@@ -1137,8 +1191,8 @@
     },
     {
       "path": "deploy/company/README.md",
-      "sha256": "19272c278d6306e94d88d626d783b733f6cd7f132c51798b00fd4734b971823b",
-      "sourceSha256": "19272c278d6306e94d88d626d783b733f6cd7f132c51798b00fd4734b971823b",
+      "sha256": "34b485dc8f39ebe565c927efd6d901966354bc7de08d5ecaeb00d91edceb0f05",
+      "sourceSha256": "34b485dc8f39ebe565c927efd6d901966354bc7de08d5ecaeb00d91edceb0f05",
       "transformations": []
     },
     {

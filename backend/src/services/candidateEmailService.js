@@ -5,7 +5,8 @@ const path = require('path');
 const { RecruitmentPipelineService, SOURCES, STATUSES } = require('./recruitmentPipelineService');
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
 const { markdownToDocx } = require('./candidateReportDocx');
-const { candidateName, candidatePosition } = require('../utils/candidateDisplay');
+const { candidateName, candidatePosition, hiringJobTitle } = require('../utils/candidateDisplay');
+const { platformLocator } = require('../utils/platformLocator');
 const { hasTrackedActiveJob } = require('../utils/activeJobScope');
 
 const SOURCE_NAMES = { boss: 'BOSS直聘', zlzp: '智联招聘', qcwy: '前程无忧' };
@@ -60,6 +61,15 @@ function assessmentPoints(value) {
       .map(point => point.replace(/[\r\n]/g, ' ').trim()).filter(Boolean)
     : [];
   return points.length ? points.map(point => `- ${point}`) : ['- 暂无'];
+}
+
+function platformRecord(item) {
+  const locator = platformLocator(item);
+  return { label: locator.kind || '平台记录号', id: locator.id || '待平台核实' };
+}
+
+function reportCell(value) {
+  return String(value ?? '').replace(/[\r\n|]/g, ' ').trim();
 }
 
 function jobTitleFromRequirements(requirements) {
@@ -305,8 +315,12 @@ class CandidateEmailService {
         content: [
           `平台：${SOURCE_NAMES[item.source]}`,
           `候选人：${candidateName(item)}`,
+          `${platformRecord(item).label}：${platformRecord(item).id}`,
+          `招聘岗位：${hiringJobTitle(item)}`,
+          `求职岗位：${candidatePosition(item) || '待核实'}`,
           `岗位匹配分：${item.matchScore}/100`,
           `附件类型：${ATTACHMENT_LABELS[attachmentKind]}`,
+          '回查提示：请在公司智能招聘助手的候选人详情中使用“在公司服务器浏览器定位原候选人”，并核对官方详情编号；招聘平台普通关键词搜索框不一定支持按编号查询。',
           '',
           String(item.originalText || item.content)
         ].join('\n'),
@@ -583,15 +597,21 @@ class CandidateEmailService {
       '## 本次岗位要求',
       selection.jobRequirements,
       '',
-      '| 序号 | 平台 | 候选人 | 岗位 | 匹配分 | 评估摘要 |',
-      '| ---: | --- | --- | --- | ---: | --- |',
-      ...candidates.map((item, index) => `| ${index + 1} | ${SOURCE_NAMES[item.source]} | ${candidateName(item).replace(/[\r\n|]/g, ' ')} | ${candidatePosition(item).replace(/[\r\n|]/g, ' ')} | ${item.matchScore} | ${String(item.matchEvaluation.summary || '').replace(/[\r\n|]/g, ' ')} |`),
+      '| 序号 | 平台 | 平台记录号 | 候选人 | 招聘岗位 | 求职岗位 | 匹配分 | 评估摘要 |',
+      '| ---: | --- | --- | --- | --- | --- | ---: | --- |',
+      ...candidates.map((item, index) => `| ${index + 1} | ${SOURCE_NAMES[item.source]} | ${platformRecord(item).id} | ${reportCell(candidateName(item))} | ${reportCell(hiringJobTitle(item))} | ${reportCell(candidatePosition(item) || '待核实')} | ${item.matchScore} | ${reportCell(item.matchEvaluation.summary || '')} |`),
+      '',
+      '平台记录号来自官方候选卡或官方详情地址；“待平台核实”不能用于查人。各简历附件 candidate-N 对应表中同序号。不同招聘平台的普通关键词搜索框不一定支持按编号查询，请在智能招聘助手候选人详情中使用服务器浏览器定位，并核对官方详情编号。',
       '',
       '## 岗位匹配评估明细',
       '',
       ...candidates.flatMap((item, index) => [
         `### 候选人 ${index + 1}`,
         '',
+        `平台：${SOURCE_NAMES[item.source]}`,
+        `${platformRecord(item).label}：${platformRecord(item).id}`,
+        `招聘岗位：${hiringJobTitle(item)}`,
+        `求职岗位：${candidatePosition(item) || '待核实'}`,
         `评估方式：${item.matchEvaluation.method === 'local' ? '本机关键词证据评分' : 'AI 辅助岗位匹配'}`,
         `简历附件：${ATTACHMENT_LABELS[resumeAttachments[index].attachmentKind]}`,
         '',
@@ -630,7 +650,7 @@ class CandidateEmailService {
       from: process.env.SMTP_FROM,
       to,
       subject: `${jobTitleFromRequirements(selection.jobRequirements) || ''}候选人初筛报告（${selection.newOnly ? '新增候选人，' : batchLabel ? `第${batchNumber}/${batchCount}批，` : ''}${candidates.length}份）`,
-      text: `随信附上 ${candidates.length} 份进入本次岗位初筛名单的候选人简历材料和初筛报告。${batchLabel ? `${batchLabel}。` : ''}报告覆盖${platformScope}，其中本邮件附简历：${attachedBySource}。请结合待核实事项人工复核。` +
+      text: `随信附上 ${candidates.length} 份进入本次岗位初筛名单的候选人简历材料和初筛报告。${batchLabel ? `${batchLabel}。` : ''}报告覆盖${platformScope}，其中本邮件附简历：${attachedBySource}。完整平台记录号见报告“平台记录号”列，candidate-N 附件与报告序号对应；编号待核实的记录不能据此查人，请在助手中使用服务器浏览器定位并核对官方详情。请结合待核实事项人工复核。` +
         (candidates.some(item => item.source === 'qcwy' && item.matchEvaluation.method === 'local')
           ? '前程无忧候选人仅达到本地初筛的最低证据门槛，仍须人工复核全部岗位条件。' : '') +
         (resumeAttachments.some(item => item.attachmentKind === 'page-text')

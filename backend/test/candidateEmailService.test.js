@@ -91,6 +91,63 @@ test('BOSS 邮件预览和 Word 附件排除显式不推荐的高分候选人', 
   assert.doesNotMatch(sent.attachments[1].content, /不应发送/);
 });
 
+test('三平台邮件报告与页面 TXT 均带完整官方编号，缺号旧 BOSS 明确待核实', async t => {
+  configureSmtp(t);
+  const requirements = '岗位名称：磁轴销售工程师\n工作地点：惠州';
+  const bossId = 'BOSS_2026_12345';
+  const zhilianId = 'ZL_2026(abc)123';
+  const wuyouId = 'WY202612345';
+  const items = [
+    { id: 'resume_boss_verified', source: 'boss', sourceCandidateId: bossId,
+      sourceCandidateIdSource: 'platform_card', matchScore: 95,
+      captureJobTitle: '磁轴销售工程师', position: '销售工程师',
+      matchEvaluation: currentAi(requirements), originalText: 'BOSS 页面简历正文' },
+    { id: 'resume_zhilian_verified', source: 'zlzp', sourceCandidateId: zhilianId,
+      sourceUrl: `https://rd6.zhaopin.com/app/search?resumeNumber=${encodeURIComponent(zhilianId)}`,
+      matchScore: 90, captureJobTitle: '磁轴销售工程师', position: '客户经理',
+      matchEvaluation: currentAi(requirements), originalText: '智联页面简历正文' },
+    { id: 'resume_wuyou_verified', source: 'qcwy', sourceCandidateId: wuyouId,
+      sourceUrl: `https://ehire.51job.com/candidate/detail/${wuyouId}`,
+      matchScore: 85, captureJobTitle: '磁轴销售工程师', position: '销售代表',
+      matchEvaluation: currentAi(requirements), originalText: '前程无忧页面简历正文' },
+    { id: 'resume_boss_legacy_local_id', source: 'boss', sourceCandidateId: 'LOCAL_99999',
+      matchScore: 80, captureJobTitle: '磁轴销售工程师', position: '销售专员',
+      matchEvaluation: currentAi(requirements), originalText: 'BOSS 历史页面简历正文' }
+  ];
+  for (const reportFormat of ['md', 'docx']) {
+    let sent;
+    const service = new CandidateEmailService({ pipeline: { list: () => items },
+      transportFactory: () => ({ sendMail: async mail => {
+        sent = mail;
+        return { messageId: 'synthetic-mail' };
+      } }) });
+    const input = { minScore: 70, topN: 10, jobRequirements: requirements, reportFormat };
+    const preview = await service.preview(input);
+    assert.equal(preview.count, 4);
+    await service.send({ ...input, to: recipient, previewToken: preview.previewToken });
+    const report = reportFormat === 'docx'
+      ? (await mammoth.extractRawText({ buffer: sent.attachments[0].content })).value
+      : sent.attachments[0].content;
+    for (const id of [bossId, zhilianId, wuyouId]) assert.ok(report.includes(id));
+    assert.match(report, /平台记录号/);
+    assert.match(report, /待平台核实/);
+    assert.doesNotMatch(report, /LOCAL_99999|resume_boss_legacy_local_id/);
+    assert.match(report, /招聘岗位/);
+    assert.match(report, /求职岗位/);
+    assert.match(sent.text, /完整平台记录号见报告/);
+    for (const [index, candidate] of preview.candidates.entries()) {
+      const content = sent.attachments[index + 1].content;
+      const expected = candidate.id === 'resume_boss_verified' ? bossId
+        : candidate.id === 'resume_zhilian_verified' ? zhilianId
+          : candidate.id === 'resume_wuyou_verified' ? wuyouId : '待平台核实';
+      assert.ok(content.includes(expected));
+      assert.match(content, /招聘岗位：磁轴销售工程师/);
+      assert.match(content, /回查提示：/);
+      assert.doesNotMatch(content, /LOCAL_99999/);
+    }
+  }
+});
+
 test('历史 BOSS OCR 猜测姓名在 Word 报告与简历附件头部均标为未识别', async t => {
   configureSmtp(t);
   const item = { id: 'legacy-ocr', source: 'boss', name: '工作', nameSource: 'ocr',

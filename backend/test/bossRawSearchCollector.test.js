@@ -922,6 +922,43 @@ test('assistant search submits the active job through the official input once',a
   assert.equal(state.value,TITLE);
 });
 
+test('assistant waits for a delayed official input update before submitting',async()=>{
+  const collector=new BossRawSearchCollector();
+  let state={state:'ready',value:'旧岗位',cardCount:1,safeCardCount:1,
+    frameOrigin:7,matchingSearchRequests:0,selectedFiltersReady:true,
+    nonDefaultSelected:0,checkedCount:0,activeCustomSliderCount:0};
+  let pending=false,searchClicks=0;
+  collector.readOnlyExpression=async()=>state;
+  collector.readModal=async()=>({active:false});
+  collector.assertPage=async()=>({url:PAGE});
+  collector.wait=async()=>{if(pending){state={...state,value:TITLE};pending=false;}};
+  collector.session={assertUsableRecruiterWindow:async()=>true,
+    clickUnique:async options=>{
+      if(options.selector==='.search-input-wrap .icon-search') {
+        searchClicks++;
+        state={...state,matchingSearchRequests:1};
+      }
+    },send:async method=>{if(method==='Input.insertText')pending=true;}};
+  assert.match((await collector.selectJob(TITLE)).value,/^search-[a-f0-9]{32}$/);
+  assert.equal(searchClicks,1);
+});
+
+test('assistant waits for a transient post-submit keyword mismatch',async()=>{
+  const collector=new BossRawSearchCollector();
+  let state={state:'ready',value:TITLE,cardCount:1,safeCardCount:1,
+    frameOrigin:7,matchingSearchRequests:1,selectedFiltersReady:true,
+    nonDefaultSelected:0,checkedCount:0,activeCustomSliderCount:0};
+  let reads=0,waits=0;
+  collector.readOnlyExpression=async()=>{
+    reads++;
+    return reads===2?{...state,value:'旧岗位'}:state;
+  };
+  collector.wait=async()=>{waits++;};
+  collector.assertPage=async()=>({url:PAGE});
+  assert.match((await collector.selectJob(TITLE)).value,/^search-[a-f0-9]{32}$/);
+  assert.equal(waits,1);
+});
+
 test('assistant accepts a fresh official POST-style search after its own verified click',async()=>{
   const collector=new BossRawSearchCollector();
   let state={state:'ready',value:'旧岗位',cardCount:1,safeCardCount:1,

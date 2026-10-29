@@ -502,7 +502,20 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
         await this.submitOfficialSearch(title,state);
       }
     }
-    const state=await this.assertJob(title,scope);
+    // The official SPA can replace its search iframe immediately after a
+    // successful submit. Wait for that transition to settle before treating a
+    // transient keyword mismatch as a different job. Never open a resume
+    // until assertJob has checked the final visible keyword and filters.
+    let verified;
+    for (let poll=0;poll<8;poll++) {
+      try { verified=await this.assertJob(title,scope); break; }
+      catch (error) {
+        if (error.code!=='BOSS_SEARCH_KEYWORD_MISMATCH' || poll===7)
+          throw error;
+        await this.wait(500);
+      }
+    }
+    const state=verified;
     if (!state.cardCount) throw fail('BOSS_SEARCH_RESULTS_UNAVAILABLE',
       'BOSS 当前搜索词没有可访问的候选卡片，请在官方页面确认搜索结果');
     this.activeSearchTitle=title;
@@ -537,13 +550,21 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       });
     }
     await this.session.send('Input.insertText',{text:title});
-    const filled=await this.readOnlyExpression(SEARCH_STATE,'verify_search_keyword');
-    if (filled?.state!=='ready' || filled.frameOrigin!==before.frameOrigin ||
-        normalized(filled.value)!==normalized(title) ||
-        !filled.selectedFiltersReady || filled.nonDefaultSelected>0 ||
-        filled.checkedCount>0 || filled.activeCustomSliderCount>0 ||
-        (await this.readModal()).active) throw fail('BOSS_SEARCH_KEYWORD_MISMATCH',
-      'BOSS 搜索框未准确写入当前岗位，未提交搜索');
+    let filled;
+    for (let poll=0;poll<8;poll++) {
+      filled=await this.readOnlyExpression(SEARCH_STATE,'verify_search_keyword');
+      if (filled?.state==='ready' &&
+          filled.frameOrigin===before.frameOrigin &&
+          normalized(filled.value)===normalized(title) &&
+          filled.selectedFiltersReady && filled.nonDefaultSelected===0 &&
+          filled.checkedCount===0 && filled.activeCustomSliderCount===0 &&
+          !(await this.readModal()).active) break;
+      if (poll===7 || filled?.frameOrigin &&
+          filled.frameOrigin!==before.frameOrigin) throw fail(
+        'BOSS_SEARCH_KEYWORD_MISMATCH',
+        'BOSS 搜索框未准确写入当前岗位，未提交搜索');
+      await this.wait(500);
+    }
     // The SPA can replace the focused input while applying the new value.
     // Its visible search icon submits without depending on that focus.
     await this.clickStableSearchControl('.search-input-wrap .icon-search',title,

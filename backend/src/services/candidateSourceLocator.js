@@ -298,7 +298,12 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
       dialog_open:'请先关闭 BOSS 当前简历弹窗后重试'};
     throw locatorError(409,messages[before?.state]||'BOSS 列表尚未准备好，请在服务器浏览器确认后重试');
   }
-  const selector=`${before.cardSelector}:has(> a[ka="search_click_open_resume"][${before.attribute}="${locator.id}"])`;
+  // The search collector opens the official link itself. The surrounding
+  // card can be covered by the sticky recruiter sidebar even while its link
+  // remains clickable, so use the same target here after the exact-ID probe.
+  const selector=search
+    ? `${before.cardSelector} > a[ka="search_click_open_resume"][${before.attribute}="${locator.id}"]`
+    : `${before.cardSelector}:has(> a[ka="search_click_open_resume"][${before.attribute}="${locator.id}"])`;
   await session.scrollUnique({selector,frameSelector:before.frameSelector});
   const after=await session.evaluate(expression,{timeoutMs:12000});
   if (after?.state!=='ready' || after.search!==before.search ||

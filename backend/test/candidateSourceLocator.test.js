@@ -56,7 +56,9 @@ test('BOSS locator clicks only a unique card on the matching job and verifies a 
   assert.equal(result.recordId,'247229183');
   assert.deepEqual(calls.map(item=>Array.isArray(item)?item[0]:item),
     ['window','scroll','click']);
-  assert.match(calls[2][1],/data-expect="247229183"/);
+  assert.equal(calls[1][1],
+    'li.geek-info-card > a[ka="search_click_open_resume"][data-expect="247229183"]');
+  assert.equal(calls[2][1],calls[1][1]);
 });
 
 test('BOSS locator selects only the exact posted job before matching a card',async()=>{

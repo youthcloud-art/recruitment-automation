@@ -292,6 +292,38 @@ function cardFingerprint(scope, text) {
     .normalize('NFKC').replace(/\s+/g,' ').trim()).digest('hex');
 }
 
+function matchingBossFingerprint(snapshot, fingerprint, title) {
+  const scope=snapshot.search?searchScope(title):snapshot.jobId;
+  if (!scope) return [];
+  return snapshot.cards.filter(card=>card.text &&
+    cardFingerprint(scope,card.text)===fingerprint);
+}
+
+async function scanBossSearchForFingerprint(session, title, fingerprint, wait,
+  {createCollector=()=>{
+    const {BossRawSearchCollector}=require('./bossRawSearchCollector');
+    return new BossRawSearchCollector({store:null,jobService:null,
+      queue:null,ocr:null,quarantine:null,wait});
+  }}={}) {
+  const collector=createCollector();
+  collector.session=session;
+  await collector.selectJob(title);
+  const probe=bossFingerprintProbe(title);
+  let snapshot=await session.evaluate(probe,{timeoutMs:12000});
+  for(let page=0;page<8 && snapshot?.state==='ready' &&
+      matchingBossFingerprint(snapshot,fingerprint,title).length===0;page++) {
+    const count=snapshot.cards.length;
+    await collector.scrollCards();
+    for(let poll=0;poll<8;poll++) {
+      snapshot=await session.evaluate(probe,{timeoutMs:12000});
+      if(snapshot?.state!=='ready' || snapshot.cards.length>count) break;
+      if(poll<7) await wait(400);
+    }
+    if(snapshot?.state!=='ready' || snapshot.cards.length<=count) break;
+  }
+  return snapshot;
+}
+
 async function locateBossCandidateByFingerprint(session, candidate, options = {}) {
   if (candidate?.source!=='boss' || platformLocator(candidate).id ||
       !/^[a-f0-9]{64}$/.test(candidate.sourceCardFingerprint||''))
@@ -313,13 +345,20 @@ async function locateBossCandidateByFingerprint(session, candidate, options = {}
     throw locatorError(409,snapshot?.state==='wrong_job'?
       `请先在 BOSS 服务器浏览器切换到“${title}”结果页后重试`:
       'BOSS 当前候选列表未准备好；请打开原岗位结果并关闭已有简历弹窗');
-  const scope=snapshot.search?searchScope(title):snapshot.jobId;
-  if (!scope) throw locatorError(409,'BOSS 当前招聘岗位编号不可用，无法安全补录');
-  const matches=snapshot.cards.filter(card=>card.text &&
-    cardFingerprint(scope,card.text)===candidate.sourceCardFingerprint);
+  let matches=matchingBossFingerprint(snapshot,candidate.sourceCardFingerprint,title);
+  if (!matches.length && snapshot.search) {
+    snapshot=await scanBossSearchForFingerprint(session,title,
+      candidate.sourceCardFingerprint,options.wait ||
+      (ms=>new Promise(resolve=>setTimeout(resolve,ms))),options);
+    if(snapshot?.state!=='ready')
+      throw locatorError(409,'BOSS 搜索结果在翻页时发生变化，未补录编号');
+    matches=matchingBossFingerprint(snapshot,candidate.sourceCardFingerprint,title);
+  }
+  if (!snapshot.search && !snapshot.jobId)
+    throw locatorError(409,'BOSS 当前招聘岗位编号不可用，无法安全补录');
   if (matches.length!==1)
     throw locatorError(409,matches.length?'BOSS 候选卡证据重复，未补录编号':
-      '原候选卡不在当前已加载的结果列表；请加载原岗位的候选人后重试');
+      '原候选卡不在已核对的官方岗位结果中；请在原岗位页面加载更多候选人后重试');
   const { bossCardId }=require('../utils/platformLocator');
   const id=bossCardId(matches[0].id);
   if (!id || snapshot.cards.filter(card=>card.id===id).length!==1)

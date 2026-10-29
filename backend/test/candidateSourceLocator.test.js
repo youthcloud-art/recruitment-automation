@@ -391,6 +391,34 @@ test('旧 BOSS 简历只按唯一候选卡证据补录官方编号',async()=>{
     {...legacy,sourceCardFingerprint:''}),/缺少可用于安全补录/);
 });
 
+test('旧 BOSS 简历可在守卫式加载更多后按原候选卡证据补录',async()=>{
+  const title='磁轴销售工程师';
+  const card='李先生 6年经验 磁轴销售工程师';
+  const legacy={source:'boss',captureJobTitle:title,
+    sourceCardFingerprint:cardFingerprint(searchScope(title),card)};
+  let loaded=0;
+  const calls=[];
+  const collector={selectJob:async selected=>assert.equal(selected,title),
+    scrollCards:async()=>{loaded++;}};
+  const session={assertRecruiterReady:async()=>
+    'https://www.zhipin.com/web/chat/search',
+  assertUsableRecruiterWindow:async()=>{},
+  evaluate:async expression=>expression.includes('cards:cards.map')
+    ? {state:'ready',search:true,cards:loaded
+      ? [{text:'其他候选人',id:'other-id'},{text:card,id:'247229183'}]
+      : [{text:'其他候选人',id:'other-id'}]}
+    : expression.includes('const id=')
+      ? {state:'ready',search:true,frameSelector:'iframe[src*="/web/frame/search/"]',
+        cardSelector:'li.geek-info-card',attribute:'data-expect',cardCount:2}
+      : {state:'ready'},
+  scrollUnique:async()=>calls.push('scroll'),
+  clickUnique:async()=>calls.push('click')};
+  const result=await locateBossCandidateByFingerprint(session,legacy,
+    {wait:async()=>{},createCollector:()=>collector});
+  assert.deepEqual([result.recordId,result.recovered,loaded,calls],
+    ['247229183',true,1,['scroll','click']]);
+});
+
 test('旧 BOSS 简历补录先切换到唯一匹配的原招聘岗位',async()=>{
   const card='王先生 5年经验 磁轴销售工程师';
   const legacy={source:'boss',captureJobTitle:'磁轴销售工程师',

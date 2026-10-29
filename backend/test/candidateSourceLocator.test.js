@@ -94,6 +94,27 @@ test('BOSS locator never opens a candidate when existing dialog cannot be closed
   assert.equal(clicks,1);
 });
 
+test('BOSS locator reloads the same official search once when its resume dialog stays active',async()=>{
+  let open=true,reloads=0,escapes=0;
+  const session={assertRecruiterReady:async()=>
+    'https://www.zhipin.com/web/chat/search',
+  assertUsableRecruiterWindow:async()=>{},
+  evaluate:async expression=>expression.includes('const id=')
+    ? {state:open?'dialog_open':'ready',search:true,
+      frameSelector:'iframe[src*="/web/frame/search/"]',
+      cardSelector:'li.geek-info-card',attribute:'data-expect'}
+    : {state:'ready'},
+  clickUnique:async()=>{},scrollUnique:async()=>{},
+  send:async method=>{
+    if(method==='Input.dispatchKeyEvent') escapes++;
+    if(method==='Page.reload'){reloads++;open=false;}
+  }};
+  const result=await locateBossCandidate(session,boss,{wait:async()=>{}});
+  assert.equal(result.verified,'exact_card');
+  assert.equal(escapes,2);
+  assert.equal(reloads,1);
+});
+
 test('BOSS locator clicks only a unique card on the matching job and verifies a dialog',async()=>{
   const calls=[];
   const session={assertRecruiterReady:async()=>

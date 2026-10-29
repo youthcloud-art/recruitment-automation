@@ -97,12 +97,38 @@ async function closeExistingBossDialog(session, search, title, id, wait) {
     : '.dialog-wrap.active .close-btn';
   if (!search) await session.revealOfficialResumeClose({frameSelector});
   await session.clickUnique({selector, ...(frameSelector ? {frameSelector} : {})});
-  for (let attempt=0;attempt<120;attempt++) {
+  for (let attempt=0;attempt<20;attempt++) {
     const state=await session.evaluate(bossCardProbe(id,title),{timeoutMs:12000});
     if (state?.state!=='dialog_open') return state;
     await wait(500);
   }
-  throw locatorError(409,'BOSS 旧简历弹窗未能关闭；请在官方页面关闭后重试');
+  // The official dialog sometimes keeps its active class after a successful
+  // close click. Give that verified dialog one Escape event, then reload only
+  // the same owned recruiter tab if it remains stuck. No second mouse click.
+  await session.send('Input.dispatchKeyEvent',{
+    type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await session.send('Input.dispatchKeyEvent',{
+    type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  for (let attempt=0;attempt<20;attempt++) {
+    const state=await session.evaluate(bossCardProbe(id,title),{timeoutMs:12000});
+    if (state?.state!=='dialog_open') return state;
+    await wait(500);
+  }
+  const beforeReload=await session.assertRecruiterReady();
+  if (new URL(beforeReload).pathname!==(search?'/web/chat/search':'/web/chat/recommend'))
+    throw locatorError(409,'BOSS 官方岗位页已变化，未刷新旧弹窗');
+  await session.send('Page.reload',{ignoreCache:false},{timeoutMs:12000});
+  for (let attempt=0;attempt<60;attempt++) {
+    await wait(500);
+    let current;
+    try { current=await session.assertRecruiterReady(); } catch (_) { continue; }
+    if (new URL(current).pathname!==new URL(beforeReload).pathname) break;
+    const state=await session.evaluate(bossCardProbe(id,title),{timeoutMs:12000})
+      .catch(()=>null);
+    if (state && !['dialog_open','frame_unavailable','frame_changed'].includes(state.state))
+      return state;
+  }
+  throw locatorError(409,'BOSS 官方岗位页刷新后仍未恢复；请在服务器浏览器确认页面');
 }
 
 function bossJobProbe(title) {

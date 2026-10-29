@@ -305,8 +305,33 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
       pending = true;
       try {
         await withPage(platform, async page => {
-          const image = await page.screenshot({ type: 'png', fullPage: false, scale: 'css', timeout: 5000 });
+          const beforeUrl=page.url();
+          let image;
+          try {
+            image = await page.screenshot({ type: 'png', fullPage: false,
+              scale: 'css', timeout: 5000 });
+          } catch (originalError) {
+            if (platform!=='boss') throw originalError;
+            // BOSS's Canvas resume can stall Playwright's screenshot wait.
+            // Capture the same trusted tab through CDP once, with a deadline;
+            // this does not navigate or read another browser window.
+            const session=await page.context().newCDPSession(page);
+            let timer;
+            try {
+              const result=await Promise.race([
+                session.send('Page.captureScreenshot',{format:'png',
+                  captureBeyondViewport:false,fromSurface:true}),
+                new Promise((_,reject)=>{timer=setTimeout(()=>reject(originalError),8000);})
+              ]);
+              image=Buffer.from(result?.data||'','base64');
+            } finally {
+              clearTimeout(timer);
+              await session.detach().catch(()=>{});
+            }
+          }
           requireLock(platform, clientId);
+          if (!trustedPage(page,platform) || page.url()!==beforeUrl)
+            fail(409,'平台页面在取图期间发生变化，请重新打开服务器画面');
           if (image.length < 24 || !image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
             fail(503, '平台未返回有效画面');
           }

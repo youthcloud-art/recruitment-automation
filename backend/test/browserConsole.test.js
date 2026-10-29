@@ -131,6 +131,46 @@ test('screenshots are uncached viewport images and validated coordinates drive o
   assert.deepEqual(app.calls[1], ['click', 200, 150, { button: 'left', clickCount: 1 }]);
 });
 
+test('BOSS screenshot falls back to the same official CDP tab after a Canvas timeout',async t=>{
+  const app=await fixture(t);
+  const png=Buffer.alloc(24);
+  Buffer.from([137,80,78,71,13,10,26,10]).copy(png);
+  png.writeUInt32BE(1280,16);
+  png.writeUInt32BE(720,20);
+  app.page.screenshot=async()=>{throw new Error('Canvas screenshot timeout');};
+  app.page.context=()=>({newCDPSession:async()=>({
+    send:async(method,params)=>{
+      app.calls.push(['cdp',method,params]);
+      return {data:png.toString('base64')};
+    },detach:async()=>app.calls.push(['cdp-detach'])
+  })});
+  await acquire(app);
+  const shot=await screenshot(app);
+  assert.equal(shot.status,200);
+  assert.equal(shot.body.data.width,1280);
+  assert.equal(shot.body.data.height,720);
+  assert.match(shot.body.data.image,/^data:image\/png;base64,/);
+  assert.equal(app.calls[0][1],'Page.captureScreenshot');
+  assert.equal(app.calls[1][0],'cdp-detach');
+});
+
+test('BOSS CDP fallback rejects a page that navigates during capture',async t=>{
+  const app=await fixture(t);
+  const png=Buffer.alloc(24);
+  Buffer.from([137,80,78,71,13,10,26,10]).copy(png);
+  png.writeUInt32BE(1280,16);
+  png.writeUInt32BE(720,20);
+  app.page.screenshot=async()=>{throw new Error('Canvas screenshot timeout');};
+  app.page.context=()=>({newCDPSession:async()=>({
+    send:async()=>{
+      app.page.changeURL('https://www.zhipin.com/web/chat/recommend');
+      return {data:png.toString('base64')};
+    },detach:async()=>{}
+  })});
+  await acquire(app);
+  assert.equal((await screenshot(app)).status,409);
+});
+
 test('rejects arbitrary URLs, scripts, shortcuts, oversized text and coordinates before input', async t => {
   const app = await fixture(t);
   await acquire(app);

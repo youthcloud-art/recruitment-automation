@@ -33,12 +33,15 @@ function readJson(root, relative, optional = false) {
 }
 function validatePolicy(input) {
   if (!input || input.format !== 1) throw new Error('Invalid cleanup policy format');
-  const limits = { keepNewestReleases: [3, 100], releaseMinimumAgeHours: [24, 8760], keepRollbackReleases: [2, 30],
+  const limits = { keepNewestReleases: [3, 100], releaseMinimumAgeHours: [24, 8760], incompleteReleaseMinimumAgeHours: [2, 168], keepRollbackReleases: [2, 30],
     keepNewestBackups: [7, 1000], backupMinimumAgeDays: [7, 3650], orphanArchiveMinimumAgeHours: [48, 8760], inactiveLogMinimumAgeDays: [14, 3650] };
   const result = { format: 1 };
   for (const [key, [min, max]] of Object.entries(limits)) {
-    if (!Number.isInteger(input[key]) || input[key] < min || input[key] > max) throw new Error(`Unsafe cleanup policy field: ${key}`);
-    result[key] = input[key];
+    // Existing server policies predate this setting. Keep them valid and use
+    // the reviewed default until the operator explicitly changes the policy.
+    const value = key === 'incompleteReleaseMinimumAgeHours' && input[key] === undefined ? DEFAULTS[key] : input[key];
+    if (!Number.isInteger(value) || value < min || value > max) throw new Error(`Unsafe cleanup policy field: ${key}`);
+    result[key] = value;
   }
   return result;
 }
@@ -106,6 +109,7 @@ async function planCleanup({ installRoot, policy = DEFAULTS, now = new Date(), p
       complete.push(item);
     }
   }
+  const completePaths = new Set(complete.map(item => canonical(item.path)));
   for (const item of complete.slice(0, rules.keepNewestReleases)) protectedReleases.add(canonical(item.path));
   const backups = (await entries(root, 'backups')).filter(item => item.directory && BACKUP.test(item.name));
   const deployment = readJson(root, 'delivery/last-deployment.json', true);
@@ -130,7 +134,11 @@ async function planCleanup({ installRoot, policy = DEFAULTS, now = new Date(), p
     try { candidates.push({ path: item.path, relative: path.relative(root, item.path).split(path.sep).join('/'), kind, ...await inspectTree(root, item.path, kind) }); }
     catch (error) { skipped.push({ relative: path.relative(root, item.path).split(path.sep).join('/'), reason: error.message }); }
   }
-  for (const item of releases) if (!protectedReleases.has(canonical(item.path)) && ageHours(item, now) >= rules.releaseMinimumAgeHours) await consider(item, 'release');
+  for (const item of releases) {
+    const key = canonical(item.path);
+    const minimumAge = completePaths.has(key) ? rules.releaseMinimumAgeHours : rules.incompleteReleaseMinimumAgeHours;
+    if (!protectedReleases.has(key) && ageHours(item, now) >= minimumAge) await consider(item, 'release');
+  }
   for (const item of backups) if (!protectedBackups.has(canonical(item.path)) && ageHours(item, now) >= rules.backupMinimumAgeDays * 24) await consider(item, 'backup');
   for (const item of await entries(root, 'releases')) {
     if (item.file && item.name.endsWith('.zip') && RELEASE.test(item.name.slice(0, -4)) &&
@@ -182,7 +190,14 @@ async function executeCleanup({ installRoot, apply = false, processRoots = [], c
             if (process.platform !== 'win32') throw new Error('Apply requires the reviewed Windows filesystem deleter');
             const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
             const result = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'Remove-CompanyArtifact.ps1'), '-InstallRoot', root, '-Kind', item.kind, '-Target', item.path], { encoding: 'utf8', windowsHide: true, timeout: 45 * 60 * 1000, maxBuffer: 1024 * 1024 });
-            if (result.error || result.status !== 0) throw new Error('Artifact deletion was refused or a file is still in use');
+            if (result.error || result.status !== 0) {
+              // The PowerShell deleter prints only a stage and Win32 error code.
+              // Never place raw stderr (which can include full local paths) in
+              // the emailed report.
+              const detail = /CLEANUP_FAILURE code=([A-Z_]+) stage=([a-z_]+) win32=(\d+)/.exec(result.stderr || '');
+              const reason = detail ? `${detail[1]} at ${detail[2]} (Win32 ${detail[3]})` : result.error?.code === 'ETIMEDOUT' ? 'DELETION_TIMEOUT' : 'DELETION_FAILED';
+              throw new Error(reason);
+            }
           }
           report.removedCount++; report.removedBytes += item.bytes;
         } catch (error) { report.errors.push({ relative: item.relative, message: error.message }); }

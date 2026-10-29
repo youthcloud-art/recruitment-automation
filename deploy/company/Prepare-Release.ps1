@@ -7,6 +7,11 @@ param(
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $config = Read-CompanyConfig $InstallRoot
 $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
+# A failed build must never consume the remaining space needed by the live
+# service, its logs and shared resume database. Cleanup can reclaim older
+# incomplete builds on its next scheduled run.
+$drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($InstallRoot)))
+if ($drive.AvailableFreeSpace -lt 8GB) { throw 'Release build deferred: fewer than 8 GB remain on the application volume. The running release was preserved.' }
 $release = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('releases\' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $Commit.Substring(0,12) + '-' + [guid]::NewGuid().ToString('N').Substring(0,6)))
 New-Item -ItemType Directory -Path $release | Out-Null
 try {
@@ -95,8 +100,12 @@ Write-Host "PREPARED_RELEASE: $release"
         -not (Test-Path -LiteralPath (Join-Path $release '.local')) -and
         -not (Test-Path -LiteralPath (Join-Path $release 'backend\storage')) -and
         -not (Test-Path -LiteralPath (Join-Path $release 'backend\uploads'))) {
-        try { Remove-Item -LiteralPath $release -Recurse -Force -ErrorAction Stop }
-        catch { Write-Warning ('Failed to clear incomplete release ' + $release + ': ' + $_.Exception.Message) }
+        try {
+            $deleter = Join-Path $PSScriptRoot 'maintenance\Remove-CompanyArtifact.ps1'
+            $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            & $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $deleter -InstallRoot $InstallRoot -Kind release -Target $release
+            if ($LASTEXITCODE -ne 0) { Write-Warning 'Failed build cleanup was refused; scheduled cleanup will retry.' }
+        } catch { Write-Warning 'Failed build cleanup was refused; scheduled cleanup will retry.' }
     }
     throw
 }

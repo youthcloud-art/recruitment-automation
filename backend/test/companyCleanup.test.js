@@ -104,6 +104,22 @@ test('unreviewed junctions, age grace periods and malformed references prevent u
   assert.throws(() => validatePolicy({ ...DEFAULTS, backupMinimumAgeDays: 0 }), /Unsafe/);
 });
 
+test('unfinished builds age out sooner without invalidating an existing server policy', async t => {
+  const f = fixture(t), incomplete = f.releases[5];
+  fs.rmSync(path.join(incomplete, 'release.json'));
+  const recent = new Date(now.getTime() - 60 * 60 * 1000);
+  fs.utimesSync(incomplete, recent, recent);
+  const legacyPolicy = { ...DEFAULTS };
+  delete legacyPolicy.incompleteReleaseMinimumAgeHours;
+  assert.equal(validatePolicy(legacyPolicy).incompleteReleaseMinimumAgeHours, 4);
+  let plan = await planCleanup({ installRoot: f.root, now, policy: legacyPolicy });
+  assert.equal(plan.candidates.some(item => item.path === incomplete), false);
+  const stale = new Date(now.getTime() - 5 * 60 * 60 * 1000);
+  fs.utimesSync(incomplete, stale, stale);
+  plan = await planCleanup({ installRoot: f.root, now, policy: legacyPolicy });
+  assert.equal(plan.candidates.some(item => item.path === incomplete), true);
+});
+
 test('preview never invokes deletion; health failure skips or stops actual cleanup', async t => {
   const f = fixture(t); let calls = 0;
   const preview = await executeCleanup({ installRoot: f.root, apply: false, checkHealth: async () => true, removeArtifact: async () => calls++ });
@@ -135,7 +151,25 @@ test('Windows deleter refuses unknown reparse points before changing any files',
   const ps = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
   const result = spawnSync(ps, ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.resolve(__dirname, '../../deploy/company/maintenance/Remove-CompanyArtifact.ps1'),'-InstallRoot',f.root,'-Kind','release','-Target',target], { encoding:'utf8', windowsHide:true });
   assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /CLEANUP_FAILURE code=SAFETY_REFUSAL stage=audit win32=\d+/);
+  assert.equal(result.stderr.includes(f.root), false);
   assert.equal(fs.existsSync(path.join(target, 'release.json')), true);
+  assert.equal(fs.readFileSync(path.join(f.root, 'shared/backend-storage/resumes.sqlite'), 'utf8'), 'BUSINESS-DATABASE-SENTINEL');
+});
+
+test('Windows deleter handles deep npm paths and read-only files without entering shared junctions', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t), target = f.releases[5];
+  const deep = path.join(target, 'backend', 'node_modules', ...Array.from({ length: 11 }, (_, i) => `package-${i}-long-dependency-name`));
+  const file = path.join(deep, 'readonly.js');
+  assert.ok(file.length > 260);
+  fs.mkdirSync(deep, { recursive: true });
+  fs.writeFileSync(file, 'module.exports = true;');
+  fs.chmodSync(file, 0o444);
+  const ps = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const script = path.resolve(__dirname, '../../deploy/company/maintenance/Remove-CompanyArtifact.ps1');
+  const result = spawnSync(ps, ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script,'-InstallRoot',f.root,'-Kind','release','-Target',target], { encoding:'utf8', windowsHide:true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(fs.existsSync(target), false);
   assert.equal(fs.readFileSync(path.join(f.root, 'shared/backend-storage/resumes.sqlite'), 'utf8'), 'BUSINESS-DATABASE-SENTINEL');
 });
 

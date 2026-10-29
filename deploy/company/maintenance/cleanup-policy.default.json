@@ -2,6 +2,7 @@
   "format": 1,
   "keepNewestReleases": 3,
   "releaseMinimumAgeHours": 24,
+  "incompleteReleaseMinimumAgeHours": 4,
   "keepRollbackReleases": 2,
   "keepNewestBackups": 7,
   "backupMinimumAgeDays": 7,

@@ -171,12 +171,14 @@ test('search load-more probe requires exact job, one visible official control, n
   const card={textContent:'最后一张候选卡'};
   const parent={};
   const control={textContent:'点击加载更多',parentElement:parent,
-    getBoundingClientRect:()=>({width:100,height:26})};
+    getBoundingClientRect:()=>({width:100,height:26,top:state.controlTop,
+      bottom:state.controlTop+26})};
   const input={value:TITLE,getClientRects:()=>[{}]};
   const state={keyword:TITLE,controls:[control],dialogs:[],frameOrigin:1,
-    scrollTop:33162,scrollHeight:34027};
+    scrollTop:33162,scrollHeight:34027,controlTop:600};
   const doc={
-    defaultView:{getComputedStyle:()=>({visibility:'visible',display:'block',pointerEvents:'auto'})},
+    defaultView:{innerHeight:865,
+      getComputedStyle:()=>({visibility:'visible',display:'block',pointerEvents:'auto'})},
     scrollingElement:{get scrollTop(){return state.scrollTop;},
       get scrollHeight(){return state.scrollHeight;},clientHeight:865},
     querySelectorAll:selector=>selector==='input.search-input' ? [input]
@@ -221,8 +223,11 @@ test('search load-more probe requires exact job, one visible official control, n
   assert.equal(probe().state,'frame_changed');
   state.frameOrigin=1;
   state.scrollTop=32000;
+  assert.equal(probe().state,'ready',
+    'a visible control can be clicked when the document root is not at its end');
+  state.controlTop=900;
   assert.equal(probe().state,'not_at_end');
-  state.scrollTop=33162;
+  state.controlTop=600;
   state.controls=[];
   assert.equal(probe().state,'absent');
 });
@@ -258,6 +263,29 @@ test('search scroll clicks the official load-more control once and requires new 
   await collector.scrollCards();
   assert.equal(clicks,1);
   assert.equal(reads,2);
+});
+
+test('search scroll brings the unique load-more control into view before one click',async()=>{
+  let count=15,visible=false,scrolls=0,clicks=0;
+  const collector=new BossRawSearchCollector({wait:async()=>{}});
+  collector.activeSearchTitle=TITLE;
+  collector.assertJob=async()=>({frameOrigin:1,cardCount:count});
+  collector.readModal=async()=>({active:false});
+  collector.readOnlyExpression=async()=>({state:visible?'ready':'not_at_end',
+    cardCount:15,lastCardText:'末尾卡',frameOrigin:1});
+  collector.session={assertUsableRecruiterWindow:async()=>true,
+    evaluate:async()=>true,
+    scrollUnique:async options=>{
+      assert.deepEqual(options,{selector:SEARCH_LOAD_MORE,
+        frameSelector:SEARCH_FRAME,identityAttribute:'textContent',
+        identityValue:'点击加载更多'});
+      scrolls++;
+      visible=true;
+    },
+    clickUnique:async()=>{clicks++;count=16;}};
+  await collector.scrollCards();
+  assert.equal(scrolls,1);
+  assert.equal(clicks,1);
 });
 
 test('search load-more never retries an uncertain click or a stalled response',async()=>{

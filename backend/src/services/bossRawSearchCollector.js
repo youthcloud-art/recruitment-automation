@@ -168,12 +168,12 @@ function searchLoadMoreProbe(title,expectedFrameOrigin) { return `(() => { /* bo
       doc.defaultView.getComputedStyle(control.parentElement).display==='none') {
     return {state:'control_unavailable',cardCount:cards.length};
   }
-  const root=doc.scrollingElement;
-  if (!root) return {state:'root_unavailable',cardCount:cards.length};
   const identity={cardCount:cards.length,
     lastCardText:(cards.at(-1)?.textContent||'').normalize('NFKC').replace(/\\s+/g,' ').trim(),
     frameOrigin:outer.contentWindow.performance.timeOrigin};
-  if (root.scrollHeight-root.clientHeight-root.scrollTop>5) {
+  // The official list may scroll inside the iframe while the document root
+  // remains above its end. Use the control's actual viewport position.
+  if (rect.top<0 || rect.bottom>doc.defaultView.innerHeight) {
     return {state:'not_at_end',...identity};
   }
   return {state:'ready',...identity};
@@ -802,8 +802,40 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       'BOSS_SEARCH_LOAD_MORE_UNCERTAIN','BOSS 搜索列表滚动时页面已重新加载，已暂停采集');
     if (afterScroll.cardCount>before.cardCount) return;
     const expression=searchLoadMoreProbe(title,before.frameOrigin);
-    const first=await this.readOnlyExpression(expression,'search_load_more_probe');
+    let first=await this.readOnlyExpression(expression,'search_load_more_probe');
     if (first?.state==='absent') return;
+    if (first?.state==='not_at_end' && first.cardCount===afterScroll.cardCount &&
+        first.frameOrigin===before.frameOrigin) {
+      // Scroll only the unique official control, then recheck every identity
+      // before allowing the guarded click helper to send a mouse event.
+      try {
+        await this.session.scrollUnique({selector:SEARCH_LOAD_MORE,
+          frameSelector:SEARCH_FRAME,identityAttribute:'textContent',
+          identityValue:'点击加载更多'});
+      } catch (error) {
+        const unavailable=fail('BOSS_SEARCH_LOAD_MORE_UNAVAILABLE',
+          'BOSS 官方加载更多按钮不能安全滚入视野，未发出点击，已暂停采集');
+        unavailable.cause=error;
+        throw unavailable;
+      }
+      await this.wait(350);
+      const corrected=await this.assertJob(title,id);
+      if (corrected.frameOrigin!==before.frameOrigin) throw fail(
+        'BOSS_SEARCH_LOAD_MORE_UNAVAILABLE',
+        'BOSS 滚动加载更多按钮时结果页已重载，未发出点击，已暂停采集');
+      if (corrected.cardCount>afterScroll.cardCount) return;
+      if (corrected.cardCount!==afterScroll.cardCount ||
+          (await this.readModal()).active) throw fail(
+        'BOSS_SEARCH_LOAD_MORE_UNAVAILABLE',
+        'BOSS 滚动加载更多按钮时候选列表或弹窗已变化，未发出点击，已暂停采集');
+      const visible=await this.readOnlyExpression(expression,'search_load_more_after_scroll');
+      if (visible?.cardCount!==first.cardCount ||
+          visible?.lastCardText!==first.lastCardText ||
+          visible?.frameOrigin!==first.frameOrigin) throw fail(
+        'BOSS_SEARCH_LOAD_MORE_UNAVAILABLE',
+        'BOSS 滚动后候选列表已变化，未发出点击，已暂停采集');
+      first=visible;
+    }
     if (first?.state!=='ready' || first.cardCount!==afterScroll.cardCount) throw fail(
       'BOSS_SEARCH_LOAD_MORE_UNAVAILABLE',
       `BOSS 官方加载更多控件状态无法确认（${first?.state || 'unknown'}），已暂停采集`);

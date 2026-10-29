@@ -219,6 +219,10 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
       } else if (!error.publicStatus && Object.hasOwn(bossLocatorRecovery, error.code)) {
         error.publicStatus = 409;
         error.message = bossLocatorRecovery[error.code];
+      } else if (!error.publicStatus && error.code==='BOSS_SEARCH_LOAD_MORE_UNAVAILABLE') {
+        // This error is generated from fixed, data-free state descriptions in
+        // the guarded collector. Show the actual recovery hint to the user.
+        error.publicStatus=409;
       } else if (!error.publicStatus && /^BOSS_[A-Z0-9_]+$/.test(error.code || '')) {
         // A stable, data-free code is actionable without disclosing browser
         // internals, resume details, cookies or the original exception text.

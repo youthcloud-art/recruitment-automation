@@ -32,7 +32,10 @@ async function scanBossSearchForCandidate(session, title, id, wait,
     await collector.selectJob(title);
   const expression=bossCardProbe(id,title);
   let found=await session.evaluate(expression,{timeoutMs:12000});
-  for (let page=0;page<8 && found?.state==='not_in_current_list';page++) {
+  // A previously collected card can move far down a refreshed official
+  // result list. Search a bounded number of additional pages for the saved
+  // exact ID; never select a similar-looking name or an unverified card.
+  for (let page=0;page<20 && found?.state==='not_in_current_list';page++) {
     const count=found.cardCount;
     // Reuse the collector's guarded official scroll/load-more flow. It
     // verifies the job, filters, iframe, button and list identity before any
@@ -324,7 +327,7 @@ async function scanBossSearchForFingerprint(session, title, fingerprint, wait,
     await collector.selectJob(title);
   const probe=bossFingerprintProbe(title);
   let snapshot=await session.evaluate(probe,{timeoutMs:12000});
-  for(let page=0;page<8 && snapshot?.state==='ready' &&
+  for(let page=0;page<20 && snapshot?.state==='ready' &&
       matchingBossFingerprint(snapshot,fingerprint,title).length===0;page++) {
     const count=snapshot.cards.length;
     try { await collector.scrollCards(); }
@@ -441,7 +444,9 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
   if (before?.state!=='ready') {
     const messages={wrong_page:'请先在 BOSS 服务器浏览器打开对应岗位的搜索或推荐结果页',
       wrong_job:`BOSS 当前列表并非“${title}”，请切换到该岗位后重试`,
-      not_in_current_list:'该候选人不在 BOSS 当前已加载的结果列表；请在官方页面加载原岗位结果后重试',
+      not_in_current_list:before.cardCount>0
+        ? `已核对 BOSS 当前可加载的 ${before.cardCount} 张候选卡，未找到相同平台记录号；请在官方页面确认原岗位结果后重试`
+        : '该候选人不在 BOSS 当前已加载的结果列表；请在官方页面加载原岗位结果后重试',
       ambiguous:'BOSS 当前列表出现重复平台编号，未执行定位',
       dialog_open:'请先关闭 BOSS 当前简历弹窗后重试'};
     throw locatorError(409,messages[before?.state]||'BOSS 列表尚未准备好，请在服务器浏览器确认后重试');

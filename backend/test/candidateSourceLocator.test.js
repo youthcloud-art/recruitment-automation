@@ -383,6 +383,41 @@ test('BOSS saved-ID lookup re-reads cards after load-more refuses a changed list
   assert.equal(loaded,1,'a refused click is not replayed');
 });
 
+test('BOSS saved-ID lookup restores the exact job once after a deep-page keyword reset',async()=>{
+  let loaded=0,selected=0;
+  const collector={adoptVisibleResultsForExactLookup:async()=>true,
+    selectJob:async title=>{assert.equal(title,'磁轴销售工程师');selected++;},
+    scrollCards:async()=>{
+      loaded++;
+      if (loaded===2) throw Object.assign(new Error('keyword reset'),
+        {code:'BOSS_SEARCH_KEYWORD_MISMATCH'});
+    }};
+  const session={evaluate:async()=>({state:loaded>=3?'ready':'not_in_current_list',
+    cardCount:15*(loaded+1)})};
+  const found=await scanBossSearchForCandidate(session,'磁轴销售工程师',
+    '247229183',async()=>{},{createCollector:()=>collector});
+  assert.equal(found.state,'ready');
+  assert.equal(selected,1);
+  assert.equal(loaded,3);
+});
+
+test('BOSS saved-ID lookup does not repeatedly resubmit after keyword resets',async()=>{
+  let selected=0,loaded=0;
+  const collector={adoptVisibleResultsForExactLookup:async()=>true,
+    selectJob:async()=>{selected++;},
+    scrollCards:async()=>{
+      loaded++;
+      throw Object.assign(new Error('keyword reset'),
+        {code:'BOSS_SEARCH_KEYWORD_MISMATCH'});
+    }};
+  const session={evaluate:async()=>({state:'not_in_current_list',cardCount:15})};
+  await assert.rejects(scanBossSearchForCandidate(session,'磁轴销售工程师',
+    '247229183',async()=>{},{createCollector:()=>collector}),
+  {code:'BOSS_SEARCH_KEYWORD_MISMATCH'});
+  assert.equal(selected,1);
+  assert.equal(loaded,2);
+});
+
 test('BOSS locator stops scanning when official result count no longer grows',async()=>{
   let loaded=0;
   const collector={selectJob:async()=>{},scrollCards:async()=>{loaded++;}};

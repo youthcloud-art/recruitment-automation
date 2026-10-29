@@ -32,6 +32,7 @@ async function scanBossSearchForCandidate(session, title, id, wait,
     await collector.selectJob(title);
   const expression=bossCardProbe(id,title);
   let found=await session.evaluate(expression,{timeoutMs:12000});
+  let searchRestarts=0;
   // A previously collected card can move far down a refreshed official
   // result list. Search a bounded number of additional pages for the saved
   // exact ID; never select a similar-looking name or an unverified card.
@@ -42,6 +43,17 @@ async function scanBossSearchForCandidate(session, title, id, wait,
     // click; the locator itself never guesses a card by position or name.
     try { await collector.scrollCards(); }
     catch (error) {
+      if (error.code==='BOSS_SEARCH_KEYWORD_MISMATCH' && searchRestarts<1) {
+        // A deep official result page can replace its iframe and lose the
+        // visible job term. Re-establish the same job once through the
+        // collector's checked official search flow, then start the exact-ID
+        // scan again. Never open a card on the changed page.
+        searchRestarts++;
+        await collector.selectJob(title);
+        found=await session.evaluate(expression,{timeoutMs:12000});
+        page=-1;
+        continue;
+      }
       // BOSS can append or reorder results while the load-more control is
       // scrolled into view. The collector correctly refuses to click then.
       // For an exact-ID lookup, re-read the official cards and continue only

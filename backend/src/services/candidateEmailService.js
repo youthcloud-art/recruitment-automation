@@ -651,7 +651,7 @@ class CandidateEmailService {
       from: process.env.SMTP_FROM,
       to,
       subject: `${jobTitleFromRequirements(selection.jobRequirements) || ''}候选人初筛报告（${selection.newOnly ? '新增候选人，' : batchLabel ? `第${batchNumber}/${batchCount}批，` : ''}${candidates.length}份）`,
-      text: `随信附上 ${candidates.length} 份进入本次岗位初筛名单的候选人简历材料和初筛报告。${batchLabel ? `${batchLabel}。` : ''}报告覆盖${platformScope}，其中本邮件附简历：${attachedBySource}。完整平台记录号见报告“平台记录号”列，candidate-N 附件与报告序号对应；编号待核实的记录不能据此查人，请在助手中使用服务器浏览器定位并核对官方详情。请结合待核实事项人工复核。` +
+      text: `随信附上 ${candidates.length} 份进入本次岗位初筛名单的候选人简历材料和初筛报告。${batchLabel ? `${batchLabel}。` : ''}报告覆盖${platformScope}，其中本邮件附简历：${attachedBySource}。完整平台记录号见报告“平台记录号”列，candidate-N 附件与报告序号对应；编号待核实的记录不能据此查人，请在助手中使用服务器浏览器定位并核对官方详情。请结合待核实事项人工复核。\n\n平台编号索引：\n${candidates.map((item,index)=>`candidate-${index+1} · ${SOURCE_NAMES[item.source]} · ${reportCell(candidateName(item))} · ${reportCell(hiringJobTitle(item))} · ${platformRecord(item).id}`).join('\n')}\n` +
         (candidates.some(item => item.source === 'qcwy' && item.matchEvaluation.method === 'local')
           ? '前程无忧候选人仅达到本地初筛的最低证据门槛，仍须人工复核全部岗位条件。' : '') +
         (resumeAttachments.some(item => item.attachmentKind === 'page-text')

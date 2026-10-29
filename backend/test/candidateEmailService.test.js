@@ -137,6 +137,9 @@ test('三平台邮件报告与页面 TXT 均带完整官方编号，缺号旧 BO
     assert.match(report, /招聘岗位/);
     assert.match(report, /求职岗位/);
     assert.match(sent.text, /完整平台记录号见报告/);
+    for (const id of [bossId, zhilianId, wuyouId]) assert.ok(sent.text.includes(id));
+    assert.match(sent.text, /candidate-4.*待平台核实/);
+    assert.doesNotMatch(sent.text, /LOCAL_99999|resume_boss_legacy_local_id/);
     for (const [index, candidate] of preview.candidates.entries()) {
       const content = sent.attachments[index + 1].content;
       const expected = candidate.id === 'resume_boss_verified' ? bossId

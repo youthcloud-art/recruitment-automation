@@ -93,6 +93,23 @@ test('其他同事持锁时显示占用提示，不加载截图或允许输入',
   expect(screen.getByLabelText('发送到浏览器的文字').disabled).toBe(true);
 });
 
+test('取得操作权后截图失败仍可恢复窗口并释放操作权', async () => {
+  apiGet.mockImplementation(url => url.endsWith('/status')
+    ? Promise.resolve({ success: true, data: { ...status, lock: { held: true } } })
+    : Promise.reject(new Error('平台画面暂不可用')));
+  render(<ServerBrowserConsole />);
+  fireEvent.click(await screen.findByRole('button', { name: '服务器浏览器' }));
+  await waitFor(() => expect(screen.getByText('当前由你操作')).not.toBeNull());
+  expect(screen.getByRole('button', { name: '恢复并最大化窗口' }).disabled).toBe(false);
+  expect(screen.getByText('平台画面暂不可用')).not.toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '恢复并最大化窗口' }));
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/browser-console/restore-window',
+    expect.objectContaining({ platform: 'boss', clientId: expect.any(String) })));
+  fireEvent.click(screen.getByRole('button', { name: '关闭窗口' }));
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/browser-console/release',
+    { clientId: expect.any(String) }));
+});
+
 test('平台切换重新申请对应平台，持续打开时每两秒更新画面并续期', async () => {
   jest.useFakeTimers();
   render(<ServerBrowserConsole />);

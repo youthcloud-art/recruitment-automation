@@ -112,7 +112,12 @@ export default function ServerBrowserConsole() {
       hasLease.current = true;
       setLeased(true);
       try { await getFrame(selected); }
-      catch (cause) { if (!frameBusy(cause)) throw cause; }
+      catch (cause) {
+        // A failed screenshot does not revoke the server lease. Keep the
+        // restore-window action available so an operator can recover the
+        // official Chrome window without waiting for the lease to expire.
+        if (!frameBusy(cause)) setError(cause.message || '浏览器画面暂不可用，请恢复窗口');
+      }
     } catch (cause) {
       if (mounted.current && visible.current && currentPlatform.current === selected && generation.current === requestedGeneration) {
         hasLease.current = false;
@@ -146,7 +151,15 @@ export default function ServerBrowserConsole() {
           leaseAt.current = Date.now();
         }
         if (manualAction.current) return;
-        await getFrame(platform);
+        try {
+          await getFrame(platform);
+          setError('');
+        } catch (cause) {
+          if (!frameBusy(cause)) {
+            setFrame(null);
+            setError(cause.message || '浏览器画面暂不可用，请恢复窗口');
+          }
+        }
       } catch (cause) {
         if (!disposed && !/画面正在刷新|浏览器正在处理其他操作/.test(cause.message || '')) {
           hasLease.current = false;

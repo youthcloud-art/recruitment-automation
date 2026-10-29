@@ -60,6 +60,40 @@ test('BOSS detail without URL ID requires the same official card and job after o
   assert.equal(cardReads,3);
 });
 
+test('BOSS locator closes an existing official search resume before exact lookup',async()=>{
+  let open=true;
+  const actions=[];
+  const session={assertRecruiterReady:async()=>
+    'https://www.zhipin.com/web/chat/search',
+  assertUsableRecruiterWindow:async()=>{},
+  evaluate:async expression=>expression.includes('const id=')
+    ? {state:open?'dialog_open':'ready',search:true,
+      frameSelector:'iframe[src*="/web/frame/search/"]',
+      cardSelector:'li.geek-info-card',attribute:'data-expect'}
+    : {state:'ready'},
+  scrollUnique:async()=>actions.push('scroll'),
+  clickUnique:async spec=>{
+    actions.push(spec.selector);
+    if(spec.selector.includes('.close-btn')) open=false;
+  }};
+  const result=await locateBossCandidate(session,boss,{wait:async()=>{}});
+  assert.equal(result.verified,'exact_card');
+  assert.equal(actions.length,3);
+  assert.match(actions[0],/boss-dialog.*close-btn/);
+  assert.match(actions[2],/247229183/);
+});
+
+test('BOSS locator never opens a candidate when existing dialog cannot be closed',async()=>{
+  let clicks=0;
+  const session={assertRecruiterReady:async()=>
+    'https://www.zhipin.com/web/chat/search',
+  assertUsableRecruiterWindow:async()=>{},
+  evaluate:async()=>({state:'dialog_open'}),
+  clickUnique:async()=>{clicks++;throw new Error('official close unavailable');}};
+  await assert.rejects(locateBossCandidate(session,boss),/official close unavailable/);
+  assert.equal(clicks,1);
+});
+
 test('BOSS locator clicks only a unique card on the matching job and verifies a dialog',async()=>{
   const calls=[];
   const session={assertRecruiterReady:async()=>

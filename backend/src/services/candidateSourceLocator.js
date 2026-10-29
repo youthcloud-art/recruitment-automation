@@ -87,6 +87,24 @@ function bossDialogProbe(expectedId, search) {
   })()`;
 }
 
+async function closeExistingBossDialog(session, search, title, id, wait) {
+  // A previous exact-card lookup can leave the official detail open. Close
+  // only the unique BOSS resume dialog, then re-check the saved job and card
+  // before opening anything else. Never infer identity from the old dialog.
+  const frameSelector=search ? undefined : 'iframe[src*="/web/frame/recommend/"]';
+  const selector=search
+    ? 'div[data-type="boss-dialog"].active.dialog-wrap > .boss-popup__wrapper.boss-dialog.boss-dialog__wrapper.dialog-lib-resume .close-btn'
+    : '.dialog-wrap.active .close-btn';
+  if (!search) await session.revealOfficialResumeClose({frameSelector});
+  await session.clickUnique({selector, ...(frameSelector ? {frameSelector} : {})});
+  for (let attempt=0;attempt<120;attempt++) {
+    const state=await session.evaluate(bossCardProbe(id,title),{timeoutMs:12000});
+    if (state?.state!=='dialog_open') return state;
+    await wait(500);
+  }
+  throw locatorError(409,'BOSS 旧简历弹窗未能关闭；请在官方页面关闭后重试');
+}
+
 function bossJobProbe(title) {
   return String.raw`(() => {
     const title=${JSON.stringify(title)};
@@ -277,6 +295,8 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
   await session.assertUsableRecruiterWindow({frameSelector});
   let expression=bossCardProbe(locator.id,title);
   let before=await session.evaluate(expression,{timeoutMs:12000});
+  if (before?.state==='dialog_open')
+    before=await closeExistingBossDialog(session,search,title,locator.id,wait);
   if (before?.state==='wrong_job') {
     if (search) {
       await prepareSearch(session,title,wait);

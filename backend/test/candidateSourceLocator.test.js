@@ -6,6 +6,7 @@ const vm=require('node:vm');
 const {bossCardProbe,bossDialogProbe,bossJobProbe,bossFingerprintProbe,cardFingerprint,searchScope,
   locateBossCandidate,locateBossCandidateByFingerprint,locateOfficialCandidate}=
   require('../src/services/candidateSourceLocator');
+const {scanBossSearchForCandidate}=require('../src/services/candidateSourceLocator');
 
 const boss={source:'boss',captureJobTitle:'磁轴销售工程师',
   sourceCandidateId:'247229183',sourceCandidateIdSource:'platform_card',
@@ -322,8 +323,33 @@ test('BOSS locator refuses an absent card without clicking',async()=>{
     'https://www.zhipin.com/web/chat/search',
   assertUsableRecruiterWindow:async()=>{},evaluate:async()=>({state:'not_in_current_list'}),
   scrollUnique:async()=>{clicked=true;},clickUnique:async()=>{clicked=true;}};
-  await assert.rejects(locateBossCandidate(session,boss),/不在 BOSS 当前已加载/);
+  await assert.rejects(locateBossCandidate(session,boss,{scanSearch:async()=>
+    ({state:'not_in_current_list'})}),/不在 BOSS 当前已加载/);
   assert.equal(clicked,false);
+});
+
+test('BOSS locator loads only guarded official search pages until exact ID appears',async()=>{
+  let loaded=0,selected=0;
+  const collector={selectJob:async title=>{assert.equal(title,'磁轴销售工程师');selected++;},
+    scrollCards:async()=>{loaded++;}};
+  const session={evaluate:async()=>({state:loaded>=2?'ready':'not_in_current_list',
+    cardCount:15*(loaded+1)})};
+  const found=await scanBossSearchForCandidate(session,'磁轴销售工程师',
+    '247229183',async()=>{},{createCollector:()=>collector});
+  assert.equal(found.state,'ready');
+  assert.equal(selected,1);
+  assert.equal(loaded,2);
+  assert.equal(collector.session,session);
+});
+
+test('BOSS locator stops scanning when official result count no longer grows',async()=>{
+  let loaded=0;
+  const collector={selectJob:async()=>{},scrollCards:async()=>{loaded++;}};
+  const session={evaluate:async()=>({state:'not_in_current_list',cardCount:15})};
+  const found=await scanBossSearchForCandidate(session,'磁轴销售工程师',
+    '247229183',async()=>{},{createCollector:()=>collector});
+  assert.equal(found.state,'not_in_current_list');
+  assert.equal(loaded,1);
 });
 
 test('旧 BOSS 简历只按唯一候选卡证据补录官方编号',async()=>{

@@ -20,6 +20,29 @@ async function prepareBossSearchPage(session, title, wait) {
   await collector.selectJob(title);
 }
 
+async function scanBossSearchForCandidate(session, title, id, wait,
+  { createCollector = () => {
+    const { BossRawSearchCollector } = require('./bossRawSearchCollector');
+    return new BossRawSearchCollector({ store: null, jobService: null,
+      queue: null, ocr: null, quarantine: null, wait });
+  } } = {}) {
+  const collector=createCollector();
+  collector.session=session;
+  await collector.selectJob(title);
+  const expression=bossCardProbe(id,title);
+  let found=await session.evaluate(expression,{timeoutMs:12000});
+  for (let page=0;page<8 && found?.state==='not_in_current_list';page++) {
+    const count=found.cardCount;
+    // Reuse the collector's guarded official scroll/load-more flow. It
+    // verifies the job, filters, iframe, button and list identity before any
+    // click; the locator itself never guesses a card by position or name.
+    await collector.scrollCards();
+    found=await session.evaluate(expression,{timeoutMs:12000});
+    if (found?.state==='not_in_current_list' && found.cardCount<=count) break;
+  }
+  return found;
+}
+
 function bossCardProbe(id, title, allowOpenDialog = false) {
   return String.raw`(() => {
     const id=${JSON.stringify(id)}, title=${JSON.stringify(title)};
@@ -306,7 +329,8 @@ async function locateBossCandidateByFingerprint(session, candidate, options = {}
 }
 
 async function locateBossCandidate(session, candidate, { wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
-  prepareSearch = prepareBossSearchPage } = {}) {
+  prepareSearch = prepareBossSearchPage,
+  scanSearch = scanBossSearchForCandidate } = {}) {
   const locator=platformLocator(candidate);
   if (candidate?.source!=='boss' || !locator.id ||
       !['platform_card','official_url'].includes(locator.status))
@@ -343,6 +367,10 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
       throw locatorError(409,'BOSS 官方岗位页面已变化，未打开候选人');
     }
     before=await session.evaluate(expression,{timeoutMs:12000});
+  }
+  if (search && before?.state==='not_in_current_list') {
+    before=await scanSearch(session,title,locator.id,wait);
+    current=await session.assertRecruiterReady();
   }
   if (before?.state!=='ready') {
     const messages={wrong_page:'请先在 BOSS 服务器浏览器打开对应岗位的搜索或推荐结果页',
@@ -557,4 +585,4 @@ async function findZhilianCard(page,id) {
 
 module.exports={locateBossCandidate,locateBossCandidateByFingerprint,
   locateOfficialCandidate,bossCardProbe,bossDialogProbe,bossJobProbe,
-  bossFingerprintProbe,cardFingerprint,searchScope};
+  bossFingerprintProbe,cardFingerprint,searchScope,scanBossSearchForCandidate};

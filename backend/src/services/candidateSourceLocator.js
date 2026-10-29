@@ -364,16 +364,25 @@ async function searchZhilianForSavedCandidate(page,candidate,locator,searchTerms
     ? candidate.sourceSearchPage : 1;
   const maxPages=Math.min(5,Math.max(3,pageHint+1));
   for (const term of terms) {
+    const beforeSearch=await zhilianResultFingerprint(page);
     await input.fill(term,{timeout:5000});
     await input.press('Enter',{timeout:5000});
-    await page.waitForTimeout(1200);
+    for(let poll=0;poll<8;poll++) {
+      await page.waitForTimeout(500);
+      const current=await zhilianResultFingerprint(page);
+      if(current && current!==beforeSearch) break;
+    }
     let prior='';
     for (let pageIndex=0;pageIndex<maxPages;pageIndex++) {
       const found=await openZhilianCandidateFromCurrentResults(page,candidate,locator);
       if (found) return found;
-      const next=page.locator('.next-page, .btn-next, .pagination .next, [aria-label="下一页"]')
-        .filter({visible:true}).first();
-      if (!await next.isVisible().catch(()=>false) ||
+      let next=null;
+      for(const selector of ['.next-page','.btn-next','text="下一页"','text="下页"',
+        '.pagination .next','[aria-label="下一页"]']) {
+        const control=page.locator(selector).first();
+        if (await control.isVisible().catch(()=>false)) { next=control; break; }
+      }
+      if (!next ||
           !await next.isEnabled().catch(()=>false) ||
           await next.getAttribute('aria-disabled').catch(()=>null)==='true') break;
       prior=await zhilianResultFingerprint(page);

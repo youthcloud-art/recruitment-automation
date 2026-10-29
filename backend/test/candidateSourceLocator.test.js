@@ -433,6 +433,33 @@ test('智联原结果已切换时按保存的岗位词重新搜索并核对官�
   assert.equal(clicks,1);
 });
 
+test('智联回查可使用官方文字下一页，并只打开编号相同的第二页候选卡',async()=>{
+  const id='ZL_2026-page2';
+  const url=`https://rd6.zhaopin.com/app/search?resumeNumber=${id}`;
+  const candidate={source:'zlzp',sourceUrl:url,sourceCandidateId:id};
+  let pageNumber=1,opened=false,searches=0,nextClicks=0;
+  const page={url:()=>opened?url:'https://rd6.zhaopin.com/app/search',
+    waitForTimeout:async()=>{},
+    locator:selector=>selector.startsWith('input[placeholder')
+      ? {first:()=>({isVisible:async()=>selector.includes('关键词'),
+        fill:async()=>{},press:async()=>{searches++;}})}
+      : selector.startsWith('div.search-resume-item')
+        ? {evaluateAll:async(_fn,arg)=>typeof arg==='string'
+          ? pageNumber===2?[0]:[] : `page-${pageNumber}`,
+          nth:()=>({click:async()=>{opened=true;}})}
+        : {first:()=>selector==='text="下一页"'
+          ? {isVisible:async()=>true,isEnabled:async()=>true,
+            getAttribute:async()=>null,click:async()=>{nextClicks++;pageNumber=2;}}
+          : {isVisible:async()=>false,waitFor:async()=>{
+            if(!opened)throw new Error('not open');}}}
+  };
+  const result=await locateOfficialCandidate(page,candidate,
+    {searchTerms:['磁轴销售工程师']});
+  assert.equal(result.recordId,id);
+  assert.equal(searches,1);
+  assert.equal(nextClicks,1);
+});
+
 test('智联单段独特公司经历可作候选卡线索，最终仍需详情编号一致',async()=>{
   const id='ZL_2026-abc123';
   const url=`https://rd6.zhaopin.com/app/search?resumeNumber=${id}`;

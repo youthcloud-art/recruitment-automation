@@ -5,7 +5,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
-const { planCleanup, executeCleanup, validatePolicy, DEFAULTS } = require('../../deploy/company/maintenance/cleanup-engine.cjs');
+const { planCleanup, executeCleanup, validatePolicy, DEFAULTS, DISK_RESERVE_BYTES, PRESSURE_CLEANUP_BYTES } = require('../../deploy/company/maintenance/cleanup-engine.cjs');
 const { eligible } = require('../../deploy/company/install-maintenance.cjs');
 
 function write(root, name, value) {
@@ -111,13 +111,36 @@ test('unfinished builds age out sooner without invalidating an existing server p
   fs.utimesSync(incomplete, recent, recent);
   const legacyPolicy = { ...DEFAULTS };
   delete legacyPolicy.incompleteReleaseMinimumAgeHours;
+  delete legacyPolicy.pressureReleaseMinimumAgeHours;
+  delete legacyPolicy.pressureIncompleteReleaseMinimumAgeHours;
   assert.equal(validatePolicy(legacyPolicy).incompleteReleaseMinimumAgeHours, 4);
+  assert.equal(validatePolicy(legacyPolicy).pressureReleaseMinimumAgeHours, 2);
   let plan = await planCleanup({ installRoot: f.root, now, policy: legacyPolicy });
   assert.equal(plan.candidates.some(item => item.path === incomplete), false);
   const stale = new Date(now.getTime() - 5 * 60 * 60 * 1000);
   fs.utimesSync(incomplete, stale, stale);
   plan = await planCleanup({ installRoot: f.root, now, policy: legacyPolicy });
   assert.equal(plan.candidates.some(item => item.path === incomplete), true);
+});
+
+test('disk pressure reclaims older unused builds while preserving live and rollback releases', async t => {
+  const f = fixture(t), complete = f.releases[5], incomplete = f.releases[6];
+  fs.rmSync(path.join(incomplete, 'release.json'));
+  const newest = new Date(now.getTime() - 30 * 60 * 1000);
+  for (const index of [9, 10, 11]) fs.utimesSync(f.releases[index], newest, newest);
+  const threeHoursOld = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  fs.utimesSync(complete, threeHoursOld, threeHoursOld);
+  const twoHoursOld = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  fs.utimesSync(incomplete, twoHoursOld, twoHoursOld);
+  const ordinary = await planCleanup({ installRoot: f.root, now });
+  assert.equal(ordinary.candidates.some(item => item.path === complete || item.path === incomplete), false);
+  const pressure = await planCleanup({ installRoot: f.root, now, freeBytes: PRESSURE_CLEANUP_BYTES - 1 });
+  assert.equal(pressure.pressure, true);
+  assert.equal(pressure.candidates.some(item => item.path === complete), true);
+  assert.equal(pressure.candidates.some(item => item.path === incomplete), true);
+  for (const protectedRelease of [f.releases[0], f.releases[1], f.releases[3], f.releases[4]]) {
+    assert.equal(pressure.candidates.some(item => item.path === protectedRelease), false);
+  }
 });
 
 test('preview never invokes deletion; health failure skips or stops actual cleanup', async t => {
@@ -129,6 +152,18 @@ test('preview never invokes deletion; health failure skips or stops actual clean
   let healthCalls = 0;
   const interrupted = await executeCleanup({ installRoot: f.root, apply: true, checkHealth: async () => ++healthCalls < 3, removeArtifact: async () => calls++ });
   assert.equal(interrupted.status, 'stopped_unhealthy'); assert.equal(calls, 1);
+});
+
+test('low free space remains visible after safe candidates are exhausted', async t => {
+  const f = fixture(t);
+  const report = await executeCleanup({ installRoot: f.root, apply: true, checkHealth: async () => true,
+    removeArtifact: async () => {}, availableBytes: () => DISK_RESERVE_BYTES - 1 });
+  assert.equal(report.status, 'low_space');
+  assert.equal(report.lowDisk, true);
+  assert.equal(report.pressureCleanup, true);
+  assert.equal(report.errors.length, 0);
+  assert.equal(report.diskFreeAfter, DISK_RESERVE_BYTES - 1);
+  assert.equal(fs.readFileSync(path.join(f.root, 'shared/backend-storage/resumes.sqlite'), 'utf8'), 'BUSINESS-DATABASE-SENTINEL');
 });
 
 test('Windows PowerShell removes only a stale release and unlinks shared-data junctions without following them', { skip: process.platform !== 'win32' }, async t => {

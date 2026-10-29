@@ -84,12 +84,13 @@ function cleanupHealth(directory) {
     result.timeZone = 'Asia/Shanghai';
     try {
       const last = JSON.parse(fs.readFileSync(path.join(directory, 'last-cleanup.json'), 'utf8'));
-      if (['preview', 'complete', 'completed_with_skips', 'skipped_unhealthy', 'stopped_unhealthy', 'failed', 'running'].includes(last.status)) {
+      if (['preview', 'complete', 'low_space', 'completed_with_skips', 'skipped_unhealthy', 'stopped_unhealthy', 'failed', 'running'].includes(last.status)) {
         result.lastRun = { status: last.status, apply: last.apply === true };
         if (typeof last.finishedAtUtc === 'string' && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(last.finishedAtUtc)) result.lastRun.finishedAtUtc = last.finishedAtUtc;
         for (const key of ['removedCount', 'removedBytes']) {
           if (Number.isSafeInteger(last[key]) && last[key] >= 0) result.lastRun[key] = last[key];
         }
+        result.lastRun.lowDisk = last.lowDisk === true;
       }
     } catch { /* A newly installed task may not have run yet. */ }
     return result;

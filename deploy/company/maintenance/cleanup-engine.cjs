@@ -9,6 +9,8 @@ const { spawnSync } = require('node:child_process');
 const DEFAULTS = require('./cleanup-policy.default.json');
 const RELEASE = /^\d{8}-\d{6}-[a-f0-9]{12}-[a-f0-9]{6}$/i;
 const BACKUP = /^before-\d{8}-\d{6}-[a-f0-9]{6}$/i;
+const DISK_RESERVE_BYTES = 16 * 1024 ** 3;
+const PRESSURE_CLEANUP_BYTES = 24 * 1024 ** 3;
 const ACTIVE_LOGS = new Set(['backend.stdout.log', 'backend.stderr.log', 'gateway.stdout.log', 'gateway.stderr.log']);
 const canonical = value => path.resolve(value).toLowerCase();
 function child(root, value) {
@@ -33,13 +35,14 @@ function readJson(root, relative, optional = false) {
 }
 function validatePolicy(input) {
   if (!input || input.format !== 1) throw new Error('Invalid cleanup policy format');
-  const limits = { keepNewestReleases: [3, 100], releaseMinimumAgeHours: [24, 8760], incompleteReleaseMinimumAgeHours: [2, 168], keepRollbackReleases: [2, 30],
+  const limits = { keepNewestReleases: [3, 100], releaseMinimumAgeHours: [24, 8760], incompleteReleaseMinimumAgeHours: [2, 168],
+    pressureReleaseMinimumAgeHours: [2, 24], pressureIncompleteReleaseMinimumAgeHours: [1, 4], keepRollbackReleases: [2, 30],
     keepNewestBackups: [7, 1000], backupMinimumAgeDays: [7, 3650], orphanArchiveMinimumAgeHours: [48, 8760], inactiveLogMinimumAgeDays: [14, 3650] };
   const result = { format: 1 };
   for (const [key, [min, max]] of Object.entries(limits)) {
     // Existing server policies predate this setting. Keep them valid and use
     // the reviewed default until the operator explicitly changes the policy.
-    const value = key === 'incompleteReleaseMinimumAgeHours' && input[key] === undefined ? DEFAULTS[key] : input[key];
+    const value = key.endsWith('MinimumAgeHours') && input[key] === undefined && Object.hasOwn(DEFAULTS, key) ? DEFAULTS[key] : input[key];
     if (!Number.isInteger(value) || value < min || value > max) throw new Error(`Unsafe cleanup policy field: ${key}`);
     result[key] = value;
   }
@@ -87,8 +90,9 @@ async function inspectTree(root, target, kind) {
   }
   return { bytes, files };
 }
-async function planCleanup({ installRoot, policy = DEFAULTS, now = new Date(), processRoots = [] }) {
+async function planCleanup({ installRoot, policy = DEFAULTS, now = new Date(), processRoots = [], freeBytes = Infinity }) {
   const root = path.resolve(installRoot), rules = validatePolicy(policy);
+  const pressure = freeBytes < PRESSURE_CLEANUP_BYTES;
   const current = readJson(root, 'control/current-release.json');
   const currentRoot = releasePath(root, current.root);
   if (!/^[a-f0-9]{40}$/i.test(current.commit || '')) throw new Error('Invalid active release commit');
@@ -136,7 +140,9 @@ async function planCleanup({ installRoot, policy = DEFAULTS, now = new Date(), p
   }
   for (const item of releases) {
     const key = canonical(item.path);
-    const minimumAge = completePaths.has(key) ? rules.releaseMinimumAgeHours : rules.incompleteReleaseMinimumAgeHours;
+    const minimumAge = completePaths.has(key)
+      ? pressure ? Math.min(rules.releaseMinimumAgeHours, rules.pressureReleaseMinimumAgeHours) : rules.releaseMinimumAgeHours
+      : pressure ? Math.min(rules.incompleteReleaseMinimumAgeHours, rules.pressureIncompleteReleaseMinimumAgeHours) : rules.incompleteReleaseMinimumAgeHours;
     if (!protectedReleases.has(key) && ageHours(item, now) >= minimumAge) await consider(item, 'release');
   }
   for (const item of backups) if (!protectedBackups.has(canonical(item.path)) && ageHours(item, now) >= rules.backupMinimumAgeDays * 24) await consider(item, 'backup');
@@ -147,7 +153,7 @@ async function planCleanup({ installRoot, policy = DEFAULTS, now = new Date(), p
   for (const item of await entries(root, 'logs')) {
     if (item.file && /^[a-z0-9._-]+\.log$/i.test(item.name) && !ACTIVE_LOGS.has(item.name.toLowerCase()) && ageHours(item, now) >= rules.inactiveLogMinimumAgeDays * 24) await consider(item, 'log');
   }
-  return { format: 1, createdAtUtc: now.toISOString(), policy: rules, protectedReleases: [...protectedReleases], protectedBackupCount: protectedBackups.size,
+  return { format: 1, createdAtUtc: now.toISOString(), policy: rules, pressure, protectedReleases: [...protectedReleases], protectedBackupCount: protectedBackups.size,
     candidates, skipped, candidateBytes: candidates.reduce((sum, item) => sum + item.bytes, 0) };
 }
 function healthy(config) {
@@ -167,17 +173,18 @@ async function writeReport(root, report) {
   await fsp.writeFile(temporary, JSON.stringify(report, null, 2) + '\n');
   await fsp.rename(temporary, target);
 }
-async function executeCleanup({ installRoot, apply = false, processRoots = [], checkHealth = healthy, removeArtifact } = {}) {
+async function executeCleanup({ installRoot, apply = false, processRoots = [], checkHealth = healthy, removeArtifact, availableBytes } = {}) {
   const root = path.resolve(installRoot), config = readJson(root, 'delivery/config.json');
   if (canonical(config.installRoot) !== canonical(root)) throw new Error('Cleanup configuration belongs to another installation');
   const policyFile = path.join(root, 'delivery/cleanup-policy.json');
   const policy = fs.existsSync(policyFile) ? readJson(root, 'delivery/cleanup-policy.json') : DEFAULTS;
-  const space = () => { const s = fs.statfsSync(root); return Number(s.bavail) * Number(s.bsize); };
+  const space = availableBytes || (() => { const s = fs.statfsSync(root); return Number(s.bavail) * Number(s.bsize); });
   const report = { format: 1, runId: crypto.randomUUID(), startedAtUtc: new Date().toISOString(), apply, status: 'checking', removedCount: 0, removedBytes: 0, diskFreeBefore: space(), errors: [] };
   try {
     if (!await checkHealth(config)) { report.status = 'skipped_unhealthy'; return report; }
-    const plan = await planCleanup({ installRoot: root, policy, processRoots });
+    const plan = await planCleanup({ installRoot: root, policy, processRoots, freeBytes: report.diskFreeBefore });
     report.candidateCount = plan.candidates.length; report.candidateBytes = plan.candidateBytes; report.skippedCount = plan.skipped.length;
+    report.pressureCleanup = plan.pressure;
     report.protectedReleaseCount = plan.protectedReleases.length;
     report.status = apply ? 'running' : 'preview';
     await writeReport(root, report);
@@ -208,7 +215,13 @@ async function executeCleanup({ installRoot, apply = false, processRoots = [], c
     }
     return report;
   } catch (error) { report.status = 'failed'; report.errors.push({ message: error.message }); return report; }
-  finally { report.finishedAtUtc = new Date().toISOString(); report.diskFreeAfter = space(); await writeReport(root, report); }
+  finally {
+    report.finishedAtUtc = new Date().toISOString();
+    report.diskFreeAfter = space();
+    report.lowDisk = report.diskFreeAfter < DISK_RESERVE_BYTES;
+    if (apply && report.status === 'complete' && report.lowDisk) report.status = 'low_space';
+    await writeReport(root, report);
+  }
 }
 async function main() {
   const args = process.argv.slice(2), root = args[0];
@@ -224,4 +237,4 @@ async function main() {
   if (['failed', 'stopped_unhealthy'].includes(result.status)) process.exitCode = 1;
 }
 if (require.main === module) main().catch(error => { process.stderr.write(error.message + '\n'); process.exitCode = 1; });
-module.exports = { DEFAULTS, validatePolicy, planCleanup, executeCleanup, inspectTree };
+module.exports = { DEFAULTS, DISK_RESERVE_BYTES, PRESSURE_CLEANUP_BYTES, validatePolicy, planCleanup, executeCleanup, inspectTree };

@@ -6,6 +6,35 @@ $lock = $null
 $previousSsh = [Environment]::GetEnvironmentVariable('GIT_SSH_COMMAND','Process')
 $source = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot 'source')
 try {
+    # Reclaim only artifacts owned by this installation before another build
+    # consumes the service's disk reserve. The cleanup runner acquires its own
+    # locks; it must run before this task takes sync.lock.
+    $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($InstallRoot)))
+    if ($drive.AvailableFreeSpace -lt 24GB) {
+        $recentCleanup = $false
+        try {
+            $last = Get-Content -LiteralPath (Join-Path $InstallRoot 'delivery\last-cleanup.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $recentCleanup = $last.apply -eq $true -and $last.status -in @('complete','low_space','completed_with_skips') -and
+                [DateTimeOffset]::Parse([string]$last.finishedAtUtc).UtcDateTime -ge [datetime]::UtcNow.AddMinutes(-60)
+        } catch { $recentCleanup = $false }
+        if (-not $recentCleanup) {
+            try {
+                $record = Get-Content -LiteralPath (Join-Path $InstallRoot 'delivery\cleanup-installation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($record.installed -ne $true -or [string]$record.bundle -notmatch '^[a-f0-9]{64}$') { throw 'Cleanup registration is missing or invalid.' }
+                $maintenanceRoot = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('delivery\maintenance\' + $record.bundle))
+                foreach ($directory in @((Join-Path $InstallRoot 'delivery'),(Join-Path $InstallRoot 'delivery\maintenance'),$maintenanceRoot)) {
+                    if ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Cleanup bundle parent is a reparse point.' }
+                }
+                $runner = Assert-ChildPath $maintenanceRoot (Join-Path $maintenanceRoot 'Invoke-CompanyCleanup.ps1')
+                if ((Get-Item -LiteralPath $runner -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Cleanup runner is a reparse point.' }
+                $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+                & $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runner -InstallRoot $InstallRoot -Apply
+                if ($LASTEXITCODE -ne 0) { Write-Warning 'Pre-build cleanup did not complete; disk reserve will be checked before the build.' }
+            } catch { Write-Warning 'Pre-build cleanup was unavailable; disk reserve will be checked before the build.' }
+        }
+    }
+    $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($InstallRoot)))
+    if ($drive.AvailableFreeSpace -lt 16GB) { throw 'Deployment deferred: the application volume has fewer than 16 GB free after safe cleanup.' }
     try { $lock = [IO.File]::Open((Join-Path $InstallRoot 'control\sync.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
     catch { Write-Host 'SKIPPED: another mirror deployment is running.'; exit 0 }
     $knownHosts = Join-Path $InstallRoot 'delivery\known_hosts'

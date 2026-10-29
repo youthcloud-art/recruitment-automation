@@ -33,8 +33,9 @@ test('maintenance status is company-only and retains the local API access bounda
 });
 test('maintenance status exposes schedule and reclaimed bytes without filenames, bundle paths or raw errors',async t=>{
   const f=await fixture(t);
-  fs.writeFileSync(path.join(f.root,'delivery/cleanup-installation.json'),JSON.stringify({installed:true,enabled:true,taskName:'AutoRecru-Company-Cleanup',times:['12:30','20:00'],timeZone:'Asia/Shanghai',bundle:'PRIVATE_BUNDLE_PATH',policy:{keepNewestReleases:3,extra:'PRIVATE_POLICY_VALUE'}}));
-  fs.writeFileSync(path.join(f.root,'delivery/last-cleanup.json'),JSON.stringify({status:'complete',apply:true,removedCount:2,removedBytes:123,diskFreeAfter:456,errors:[{message:'PRIVATE_ERROR_AND_FILENAME'}]}));
+  fs.writeFileSync(path.join(f.root,'delivery/cleanup-installation.json'),JSON.stringify({installed:true,enabled:true,taskName:'AutoRecru-Company-Cleanup',times:['12:30','20:00'],timeZone:'Asia/Shanghai',bundle:'PRIVATE_BUNDLE_PATH',policy:{keepNewestReleases:3,incompleteReleaseMinimumAgeHours:4,extra:'PRIVATE_POLICY_VALUE'}}));
+  fs.writeFileSync(path.join(f.root,'delivery/last-cleanup.json'),JSON.stringify({status:'low_space',apply:true,removedCount:2,removedBytes:123,diskFreeAfter:456,lowDisk:true,errors:[{message:'PRIVATE_ERROR_AND_FILENAME'}]}));
   const res=await f.request();assert.equal(res.status,200);assert.equal(res.body.data.installed,true);assert.deepEqual(res.body.data.times,['12:30','20:00']);assert.equal(res.body.data.lastRun.removedBytes,123);
+  assert.equal(res.body.data.lastRun.lowDisk,true);assert.equal(res.body.data.lastRun.pressureCleanup,false);assert.equal(res.body.data.policy.incompleteReleaseMinimumAgeHours,4);
   assert.equal(JSON.stringify(res.body).includes('PRIVATE_'),false);
 });

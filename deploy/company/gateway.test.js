@@ -536,9 +536,11 @@ test('cleanup health reports verified registration and counters while authentica
   const response = await request(app.port, '/healthz');
   assert.equal(response.status, 200);
   assert.deepEqual(JSON.parse(response.body).cleanup, { registered: true, times: ['12:30', '20:00'], timeZone: 'Asia/Shanghai',
-    lastRun: { status: 'complete', apply: true, finishedAtUtc: '2026-10-28T12:05:00.000Z', removedCount: 2, removedBytes: 4096 } });
+    lastRun: { status: 'complete', apply: true, finishedAtUtc: '2026-10-28T12:05:00.000Z', removedCount: 2, removedBytes: 4096, lowDisk: false } });
   assert.ok(!response.body.includes('PRIVATE_PATH_SENTINEL'));
   assert.equal((await request(app.port, '/api/company-maintenance/status')).status, 401);
+  await fs.writeFile(path.join(directory, 'last-cleanup.json'), JSON.stringify({ status: 'low_space', apply: true, lowDisk: true, removedCount: 0, removedBytes: 0 }));
+  assert.equal(JSON.parse((await request(app.port, '/healthz')).body).cleanup.lastRun.lowDisk, true);
   await fs.writeFile(path.join(directory, 'cleanup-installation.json'), '{broken json');
   assert.equal(JSON.parse((await request(app.port, '/healthz')).body).cleanup.registered, false);
   assert.equal((await request(app.port, '/')).status, 200);

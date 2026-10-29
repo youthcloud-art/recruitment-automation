@@ -23,7 +23,7 @@ $watchPath = Join-Path $InstallRoot 'delivery\Watch-Company.ps1'
 $backup = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('backups\delivery-reliability-' +
     (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,6)))
 $files = @('Common.ps1','Run-Company.ps1','Watch-Company.ps1',
-    'Sync-Company.ps1','Switch-Release.ps1')
+    'Sync-Company.ps1','Prepare-Release.ps1','Switch-Release.ps1')
 $copied = $false
 $runtimeStopped = $false
 $watchCreated = $false

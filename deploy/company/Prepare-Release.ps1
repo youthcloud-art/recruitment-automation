@@ -11,7 +11,7 @@ $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
 # service, its logs and shared resume database. Cleanup can reclaim older
 # incomplete builds on its next scheduled run.
 $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot([IO.Path]::GetFullPath($InstallRoot)))
-if ($drive.AvailableFreeSpace -lt 8GB) { throw 'Release build deferred: fewer than 8 GB remain on the application volume. The running release was preserved.' }
+if ($drive.AvailableFreeSpace -lt 16GB) { throw 'Release build deferred: fewer than 16 GB remain on the application volume. The running release was preserved.' }
 $release = Assert-ChildPath $InstallRoot (Join-Path $InstallRoot ('releases\' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $Commit.Substring(0,12) + '-' + [guid]::NewGuid().ToString('N').Substring(0,6)))
 New-Item -ItemType Directory -Path $release | Out-Null
 try {

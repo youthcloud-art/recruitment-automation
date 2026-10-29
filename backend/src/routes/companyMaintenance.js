@@ -20,7 +20,8 @@ function createCompanyMaintenanceRouter({ environment = process.env, installRoot
       };
       const installed = read('cleanup-installation.json'), last = read('last-cleanup.json');
       const policy = installed?.policy ? Object.fromEntries([
-        'keepNewestReleases','releaseMinimumAgeHours','keepRollbackReleases','keepNewestBackups',
+        'keepNewestReleases','releaseMinimumAgeHours','incompleteReleaseMinimumAgeHours',
+        'pressureReleaseMinimumAgeHours','pressureIncompleteReleaseMinimumAgeHours','keepRollbackReleases','keepNewestBackups',
         'backupMinimumAgeDays','orphanArchiveMinimumAgeHours','inactiveLogMinimumAgeDays'
       ].filter(key => Number.isInteger(installed.policy[key])).map(key => [key, installed.policy[key]])) : null;
       return res.json({ success: true, data: {
@@ -32,7 +33,9 @@ function createCompanyMaintenanceRouter({ environment = process.env, installRoot
         policy,
         lastRun: last ? { status: last.status, apply: last.apply, startedAtUtc: last.startedAtUtc, finishedAtUtc: last.finishedAtUtc,
           removedCount: last.removedCount, removedBytes: last.removedBytes, candidateCount: last.candidateCount, candidateBytes: last.candidateBytes,
-          diskFreeBefore: last.diskFreeBefore, diskFreeAfter: last.diskFreeAfter, errorCount: Array.isArray(last.errors) ? last.errors.length : 0 } : null
+          diskFreeBefore: last.diskFreeBefore, diskFreeAfter: last.diskFreeAfter, lowDisk: last.lowDisk === true,
+          pressureCleanup: last.pressureCleanup === true,
+          errorCount: Array.isArray(last.errors) ? last.errors.length : 0 } : null
       } });
     } catch (_) { return res.status(500).json({ success: false, message: '公司维护状态暂不可读取' }); }
   });

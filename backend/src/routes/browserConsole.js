@@ -198,6 +198,9 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
           const position = candidate.capturePositionId
             ? resumeModel.getPositionById(candidate.capturePositionId) : null;
           const searchTerms = [candidate.sourceSearchKeyword,
+            candidate.position,
+            typeof candidate.expectedPosition === 'string'
+              ? candidate.expectedPosition : candidate.expectedPosition?.position,
             ...String(position?.searchKeywords || '').split(/[,，、\n]/),
             candidate.captureJobTitle].map(value => String(value || '').trim())
             .filter((value, index, values) => value && values.indexOf(value) === index)

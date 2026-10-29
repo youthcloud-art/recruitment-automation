@@ -20,7 +20,7 @@ async function prepareBossSearchPage(session, title, wait) {
   await collector.selectJob(title);
 }
 
-function bossCardProbe(id, title) {
+function bossCardProbe(id, title, allowOpenDialog = false) {
   return String.raw`(() => {
     const id=${JSON.stringify(id)}, title=${JSON.stringify(title)};
     const outer=new URL(location.href);
@@ -42,8 +42,8 @@ function bossCardProbe(id, title) {
       doc.querySelector('.ui-dropmenu-label')?.textContent?.split(/[_＿]/)[0];
     if (String(current||'').normalize('NFKC').replace(/\s+/g,' ').trim()!==title)
       return {state:'wrong_job'};
-    if (doc.querySelector('.dialog-wrap.active') ||
-        document.querySelector('div[data-type="boss-dialog"].active'))
+    if (!${allowOpenDialog} && (doc.querySelector('.dialog-wrap.active') ||
+        document.querySelector('div[data-type="boss-dialog"].active')))
       return {state:'dialog_open'};
     const cardSelector=search?'li.geek-info-card':'li.card-item';
     const cards=[...doc.querySelectorAll(cardSelector)];
@@ -64,7 +64,7 @@ function bossCardProbe(id, title) {
 function bossDialogProbe(expectedId, search) {
   return String.raw`(() => {
     const frame=${search ? 'document' : 'document.querySelector(\'iframe[src*="/web/frame/recommend/"]\')?.contentDocument'};
-    const dialogs=[...(frame?.querySelectorAll('.dialog-wrap.active')||[])];
+    const dialogs=[...(frame?.querySelectorAll('div[data-type="boss-dialog"].active.dialog-wrap')||[])];
     if (dialogs.length!==1) return {state:'dialog_unavailable'};
     const frames=[...dialogs[0].querySelectorAll('iframe[src*="/web/frame/c-resume/"]')];
     if (frames.length!==1) return {state:'detail_unavailable'};
@@ -74,8 +74,16 @@ function bossDialogProbe(expectedId, search) {
         url.pathname.replace(/\/$/,'')!=='/web/frame/c-resume')
       return {state:'detail_unavailable'};
     const pageId=url.searchParams.get('expectId')||url.searchParams.get('geekId')||'';
-    return {state:!pageId?'identity_unavailable':
-      pageId!==${JSON.stringify(expectedId)}?'identity_conflict':'ready'};
+    if (pageId) return {state:pageId===${JSON.stringify(expectedId)}?
+      'ready':'identity_conflict'};
+    // Some official BOSS detail frames omit a candidate ID in their URL.
+    // In that case a unique card click can still be verified, but only after
+    // the official detail has rendered and the exact card remains in place.
+    const detail=frames[0].contentDocument;
+    const text=(detail?.body?.innerText||'').trim();
+    const canvas=detail?.querySelector('canvas#resume');
+    return {state:text.length>=80 || (canvas?.width>300 && canvas?.height>150)?
+      'ready_card_only':'detail_unavailable'};
   })()`;
 }
 
@@ -313,6 +321,15 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
   for (let attempt=0;attempt<12;attempt++) {
     const modal=await session.evaluate(bossDialogProbe(locator.id,search),{timeoutMs:12000});
     if (modal?.state==='ready') return {platform:'boss',recordId:locator.id,verified:'exact_card'};
+    if (modal?.state==='ready_card_only') {
+      const card=await session.evaluate(bossCardProbe(locator.id,title,true),
+        {timeoutMs:12000});
+      if (card?.state==='ready' && card.attribute===before.attribute &&
+          card.search===before.search &&
+          await session.assertRecruiterReady()===current)
+        return {platform:'boss',recordId:locator.id,verified:'exact_card'};
+      throw locatorError(409,'BOSS 官方详情已打开，但原候选卡编号或岗位发生变化，未确认对应关系');
+    }
     if (modal?.state==='identity_conflict')
       throw locatorError(409,'BOSS 打开的简历编号与目标不一致，已停止定位，请人工核对');
     await wait(400);

@@ -34,11 +34,30 @@ test('BOSS official resume dialog must expose the same complete platform ID',()=
   const dialog={querySelectorAll:()=>[iframe]};
   const document={querySelectorAll:()=>[dialog]};
   const expression=bossDialogProbe('247229183',true);
-  assert.equal(vm.runInNewContext(expression,{document,URL}).state,'identity_unavailable');
+  assert.equal(vm.runInNewContext(expression,{document,URL}).state,'detail_unavailable');
+  iframe.contentDocument={body:{innerText:'完整的官方候选人简历正文'.repeat(10)},
+    querySelector:()=>null};
+  assert.equal(vm.runInNewContext(expression,{document,URL}).state,'ready_card_only');
   iframe.src+='?expectId=other';
   assert.equal(vm.runInNewContext(expression,{document,URL}).state,'identity_conflict');
   iframe.src='https://www.zhipin.com/web/frame/c-resume/?expectId=247229183';
   assert.equal(vm.runInNewContext(expression,{document,URL}).state,'ready');
+});
+
+test('BOSS detail without URL ID requires the same official card and job after opening',async()=>{
+  let cardReads=0;
+  const session={assertRecruiterReady:async()=>
+    'https://www.zhipin.com/web/chat/search',
+  assertUsableRecruiterWindow:async()=>{},
+  evaluate:async expression=>expression.includes('const id=')
+    ? (cardReads++,{state:'ready',search:true,
+      frameSelector:'iframe[src*="/web/frame/search/"]',
+      cardSelector:'li.geek-info-card',attribute:'data-expect'})
+    : {state:'ready_card_only'},
+  scrollUnique:async()=>{},clickUnique:async()=>{}};
+  const result=await locateBossCandidate(session,boss,{wait:async()=>{}});
+  assert.equal(result.verified,'exact_card');
+  assert.equal(cardReads,3);
 });
 
 test('BOSS locator clicks only a unique card on the matching job and verifies a dialog',async()=>{

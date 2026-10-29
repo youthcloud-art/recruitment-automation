@@ -208,7 +208,12 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
         respond(res, result);
       } finally { pending = false; }
     } catch (error) {
-      if (!error.publicStatus && Object.hasOwn(bossLocatorRecovery, error.code)) {
+      if (!error.publicStatus && error.code === 'BOSS_CDP_TARGET_UNAVAILABLE') {
+        const state = /^(?:missing|ambiguous|hidden|obscured|out_of_view|frame_unavailable|invalid_selector|unknown)$/.test(error.targetState || '')
+          ? error.targetState : 'unknown';
+        error.publicStatus = 409;
+        error.message = `BOSS 候选卡当前不可操作（${state}）；请在官方结果页加载该卡片后重试`;
+      } else if (!error.publicStatus && Object.hasOwn(bossLocatorRecovery, error.code)) {
         error.publicStatus = 409;
         error.message = bossLocatorRecovery[error.code];
       } else if (!error.publicStatus && /^BOSS_[A-Z0-9_]+$/.test(error.code || '')) {

@@ -357,6 +357,20 @@ test('BOSS saved-ID lookup scans a stable official result list without resubmitt
   assert.equal(loaded,1);
 });
 
+test('BOSS saved-ID lookup re-reads cards after load-more refuses a changed list',async()=>{
+  let loaded=0,reads=0;
+  const collector={adoptVisibleResultsForExactLookup:async()=>true,
+    scrollCards:async()=>{loaded++;throw Object.assign(new Error(
+      'BOSS 滚动后候选列表已变化，未发出点击，已暂停采集'),
+    {code:'BOSS_SEARCH_LOAD_MORE_UNAVAILABLE'});}};
+  const session={evaluate:async()=>({state:++reads>=2?'ready':'not_in_current_list',
+    cardCount:reads>=2?30:15})};
+  const found=await scanBossSearchForCandidate(session,'磁轴销售工程师',
+    '247229183',async()=>{},{createCollector:()=>collector});
+  assert.equal(found.state,'ready');
+  assert.equal(loaded,1,'a refused click is not replayed');
+});
+
 test('BOSS locator stops scanning when official result count no longer grows',async()=>{
   let loaded=0;
   const collector={selectJob:async()=>{},scrollCards:async()=>{loaded++;}};
@@ -432,6 +446,33 @@ test('旧 BOSS 简历可在守卫式加载更多后按原候选卡证据补录',
     {wait:async()=>{},createCollector:()=>collector});
   assert.deepEqual([result.recordId,result.recovered,loaded,calls],
     ['247229183',true,1,['scroll','click']]);
+});
+
+test('旧 BOSS 补录在加载更多时列表变化后重新核对唯一原卡',async()=>{
+  const title='磁轴销售工程师',card='李先生 6年经验 磁轴销售工程师';
+  const legacy={source:'boss',captureJobTitle:title,
+    sourceCardFingerprint:cardFingerprint(searchScope(title),card)};
+  let loaded=0,clicks=0;
+  const collector={adoptVisibleResultsForExactLookup:async()=>true,
+    scrollCards:async()=>{loaded++;throw Object.assign(new Error(
+      'BOSS 滚动后候选列表已变化，未发出点击，已暂停采集'),
+    {code:'BOSS_SEARCH_LOAD_MORE_UNAVAILABLE'});}};
+  const session={assertRecruiterReady:async()=>
+    'https://www.zhipin.com/web/chat/search',
+  assertUsableRecruiterWindow:async()=>{},
+  evaluate:async expression=>expression.includes('cards:cards.map')
+    ? {state:'ready',search:true,cards:loaded
+      ? [{text:card,id:'247229183'}] : [{text:'其他候选人',id:'other-id'}]}
+    : expression.includes('const id=')
+      ? {state:'ready',search:true,frameSelector:'iframe[src*="/web/frame/search/"]',
+        cardSelector:'li.geek-info-card',attribute:'data-expect',cardCount:1}
+      : {state:'ready'},
+  scrollUnique:async()=>{},clickUnique:async()=>{clicks++;}};
+  const result=await locateBossCandidateByFingerprint(session,legacy,
+    {wait:async()=>{},createCollector:()=>collector});
+  assert.equal(result.recordId,'247229183');
+  assert.equal(loaded,1);
+  assert.equal(clicks,1,'only the verified exact candidate card is clicked');
 });
 
 test('旧 BOSS 简历补录先切换到唯一匹配的原招聘岗位',async()=>{

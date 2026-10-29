@@ -602,7 +602,7 @@ class CandidateEmailService {
       '| ---: | --- | --- | --- | --- | --- | ---: | --- |',
       ...candidates.map((item, index) => `| ${index + 1} | ${SOURCE_NAMES[item.source]} | ${platformRecord(item).id} | ${reportCell(candidateName(item))} | ${reportCell(hiringJobTitle(item))} | ${reportCell(candidatePosition(item) || '待核实')} | ${item.matchScore} | ${reportCell(item.matchEvaluation.summary || '')} |`),
       '',
-      '平台记录号来自官方候选卡或官方详情地址；“待平台核实”不能用于查人。各简历附件 candidate-N 对应表中同序号。不同招聘平台的普通关键词搜索框不一定支持按编号查询，请在智能招聘助手候选人详情中使用服务器浏览器定位，并核对官方详情编号。',
+      '平台记录号来自官方候选卡或详情地址；“待平台核实”不能用于查人。各简历附件 candidate-N 对应表中同序号。前程无忧可用简历 ID 查询入口；智联保存的是详情简历标识，BOSS 保存的是候选卡期望记录标识，后两者不是普通人才关键词搜索码。请在智能招聘助手候选人详情中使用服务器浏览器定位，并以官方原卡和详情核对。',
       '',
       '## 岗位匹配评估明细',
       '',
@@ -651,7 +651,7 @@ class CandidateEmailService {
       from: process.env.SMTP_FROM,
       to,
       subject: `${jobTitleFromRequirements(selection.jobRequirements) || ''}候选人初筛报告（${selection.newOnly ? '新增候选人，' : batchLabel ? `第${batchNumber}/${batchCount}批，` : ''}${candidates.length}份）`,
-      text: `随信附上 ${candidates.length} 份进入本次岗位初筛名单的候选人简历材料和初筛报告。${batchLabel ? `${batchLabel}。` : ''}报告覆盖${platformScope}，其中本邮件附简历：${attachedBySource}。完整平台记录号见报告“平台记录号”列，candidate-N 附件与报告序号对应；编号待核实的记录不能据此查人，请在助手中使用服务器浏览器定位并核对官方详情。请结合待核实事项人工复核。\n\n平台编号索引：\n${candidates.map((item,index)=>`candidate-${index+1} · ${SOURCE_NAMES[item.source]} · ${reportCell(candidateName(item))} · ${reportCell(hiringJobTitle(item))} · ${platformRecord(item).id}`).join('\n')}\n` +
+      text: `随信附上 ${candidates.length} 份进入本次岗位初筛名单的候选人简历材料和初筛报告。${batchLabel ? `${batchLabel}。` : ''}报告覆盖${platformScope}，其中本邮件附简历：${attachedBySource}。完整平台记录号见报告“平台记录号”列，candidate-N 附件与报告序号对应；编号待核实的记录不能据此查人。前程无忧可在简历 ID 入口查询；智联与 BOSS 的标识请在助手中通过“定位原候选人”核对，不能当作普通搜索框的关键词。请结合待核实事项人工复核。\n\n平台编号索引：\n${candidates.map((item,index)=>`candidate-${index+1} · ${SOURCE_NAMES[item.source]} · ${reportCell(candidateName(item))} · ${reportCell(hiringJobTitle(item))} · ${platformRecord(item).id}`).join('\n')}\n` +
         (candidates.some(item => item.source === 'qcwy' && item.matchEvaluation.method === 'local')
           ? '前程无忧候选人仅达到本地初筛的最低证据门槛，仍须人工复核全部岗位条件。' : '') +
         (resumeAttachments.some(item => item.attachmentKind === 'page-text')

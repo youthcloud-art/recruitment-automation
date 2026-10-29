@@ -786,9 +786,11 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             {selected.platformRecordId
               ? <Text copyable={{ text: selected.platformRecordId }}>{selected.platformRecordId}</Text>
               : <Text type="warning">平台未提供可验证编号；本机简历号不能用于平台查找</Text>}
-            {selected.platformRecordId && <div><Text type="secondary">平台记录号用于核对身份，招聘平台的关键词搜索框未必支持按此编号查询。</Text></div>}
-            {selected.platformLocatorStatus === 'platform_card' &&
-              <div><Text type="secondary">编号来自平台候选卡；可在服务器当前岗位结果中按编号定位。</Text></div>}
+            {selected.platformRecordId && <div><Text type="secondary">{selected.source === 'qcwy'
+              ? '前程无忧支持在简历 ID 查询入口按此号查找。'
+              : selected.source === 'zlzp'
+                ? '这是官方详情地址中的简历标识，不是“搜索人才”关键词；请用下方按钮核对原简历。'
+                : '这是官方候选卡的期望记录标识，不等于可在“搜索牛人”框查询的唯一人员账号；请用下方按钮核对原卡。'}</Text></div>}
             {selected.platformRecordId && ((selected.source === 'boss' &&
               ['platform_card','official_url'].includes(selected.platformLocatorStatus)) ||
               (selected.platformLocatorStatus === 'official_url' &&

@@ -37,7 +37,19 @@ async function scanBossSearchForCandidate(session, title, id, wait,
     // Reuse the collector's guarded official scroll/load-more flow. It
     // verifies the job, filters, iframe, button and list identity before any
     // click; the locator itself never guesses a card by position or name.
-    await collector.scrollCards();
+    try { await collector.scrollCards(); }
+    catch (error) {
+      // BOSS can append or reorder results while the load-more control is
+      // scrolled into view. The collector correctly refuses to click then.
+      // For an exact-ID lookup, re-read the official cards and continue only
+      // if the target is now unique or the same result page remains usable.
+      if (error.code!=='BOSS_SEARCH_LOAD_MORE_UNAVAILABLE' ||
+          !/候选列表已变化，未发出点击/.test(error.message)) throw error;
+      found=await session.evaluate(expression,{timeoutMs:12000});
+      if (found?.state==='ready') return found;
+      if (found?.state!=='not_in_current_list') throw error;
+      continue;
+    }
     for (let poll=0;poll<8;poll++) {
       found=await session.evaluate(expression,{timeoutMs:12000});
       if (found?.state!=='not_in_current_list' || found.cardCount>count) break;
@@ -315,7 +327,16 @@ async function scanBossSearchForFingerprint(session, title, fingerprint, wait,
   for(let page=0;page<8 && snapshot?.state==='ready' &&
       matchingBossFingerprint(snapshot,fingerprint,title).length===0;page++) {
     const count=snapshot.cards.length;
-    await collector.scrollCards();
+    try { await collector.scrollCards(); }
+    catch (error) {
+      if (error.code!=='BOSS_SEARCH_LOAD_MORE_UNAVAILABLE' ||
+          !/候选列表已变化，未发出点击/.test(error.message)) throw error;
+      snapshot=await session.evaluate(probe,{timeoutMs:12000});
+      if (snapshot?.state!=='ready') throw error;
+      // A changed official list is only a new clue. The caller still needs
+      // one unique full-card fingerprint and a verified official detail.
+      continue;
+    }
     for(let poll=0;poll<8;poll++) {
       snapshot=await session.evaluate(probe,{timeoutMs:12000});
       if(snapshot?.state!=='ready' || snapshot.cards.length>count) break;

@@ -101,7 +101,14 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
     BOSS_LOGIN_REQUIRED: 'BOSS 登录已失效；请在专用 Chrome 正常登录后重试',
     BOSS_PAGE_UNAVAILABLE: 'BOSS 当前不在可用的招聘结果页；请打开对应岗位的“搜索牛人”结果后重试',
     BOSS_CDP_TIMEOUT: 'BOSS 页面响应超时；请确认官方结果卡片已加载，稍后重试',
-    BOSS_CDP_DISCONNECTED: 'BOSS 浏览器连接中断；请确认专用 Chrome 仍打开后重试'
+    BOSS_CDP_DISCONNECTED: 'BOSS 浏览器连接中断；请确认专用 Chrome 仍打开后重试',
+    BOSS_CDP_UNAVAILABLE: 'BOSS 浏览器控制接口不可用；请检查服务器专用 Chrome 是否仍在运行',
+    BOSS_CDP_EVALUATION_FAILED: 'BOSS 官方页面结构已变化，无法读取当前候选卡；请刷新“搜索牛人”结果页后重试',
+    BOSS_CDP_COMMAND_FAILED: 'BOSS 官方页面操作未完成；请保持专用 Chrome 显示并重试',
+    BOSS_CDP_TARGET_UNAVAILABLE: 'BOSS 目标候选卡在当前页面不可操作；请在官方结果页加载该卡片后重试',
+    BOSS_CDP_TARGET_UNSTABLE: 'BOSS 候选卡位置在操作时变化；请等待结果页稳定后重试',
+    BOSS_CDP_CLICK_UNCERTAIN: 'BOSS 候选卡点击结果无法确认；请在服务器浏览器核对当前弹窗后重试',
+    BOSS_RATE_LIMITED: 'BOSS 官方页面提示访问频繁；请按平台提示等待后重试'
   };
 
   router.use((_req, res, next) => {
@@ -204,6 +211,11 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
       if (!error.publicStatus && Object.hasOwn(bossLocatorRecovery, error.code)) {
         error.publicStatus = 409;
         error.message = bossLocatorRecovery[error.code];
+      } else if (!error.publicStatus && /^BOSS_[A-Z0-9_]+$/.test(error.code || '')) {
+        // A stable, data-free code is actionable without disclosing browser
+        // internals, resume details, cookies or the original exception text.
+        error.publicStatus = 409;
+        error.message = `BOSS 定位暂停（${error.code}）；请在官方页面确认状态后重试`;
       }
       errorResponse(res, error);
     }

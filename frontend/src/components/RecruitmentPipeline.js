@@ -61,6 +61,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState('');
   const [locating, setLocating] = useState(false);
+  const [lastLocated, setLastLocated] = useState(null);
   const [emailTo, setEmailTo] = useState('');
   const [minScore, setMinScore] = useState(70);
   const [topN, setTopN] = useState(10);
@@ -456,6 +457,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
 
   const locateOnServer = async candidate => {
     setLocating(true);
+    setLastLocated(null);
     try {
       const result = await apiPost('/browser-console/locate-candidate', { candidateId: candidate.id });
       if (result.data?.recovered && result.data?.recordId) {
@@ -466,8 +468,11 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         } : previous);
         refresh();
       }
+      if (result.data?.verified && result.data?.recordId) {
+        setLastLocated({candidateId:candidate.id,recordId:result.data.recordId});
+      }
       message.success(result.data?.recovered ? '已核对原候选卡并补录 BOSS 平台编号' :
-        '已在公司服务器专用浏览器打开目标候选人');
+        '已按平台编号核对并打开官方原候选人详情');
       window.dispatchEvent(new CustomEvent('company-browser-open', {
         detail: { platform: candidate.source === 'zlzp' ? 'zhilian'
           : candidate.source === 'qcwy' ? 'wuyou' : 'boss' }
@@ -791,6 +796,11 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
               <Button style={{ marginTop: 8 }} loading={locating} onClick={() => locateOnServer(selected)}>
                 在公司服务器浏览器定位原候选人
               </Button>}
+            {lastLocated?.candidateId === selected.id &&
+              lastLocated.recordId === (selected.platformRecordId || selected.sourceCandidateId) &&
+              <Alert style={{ marginTop: 8 }} type="success" showIcon
+                message="本次已在官方页面核对原候选人"
+                description="官方候选卡与详情的编号已核对一致；平台普通关键词搜索框不一定支持粘贴编号查找。" />}
             {!selected.platformRecordId && selected.source === 'boss' &&
               (selected.platformLocatorStatus === 'unavailable') &&
               (selected.sourceCardFingerprint

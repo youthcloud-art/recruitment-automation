@@ -13,6 +13,31 @@ const TITLE='IT网络运维';
 const PAGE='https://www.zhipin.com/web/chat/search';
 const RESUME='https://www.zhipin.com/web/frame/c-resume/?source=search';
 
+test('exact saved-ID lookup reuses only a stable, unrestricted official result list',async()=>{
+  const collector=new BossRawSearchCollector({wait:async()=>{}});
+  const state={state:'ready',value:TITLE,cardCount:15,safeCardCount:15,
+    cardIdsReady:true,cardIdentity:'stable-ids',frameOrigin:123,
+    selectedFiltersReady:true,nonDefaultSelected:0,checkedCount:0,
+    activeCustomSliderCount:0,matchingSearchRequests:0};
+  collector.assertPage=async()=>({url:PAGE});
+  collector.readOnlyExpression=async()=>({...state});
+  collector.readModal=async()=>({active:false});
+  assert.equal(await collector.adoptVisibleResultsForExactLookup(TITLE),true);
+  assert.equal(collector.activeSearchTitle,TITLE);
+  assert.deepEqual(collector.searchEvidence,{frameOrigin:123,keyword:TITLE,
+    source:'stable_visible_exact_id_lookup'});
+  state.cardIdentity='changed-ids';
+  let reads=0;
+  collector.readOnlyExpression=async()=>({...state,
+    cardIdentity:++reads===1?'before':'after'});
+  collector.searchEvidence=null;
+  assert.equal(await collector.adoptVisibleResultsForExactLookup(TITLE),false);
+  assert.equal(collector.searchEvidence,null);
+  state.nonDefaultSelected=1;
+  collector.readOnlyExpression=async()=>({...state});
+  assert.equal(await collector.adoptVisibleResultsForExactLookup(TITLE),false);
+});
+
 function restorableSearchHarness({candidateVisibility=false}={}) {
   const job={title:TITLE,jobRequirements:'网络运维'};
   const frameUrl='https://www.zhipin.com/web/frame/search/';

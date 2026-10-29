@@ -342,6 +342,21 @@ test('BOSS locator loads only guarded official search pages until exact ID appea
   assert.equal(collector.session,session);
 });
 
+test('BOSS saved-ID lookup scans a stable official result list without resubmitting its keyword',async()=>{
+  let selected=0,adopted=0,loaded=0;
+  const collector={adoptVisibleResultsForExactLookup:async title=>{
+    assert.equal(title,'磁轴销售工程师'); adopted++; return true;
+  },selectJob:async()=>{selected++;},scrollCards:async()=>{loaded++;}};
+  const session={evaluate:async()=>({state:loaded?'ready':'not_in_current_list',
+    cardCount:15*(loaded+1)})};
+  const found=await scanBossSearchForCandidate(session,'磁轴销售工程师',
+    '247229183',async()=>{},{createCollector:()=>collector});
+  assert.equal(found.state,'ready');
+  assert.equal(adopted,1);
+  assert.equal(selected,0);
+  assert.equal(loaded,1);
+});
+
 test('BOSS locator stops scanning when official result count no longer grows',async()=>{
   let loaded=0;
   const collector={selectJob:async()=>{},scrollCards:async()=>{loaded++;}};

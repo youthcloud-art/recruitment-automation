@@ -28,7 +28,8 @@ async function scanBossSearchForCandidate(session, title, id, wait,
   } } = {}) {
   const collector=createCollector();
   collector.session=session;
-  await collector.selectJob(title);
+  if (!await collector.adoptVisibleResultsForExactLookup?.(title))
+    await collector.selectJob(title);
   const expression=bossCardProbe(id,title);
   let found=await session.evaluate(expression,{timeoutMs:12000});
   for (let page=0;page<8 && found?.state==='not_in_current_list';page++) {
@@ -307,7 +308,8 @@ async function scanBossSearchForFingerprint(session, title, fingerprint, wait,
   }}={}) {
   const collector=createCollector();
   collector.session=session;
-  await collector.selectJob(title);
+  if (!await collector.adoptVisibleResultsForExactLookup?.(title))
+    await collector.selectJob(title);
   const probe=bossFingerprintProbe(title);
   let snapshot=await session.evaluate(probe,{timeoutMs:12000});
   for(let page=0;page<8 && snapshot?.state==='ready' &&

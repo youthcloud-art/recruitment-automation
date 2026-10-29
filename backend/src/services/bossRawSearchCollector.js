@@ -479,6 +479,32 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     return state;
   }
 
+  // A saved-ID lookup may start from an already loaded official result list.
+  // BOSS sometimes sends the keyword in a POST body, so Resource Timing has
+  // no URL keyword to prove that old search. Do not resubmit merely to obtain
+  // that evidence: a locator will still open only the unique saved platform
+  // ID and verify the official detail. Never use this path for collection.
+  async adoptVisibleResultsForExactLookup(title) {
+    await this.assertPage();
+    const read=()=>this.readOnlyExpression(SEARCH_STATE,'adopt_exact_lookup_results');
+    const acceptable=state=>state?.state==='ready' &&
+      normalized(state.value)===normalized(title) && state.cardCount>0 &&
+      state.safeCardCount===state.cardCount && state.cardIdsReady &&
+      state.selectedFiltersReady && state.nonDefaultSelected===0 &&
+      state.checkedCount===0 && state.activeCustomSliderCount===0;
+    const first=await read();
+    if (!acceptable(first) || (await this.readModal()).active) return false;
+    await this.wait(350);
+    const second=await read();
+    if (!acceptable(second) || second.frameOrigin!==first.frameOrigin ||
+        second.cardIdentity!==first.cardIdentity ||
+        (await this.readModal()).active) return false;
+    this.searchEvidence={frameOrigin:second.frameOrigin,
+      keyword:normalized(title),source:'stable_visible_exact_id_lookup'};
+    this.activeSearchTitle=title;
+    return true;
+  }
+
   async selectJob(title) {
     const scope=searchScope(title);
     // A recruiter can start a saved-job search from the assistant. Submit the

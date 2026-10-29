@@ -449,6 +449,10 @@ const CombinedMessage = ({ thinkingContent, finalContent, isThinkingComplete = f
 };
 
 function App({ companyAuth = null }) {
+  const linkedCandidateId = (() => {
+    const id = new URLSearchParams(window.location.search).get('candidate');
+    return /^resume_[A-Za-z0-9_-]{8,100}$/.test(id || '') ? id : '';
+  })();
   const [socket, setSocket] = useState(null);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
@@ -456,7 +460,7 @@ function App({ companyAuth = null }) {
   const [currentStatus, setCurrentStatus] = useState(null);
   const [isWaitingForCode, setIsWaitingForCode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedMenuKey, setSelectedMenuKey] = useState('1');
+  const [selectedMenuKey, setSelectedMenuKey] = useState(linkedCandidateId ? '4' : '1');
   const [pipelineSourceRequest, setPipelineSourceRequest] = useState(null);
   const [recommendationVisible, setRecommendationVisible] = useState(false);
   const [positions, setPositions] = useState([]);
@@ -1538,7 +1542,8 @@ function App({ companyAuth = null }) {
               <ResumeLibrary />
             </div>
           ) : selectedMenuKey === '4' ? (
-            <RecruitmentPipeline sourceRequest={pipelineSourceRequest} />
+            <RecruitmentPipeline sourceRequest={pipelineSourceRequest}
+              initialCandidateId={linkedCandidateId} />
           ) : selectedMenuKey === '7' ? (
             <RecruitmentAnalytics />
           ) : selectedMenuKey === '9' ? (

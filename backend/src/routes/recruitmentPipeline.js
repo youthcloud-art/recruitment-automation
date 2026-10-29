@@ -175,6 +175,19 @@ router.get('/candidates/page', (req, res) => {
   } catch (error) { fail(res, error); }
 });
 
+// An email link addresses a local record, never a guessed platform person ID.
+// Return the same compact, authenticated candidate view used by the table.
+router.get('/candidates/:id', (req, res) => {
+  const id = req.params.id;
+  if (!/^resume_[A-Za-z0-9_-]{8,100}$/.test(id))
+    return res.status(400).json({ success: false, message: '候选人链接无效' });
+  const candidate = service.store.getResumeById(id);
+  if (!candidate || !['boss', 'zlzp', 'qcwy'].includes(candidate.source))
+    return res.status(404).json({ success: false, message: '候选人记录不存在' });
+  res.set('Cache-Control', 'no-store');
+  return res.json({ success: true, data: publicCandidateSummary(candidate) });
+});
+
 router.post('/candidates/historical/delete', (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');

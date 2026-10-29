@@ -29,7 +29,7 @@ const evaluationMethodLabel = evaluation => {
   return 'DeepSeek AI 辅助评估';
 };
 
-export default function RecruitmentPipeline({ sourceRequest = null }) {
+export default function RecruitmentPipeline({ sourceRequest = null, initialCandidateId = '' }) {
   const [summary, setSummary] = useState({});
   const [candidates, setCandidates] = useState([]);
   const [candidateTotal, setCandidateTotal] = useState(0);
@@ -136,6 +136,27 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   }, [source, status, keyword, viewJobTitle, viewJobGroup, scoreOrder, page, pageSize, listKey]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!initialCandidateId) return;
+    let active = true;
+    apiGet(`/recruitment-pipeline/candidates/${encodeURIComponent(initialCandidateId)}`)
+      .then(result => {
+        if (!active) return;
+        setSelected(result.data);
+        setNotes(result.data?.candidateNotes || '');
+      })
+      .catch(error => { if (active) message.error('无法打开候选人链接：' + error.message); });
+    return () => { active = false; };
+  }, [initialCandidateId]);
+
+  const closeCandidate = () => {
+    setSelected(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('candidate')) {
+      url.searchParams.delete('candidate');
+      window.history.replaceState(window.history.state, '', url);
+    }
+  };
   useEffect(() => {
     const generation = ++reportGeneration.current;
     if (!viewJobTitle || !viewJobGroup) {
@@ -469,10 +490,12 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
         refresh();
       }
       if (result.data?.verified && result.data?.recordId) {
-        setLastLocated({candidateId:candidate.id,recordId:result.data.recordId});
+        setLastLocated({candidateId:candidate.id,recordId:result.data.recordId,
+          verified:result.data.verified});
       }
       message.success(result.data?.recovered ? '已核对原候选卡并补录 BOSS 平台编号' :
-        '已按平台编号核对并打开官方原候选人详情');
+        candidate.source === 'boss' ? '已按候选卡记录号打开 BOSS 官方详情，请人工确认人物' :
+          '已按官方简历号核对并打开原候选人详情');
       window.dispatchEvent(new CustomEvent('company-browser-open', {
         detail: { platform: candidate.source === 'zlzp' ? 'zhilian'
           : candidate.source === 'qcwy' ? 'wuyou' : 'boss' }
@@ -778,7 +801,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
           message="请先在上方填写并保存发件邮箱设置" />}
       </Card>
       <Modal title={`${selected?.name || '候选人'} · ${sourceLabel(selected?.source)}`} open={Boolean(selected)}
-        onCancel={() => setSelected(null)} footer={null} width={720} destroyOnClose>
+        onCancel={closeCandidate} footer={null} width={720} destroyOnClose>
         {selected && <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div><Text>招聘岗位：{selected.hiringJobTitle || '招聘岗位待核实'}</Text>
             {selected.name === '姓名待核实' && <Text type="warning"> · 平台未提供可核实姓名，请在原始页面确认</Text>}</div>
@@ -791,6 +814,9 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
               : selected.source === 'zlzp'
                 ? '这是官方详情地址中的简历标识，不是“搜索人才”关键词；请用下方按钮核对原简历。'
                 : '这是官方候选卡的期望记录标识，不等于可在“搜索牛人”框查询的唯一人员账号；请用下方按钮核对原卡。'}</Text></div>}
+            <div style={{ marginTop: 8 }}><Text type="secondary">从邮件返回这份记录：</Text>
+              <Text copyable={{ text: `${window.location.origin}/?candidate=${encodeURIComponent(selected.id)}` }}>
+                复制助手内候选人链接</Text></div>
             {selected.platformRecordId && ((selected.source === 'boss' &&
               ['platform_card','official_url'].includes(selected.platformLocatorStatus)) ||
               (selected.platformLocatorStatus === 'official_url' &&
@@ -801,8 +827,10 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             {lastLocated?.candidateId === selected.id &&
               lastLocated.recordId === (selected.platformRecordId || selected.sourceCandidateId) &&
               <Alert style={{ marginTop: 8 }} type="success" showIcon
-                message="本次已在官方页面核对原候选人"
-                description="官方候选卡与详情的编号已核对一致；平台普通关键词搜索框不一定支持粘贴编号查找。" />}
+                message="本次已打开官方候选人详情"
+                description={selected.source === 'boss'
+                  ? '已按原岗位和候选卡记录号核对并打开详情；BOSS 详情未必显示人员账号 ID，请人工核对简历内容。'
+                  : '已核对官方详情简历号；平台普通关键词搜索框不一定支持粘贴编号查找。'} />}
             {!selected.platformRecordId && selected.source === 'boss' &&
               (selected.platformLocatorStatus === 'unavailable') &&
               (selected.sourceCardFingerprint

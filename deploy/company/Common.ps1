@@ -96,7 +96,7 @@ function Get-CompanyRuntimeDefinitions($Config, [string]$ReleaseRoot, [string]$G
     if (-not $GatewayHost) { $GatewayHost = [string]$Config.companyHost }
     if ($GatewayPort -eq 0) { $GatewayPort = [int]$Config.gatewayPort }
     @(
-        @{name='backend'; script=(Join-Path $ReleaseRoot 'backend\src\index.js'); cwd=(Join-Path $ReleaseRoot 'backend'); env=@{HOST='127.0.0.1';PORT=[string]$Config.backendPort;NODE_ENV='production';COMPANY_DEPLOYMENT='true';RECRUITMENT_ENV_FILE=(Join-Path $Config.installRoot 'shared\backend.env')}},
+        @{name='backend'; script=(Join-Path $ReleaseRoot 'backend\src\index.js'); cwd=(Join-Path $ReleaseRoot 'backend'); env=@{HOST='127.0.0.1';PORT=[string]$Config.backendPort;NODE_ENV='production';COMPANY_DEPLOYMENT='true';ASSISTANT_PUBLIC_ORIGIN=('http://' + $GatewayHost + ':' + $GatewayPort);RECRUITMENT_ENV_FILE=(Join-Path $Config.installRoot 'shared\backend.env')}},
         @{name='gateway'; script=(Join-Path $ReleaseRoot 'deploy\company\gateway.js'); cwd=$ReleaseRoot; env=@{COMPANY_HOST=$GatewayHost;COMPANY_PORT=[string]$GatewayPort;BACKEND_PORT=[string]$Config.backendPort;LAN_ALLOW_CIDRS=([string[]]$Config.allowedNetworks -join ',');NODE_ENV='production';PUBLIC_ORIGIN=('http://' + $GatewayHost + ':' + $GatewayPort)}}
     )
 }

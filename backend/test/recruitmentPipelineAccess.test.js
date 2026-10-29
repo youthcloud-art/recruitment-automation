@@ -28,6 +28,8 @@ test('招聘简历与邮件路由拒绝恶意来源、缺少 Origin 的跨站请
   try {
     const path = '/api/recruitment-pipeline';
     assert.equal((await request(`${path}/candidates`, { Origin: 'https://malicious.example' })).status, 403);
+    assert.equal((await request(`${path}/candidates/resume_abcdefgh`,
+      { Origin: 'https://malicious.example' })).status, 403);
     assert.equal((await request(`${path}/report`, { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
     assert.equal((await request(`${path}/report?format=docx`, { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
     assert.equal((await request(`${path}/active-job/template`, { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
@@ -48,6 +50,8 @@ test('招聘简历与邮件路由拒绝恶意来源、缺少 Origin 的跨站请
     const allowedLocalCli = await request(`${path}/summary`);
     assert.equal(allowedLocalCli.status, 200);
     assert.equal(JSON.parse(allowedLocalCli.body).success, true);
+    assert.equal((await request(`${path}/candidates/not-a-candidate`)).status, 400);
+    assert.equal((await request(`${path}/candidates/resume_abcdefgh`)).status, 404);
     const template = await request(`${path}/active-job/template`);
     assert.equal(template.status, 200, template.body.slice(0, 300));
     assert.match(template.headers['content-type'], /spreadsheetml\.sheet/);

@@ -117,6 +117,7 @@ test('三平台邮件报告与页面 TXT 均带完整官方编号，缺号旧 BO
   for (const reportFormat of ['md', 'docx']) {
     let sent;
     const service = new CandidateEmailService({ pipeline: { list: () => items },
+      publicOrigin: 'http://192.168.1.24:4001',
       transportFactory: () => ({ sendMail: async mail => {
         sent = mail;
         return { messageId: 'synthetic-mail' };
@@ -133,13 +134,16 @@ test('三平台邮件报告与页面 TXT 均带完整官方编号，缺号旧 BO
     for (const id of [bossId, zhilianId, wuyouId]) assert.ok(report.includes(id));
     assert.match(report, /平台记录号/);
     assert.match(report, /待平台核实/);
-    assert.doesNotMatch(report, /LOCAL_99999|resume_boss_legacy_local_id/);
+    assert.doesNotMatch(report, /LOCAL_99999/);
     assert.match(report, /招聘岗位/);
     assert.match(report, /求职岗位/);
     assert.match(sent.text, /完整平台记录号见报告/);
     for (const id of [bossId, zhilianId, wuyouId]) assert.ok(sent.text.includes(id));
     assert.match(sent.text, /candidate-4.*待平台核实/);
-    assert.doesNotMatch(sent.text, /LOCAL_99999|resume_boss_legacy_local_id/);
+    assert.match(sent.text,
+      /http:\/\/192\.168\.1\.24:4001\/\?candidate=resume_boss_verified/);
+    assert.doesNotMatch(sent.text, /LOCAL_99999/);
+    assert.match(report, /助手内候选人链接：http:\/\/192\.168\.1\.24:4001/);
     for (const [index, candidate] of preview.candidates.entries()) {
       const content = sent.attachments[index + 1].content;
       const expected = candidate.id === 'resume_boss_verified' ? bossId
@@ -148,6 +152,7 @@ test('三平台邮件报告与页面 TXT 均带完整官方编号，缺号旧 BO
       assert.ok(content.includes(expected));
       assert.match(content, /招聘岗位：磁轴销售工程师/);
       assert.match(content, /回查提示：/);
+      assert.match(content, /助手内候选人链接：http:\/\/192\.168\.1\.24:4001/);
       assert.doesNotMatch(content, /LOCAL_99999/);
     }
   }

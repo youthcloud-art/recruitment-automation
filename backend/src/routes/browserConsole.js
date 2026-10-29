@@ -100,6 +100,7 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
     BOSS_VERIFICATION_REQUIRED: 'BOSS 需要在官方页面完成人工安全验证；完成后回到岗位结果页重试',
     BOSS_LOGIN_REQUIRED: 'BOSS 登录已失效；请在专用 Chrome 正常登录后重试',
     BOSS_PAGE_UNAVAILABLE: 'BOSS 当前不在可用的招聘结果页；请打开对应岗位的“搜索牛人”结果后重试',
+    BOSS_SEARCH_KEYWORD_MISMATCH: 'BOSS 官方搜索框或结果页已切换，无法确认原招聘岗位；请在专用 Chrome 打开该岗位的“搜索牛人”结果卡后重试。系统不会用相似姓名代替编号定位',
     BOSS_CDP_TIMEOUT: 'BOSS 页面响应超时；请确认官方结果卡片已加载，稍后重试',
     BOSS_CDP_DISCONNECTED: 'BOSS 浏览器连接中断；请确认专用 Chrome 仍打开后重试',
     BOSS_CDP_UNAVAILABLE: 'BOSS 浏览器控制接口不可用；请检查服务器专用 Chrome 是否仍在运行',

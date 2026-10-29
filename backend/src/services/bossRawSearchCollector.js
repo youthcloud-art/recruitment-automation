@@ -54,6 +54,10 @@ const SEARCH_STATE = `(() => { /* bossRaw:searchState */
   const cards=[...doc.querySelectorAll(${JSON.stringify(SEARCH_CARD)})];
   const safeCards=cards.filter(card=>
     card.querySelectorAll(':scope > a[ka="search_click_open_resume"][data-expect]').length===1);
+  const cardIds=safeCards.map(card=>card.querySelector(
+    ':scope > a[ka="search_click_open_resume"][data-expect]')?.getAttribute('data-expect')||'');
+  const cardIdsReady=cardIds.length===cards.length &&
+    cardIds.every(id=>id.length>0) && new Set(cardIds).size===cardIds.length;
   const selected={};
   for (const kind of ['degree','exp','age']) {
     selected[kind]=[...doc.querySelectorAll('.'+kind+'-item.active')]
@@ -94,7 +98,8 @@ const SEARCH_STATE = `(() => { /* bossRaw:searchState */
     Number.isFinite(entry.startTime) ? Math.max(latest,
       outer.contentWindow.performance.timeOrigin+entry.startTime) : latest,0);
   return {state:'ready',value:inputs[0].value,cardCount:cards.length,
-    safeCardCount:safeCards.length,frameUrl:frameUrl.href,
+    safeCardCount:safeCards.length,cardIdsReady,
+    cardIdentity:cardIdsReady?cardIds.join('\\u001f'):'',frameUrl:frameUrl.href,
     frameOrigin:outer.contentWindow.performance.timeOrigin,
     matchingSearchRequests,latestOfficialSearchRequestAt,
     selectedFiltersReady,nonDefaultSelected,
@@ -543,6 +548,16 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     // Its visible search icon submits without depending on that focus.
     await this.clickStableSearchControl('.search-input-wrap .icon-search',title,
       before.frameOrigin);
+    // Some BOSS search pages reuse the already visible result list without
+    // issuing a new Resource Timing entry when the recruiter submits the
+    // same keyword again. Only accept that case when the exact keyword and
+    // every unique official candidate-card identity were already visible
+    // before the click and remain unchanged in the same document. A switch
+    // from another keyword still requires a fresh official search request.
+    const reuseVisibleResults=normalized(before.value)===normalized(title) &&
+      before.cardCount>0 && before.cardIdsReady &&
+      before.safeCardCount===before.cardCount && !!before.cardIdentity;
+    let stableReusedResults=0;
     for (let poll=0;poll<20;poll++) {
       await this.wait(500);
       await this.assertPage({allowMissingFrame:true});
@@ -555,6 +570,18 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
         await this.wait(800);
         return;
       }
+      if (reuseVisibleResults && state?.state==='ready' &&
+          state.frameOrigin===before.frameOrigin &&
+          state.cardIdsReady && state.cardIdentity===before.cardIdentity &&
+          state.safeCardCount===state.cardCount &&
+          state.selectedFiltersReady && state.nonDefaultSelected===0 &&
+          state.checkedCount===0 && state.activeCustomSliderCount===0 &&
+          !(await this.readModal()).active) {
+        if (++stableReusedResults>=2) {
+          this.searchEvidence={frameOrigin:state.frameOrigin,keyword:normalized(title)};
+          return;
+        }
+      } else stableReusedResults=0;
     }
     throw fail('BOSS_SEARCH_RESULTS_UNAVAILABLE',
       'BOSS 官方岗位搜索未返回可确认的候选结果，未打开任何简历');

@@ -26,12 +26,16 @@ test('visible 智联简历弹窗 can be parsed, saved and deduplicated', async (
     }));
     await page.goto('https://rd.zhaopin.com/app/search?resumeNumber=test-001');
     const captured = await collector.captureVisibleResume(page);
+    captured.searchKeyword = '磁轴销售工程师';
+    captured.searchPage = 2;
     assert.match(captured.text, /工作经历/);
     const first = await collector.save(captured);
     assert.equal(first.saved, true);
     assert.equal(first.resume.id, 'generated-id');
     assert.equal(first.resume.source, 'zlzp');
     assert.equal(first.resume.sourceCandidateId, 'test-001');
+    assert.equal(first.resume.sourceSearchKeyword, '磁轴销售工程师');
+    assert.equal(first.resume.sourceSearchPage, 2);
     assert.deepEqual(first.resume.workExperience, []);
     assert.deepEqual(first.resume.skills, ['SQL']);
     assert.equal((await collector.save(captured)).duplicate, true);

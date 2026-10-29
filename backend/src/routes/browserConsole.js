@@ -188,7 +188,15 @@ function createBrowserConsoleRouter({ environment = process.env, getTargets = de
             });
           }
         } else {
-          result = await withPage(platform, page => locateOfficialCandidate(page, candidate));
+          const position = candidate.capturePositionId
+            ? resumeModel.getPositionById(candidate.capturePositionId) : null;
+          const searchTerms = [candidate.sourceSearchKeyword,
+            ...String(position?.searchKeywords || '').split(/[,，、\n]/),
+            candidate.captureJobTitle].map(value => String(value || '').trim())
+            .filter((value, index, values) => value && values.indexOf(value) === index)
+            .slice(0, 5);
+          result = await withPage(platform, page => locateOfficialCandidate(page, candidate,
+            { searchTerms }));
         }
         respond(res, result);
       } finally { pending = false; }

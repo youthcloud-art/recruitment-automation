@@ -150,6 +150,9 @@ class ZhilianResumeCollector {
       sourceCandidateIdSource: 'official_url',
       sourceTitle: captured.title,
       sourceFingerprint: fingerprint,
+      sourceSearchKeyword: String(captured.searchKeyword || '').trim().slice(0, 120),
+      sourceSearchPage: Number.isInteger(captured.searchPage) && captured.searchPage > 0
+        ? Math.min(captured.searchPage, 100) : null,
       originalText: captured.text,
       captureJobRequirements: String(activeJob?.jobRequirements || '').trim() || null,
       captureJobTitle: String(activeJob?.title || '').trim() || null,

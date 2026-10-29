@@ -5848,6 +5848,8 @@ class ZhilianService {
       }
       await modal.waitFor({ state: 'visible', timeout: 12000 });
       const captured = await this.resumeCollector.captureVisibleResume(this.page);
+      captured.searchKeyword = this.browsingStatus.currentKeyword || '';
+      captured.searchPage = this.browsingStatus.currentPage || 1;
       const result = await this.resumeCollector.save(captured, this.activeJobSnapshot);
       this.browsingStatus.lastCandidateFailureCode = null;
       if (result.duplicate) {

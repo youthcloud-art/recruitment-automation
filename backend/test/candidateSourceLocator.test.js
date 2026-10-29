@@ -382,13 +382,14 @@ test('智联经历证据相似但详情编号不同则关闭弹窗并拒绝定�
   const cards=[{textContent:'涂先生 帝森克罗德电力技术 泰永电气科技'}];
   const page={url:()=>opened?'https://rd6.zhaopin.com/app/search?resumeNumber=other-id':
     'https://rd6.zhaopin.com/app/search',
-    keyboard:{press:async key=>{assert.equal(key,'Escape');escaped=true;}},
+    keyboard:{press:async key=>{assert.equal(key,'Escape');escaped=true;opened=false;}},
     locator:selector=>selector.startsWith('div.search-resume-item')
       ? {evaluateAll:async(fn,arg)=>typeof arg==='string'?[]:fn(cards,arg),
         nth:()=>({click:async()=>{opened=true;}})}
-      : {first:()=>({waitFor:async()=>{if(!opened)throw new Error('not open');}})}
+      : {first:()=>({waitFor:async ({state})=>{if(state==='hidden'&&!opened)return;
+        if(!opened)throw new Error('not open');}})}
   };
-  await assert.rejects(locateOfficialCandidate(page,candidate),/未能核实对应编号/);
+  await assert.rejects(locateOfficialCandidate(page,candidate),/不在当前已加载/);
   assert.equal(escaped,true);
 });
 
@@ -407,4 +408,44 @@ test('智联相似经历匹配多张卡片时不点击任何人',async()=>{
   };
   await assert.rejects(locateOfficialCandidate(page,candidate),/多个经历相似/);
   assert.equal(clicked,false);
+});
+
+test('智联原结果已切换时按保存的岗位词重新搜索并核对官方简历号',async()=>{
+  const id='ZL_2026-abc123';
+  const url=`https://rd6.zhaopin.com/app/search?resumeNumber=${id}`;
+  const candidate={source:'zlzp',sourceUrl:url,sourceCandidateId:id,
+    sourceSearchKeyword:'磁轴销售工程师'};
+  let term='',opened=false,clicks=0;
+  const page={url:()=>opened?url:'https://rd6.zhaopin.com/app/search',
+    waitForTimeout:async()=>{},
+    locator:selector=>selector.startsWith('input[placeholder')
+      ? {first:()=>({isVisible:async()=>true,fill:async value=>{term=value;},
+        press:async key=>assert.equal(key,'Enter')})}
+      : selector.startsWith('div.search-resume-item')
+        ? {evaluateAll:async(_fn,arg)=>typeof arg==='string'&&term==='磁轴销售工程师'?[0]:[],
+          nth:()=>({click:async()=>{clicks++;opened=true;}})}
+        : {first:()=>({waitFor:async()=>{if(!opened)throw new Error('not open');}})}
+  };
+  const result=await locateOfficialCandidate(page,candidate,
+    {searchTerms:[candidate.sourceSearchKeyword]});
+  assert.equal(result.verified,'exact_card');
+  assert.equal(term,'磁轴销售工程师');
+  assert.equal(clicks,1);
+});
+
+test('智联单段独特公司经历可作候选卡线索，最终仍需详情编号一致',async()=>{
+  const id='ZL_2026-abc123';
+  const url=`https://rd6.zhaopin.com/app/search?resumeNumber=${id}`;
+  const candidate={source:'zlzp',name:'张先生',sourceUrl:url,sourceCandidateId:id,
+    workExperience:[{company:'佛山精燃机电设备有限公司'}]};
+  let opened=false;
+  const cards=[{textContent:'张先生 佛山精燃机电设备 销售工程师'},
+    {textContent:'张先生 其他公司 销售工程师'}];
+  const page={url:()=>opened?url:'https://rd6.zhaopin.com/app/search',
+    locator:selector=>selector.startsWith('div.search-resume-item')
+      ? {evaluateAll:async(fn,arg)=>typeof arg==='string'?[]:fn(cards,arg),
+        nth:index=>({click:async()=>{assert.equal(index,0);opened=true;}})}
+      : {first:()=>({waitFor:async()=>{if(!opened)throw new Error('not open');}})}
+  };
+  assert.equal((await locateOfficialCandidate(page,candidate)).verified,'exact_card');
 });

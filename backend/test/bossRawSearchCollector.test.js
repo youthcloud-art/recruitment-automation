@@ -944,6 +944,46 @@ test('assistant accepts a fresh official POST-style search after its own verifie
   assert.equal(collector.searchEvidence.keyword,TITLE);
 });
 
+test('assistant accepts stable official cards after submitting the same visible keyword',async()=>{
+  const collector=new BossRawSearchCollector();
+  const state={state:'ready',value:TITLE,cardCount:15,safeCardCount:15,
+    cardIdsReady:true,cardIdentity:'official-card-1|official-card-2',
+    frameOrigin:7,matchingSearchRequests:0,latestOfficialSearchRequestAt:0,
+    selectedFiltersReady:true,nonDefaultSelected:0,checkedCount:0,
+    activeCustomSliderCount:0};
+  let searchClicks=0;
+  collector.readOnlyExpression=async()=>state;
+  collector.readModal=async()=>({active:false});
+  collector.assertPage=async()=>({url:PAGE});
+  collector.wait=async()=>{};
+  collector.session={assertUsableRecruiterWindow:async()=>true,
+    clickUnique:async options=>{
+      if(options.selector==='.search-input-wrap .icon-search') searchClicks++;
+    },send:async()=>{}};
+  assert.match((await collector.selectJob(TITLE)).value,/^search-[a-f0-9]{32}$/);
+  assert.equal(searchClicks,1);
+  assert.equal(collector.searchEvidence.keyword,TITLE);
+});
+
+test('assistant rejects unchanged cards when switching to a different keyword',async()=>{
+  const collector=new BossRawSearchCollector();
+  let state={state:'ready',value:'旧岗位',cardCount:15,safeCardCount:15,
+    cardIdsReady:true,cardIdentity:'official-card-1|official-card-2',
+    frameOrigin:7,matchingSearchRequests:0,latestOfficialSearchRequestAt:0,
+    selectedFiltersReady:true,nonDefaultSelected:0,checkedCount:0,
+    activeCustomSliderCount:0};
+  collector.readOnlyExpression=async()=>state;
+  collector.readModal=async()=>({active:false});
+  collector.assertPage=async()=>({url:PAGE});
+  collector.wait=async()=>{};
+  collector.session={assertUsableRecruiterWindow:async()=>true,
+    clickUnique:async()=>{},send:async(method,args)=>{
+      if(method==='Input.insertText') state={...state,value:args.text};
+    }};
+  await assert.rejects(collector.selectJob(TITLE),
+    error=>error.code==='BOSS_SEARCH_RESULTS_UNAVAILABLE');
+});
+
 test('assistant retries a moving search control only before any mouse press',async()=>{
   const collector=new BossRawSearchCollector();
   collector.wait=async()=>{};

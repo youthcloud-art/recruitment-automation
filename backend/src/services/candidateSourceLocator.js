@@ -315,7 +315,82 @@ async function locateBossCandidate(session, candidate, { wait = ms => new Promis
   throw locatorError(409,'BOSS 候选卡已点击，但未能核实官方简历弹窗；请在服务器浏览器人工核对');
 }
 
-async function locateOfficialCandidate(page, candidate) {
+async function openZhilianCandidateFromCurrentResults(page,candidate,locator) {
+  const found=await findZhilianCard(page,locator.id);
+  if (found==='ambiguous')
+    throw locatorError(409,'智联当前结果中有重复的简历号，未执行定位；请在平台人工核对');
+  const evidenceFound=found==null?await findZhilianCardByEvidence(page,candidate):found;
+  if (evidenceFound==='ambiguous')
+    throw locatorError(409,'智联当前结果中有多个经历相似的候选人，未执行定位；请在平台人工核对');
+  if (!Number.isInteger(evidenceFound)) return null;
+  const card=page.locator('div.search-resume-item.resume-item-exp').nth(evidenceFound);
+  await card.click({timeout:10000});
+  const detailVisible=await waitForZhilianDetail(page,12000);
+  if (!detailVisible || idFromOfficialUrl('zlzp',page.url())!==locator.id) {
+    await page.keyboard.press('Escape');
+    try {
+      await page.locator('.new-shortcut-resume__modal .new-resume-detail--inner, .new-resume-detail--inner')
+        .first().waitFor({state:'hidden',timeout:3000});
+    } catch {
+      throw locatorError(409,'智联打开了其他候选人的详情，未能安全关闭弹窗；请在平台人工核对');
+    }
+    if(found==null) return null;
+    throw locatorError(409,'智联候选卡已打开，但未能核实对应编号的详情；请在官方页面人工核对');
+  }
+  return {platform:'zlzp',recordId:locator.id,verified:'exact_card'};
+}
+
+async function zhilianResultFingerprint(page) {
+  return page.locator('div.search-resume-item.resume-item-exp')
+    .evaluateAll(elements=>elements.slice(0,20).map(card=>
+      (card.textContent||'').replace(/\s+/g,' ').trim().slice(0,120)).join('\n'))
+    .catch(()=>'');
+}
+
+async function searchZhilianForSavedCandidate(page,candidate,locator,searchTerms) {
+  const terms=[...new Set(searchTerms.map(term=>String(term||'').trim())
+    .filter(term=>term && term.length<=120))].slice(0,5);
+  if (!terms.length) return null;
+  const inputSelectors=['input[placeholder*="关键词"]','input[placeholder*="搜索"]',
+    'input[placeholder*="岗位"]','input[placeholder*="职位"]',
+    '.keyword-panel input[type="text"]','.search-box input','input[type="search"]'];
+  let input=null;
+  for (const selector of inputSelectors) {
+    const candidateInput=page.locator(selector).first();
+    if (await candidateInput.isVisible().catch(()=>false)) { input=candidateInput; break; }
+  }
+  if (!input) return null;
+  const pageHint=Number.isInteger(candidate.sourceSearchPage)
+    ? candidate.sourceSearchPage : 1;
+  const maxPages=Math.min(5,Math.max(3,pageHint+1));
+  for (const term of terms) {
+    await input.fill(term,{timeout:5000});
+    await input.press('Enter',{timeout:5000});
+    await page.waitForTimeout(1200);
+    let prior='';
+    for (let pageIndex=0;pageIndex<maxPages;pageIndex++) {
+      const found=await openZhilianCandidateFromCurrentResults(page,candidate,locator);
+      if (found) return found;
+      const next=page.locator('.next-page, .btn-next, .pagination .next, [aria-label="下一页"]')
+        .filter({visible:true}).first();
+      if (!await next.isVisible().catch(()=>false) ||
+          !await next.isEnabled().catch(()=>false) ||
+          await next.getAttribute('aria-disabled').catch(()=>null)==='true') break;
+      prior=await zhilianResultFingerprint(page);
+      await next.click({timeout:5000});
+      let changed=false;
+      for(let poll=0;poll<8;poll++) {
+        await page.waitForTimeout(500);
+        const current=await zhilianResultFingerprint(page);
+        if(current && current!==prior){changed=true;break;}
+      }
+      if(!changed) break;
+    }
+  }
+  return null;
+}
+
+async function locateOfficialCandidate(page, candidate, {searchTerms=[]}={}) {
   const locator=platformLocator(candidate);
   if (!['zlzp','qcwy'].includes(candidate?.source) || locator.status!=='official_url' ||
       !locator.url || idFromOfficialUrl(candidate.source,locator.url)!==locator.id)
@@ -329,22 +404,10 @@ async function locateOfficialCandidate(page, candidate) {
       return {platform:'zlzp',recordId:locator.id,verified:'official_detail'};
     if (await waitForZhilianDetail(page,500))
       throw locatorError(409,'智联当前打开的是另一份简历；请先关闭该弹窗后再定位');
-    const found=await findZhilianCard(page,locator.id);
-    if (found==='ambiguous')
-      throw locatorError(409,'智联当前结果中有重复的简历号，未执行定位；请在平台人工核对');
-    const evidenceFound=found==null?await findZhilianCardByEvidence(page,candidate):found;
-    if (evidenceFound==='ambiguous')
-      throw locatorError(409,'智联当前结果中有多个经历相似的候选人，未执行定位；请在平台人工核对');
-    if (Number.isInteger(evidenceFound)) {
-      const card=page.locator('div.search-resume-item.resume-item-exp').nth(evidenceFound);
-      await card.click({timeout:10000});
-      const detailVisible=await waitForZhilianDetail(page,12000);
-      if (!detailVisible || idFromOfficialUrl('zlzp',page.url())!==locator.id) {
-        await page.keyboard.press('Escape').catch(()=>{});
-        throw locatorError(409,'智联候选卡已打开，但未能核实对应编号的详情；请在官方页面人工核对');
-      }
-      return {platform:'zlzp',recordId:locator.id,verified:'exact_card'};
-    }
+    const inCurrent=await openZhilianCandidateFromCurrentResults(page,candidate,locator);
+    if(inCurrent) return inCurrent;
+    const recovered=await searchZhilianForSavedCandidate(page,candidate,locator,searchTerms);
+    if(recovered) return recovered;
     throw locatorError(409,'智联原候选卡不在当前已加载的搜索结果中；请在官方页面打开原岗位结果后重试。完整简历号不能直接作为普通关键词搜索');
   }
   await page.goto(locator.url,{waitUntil:'domcontentloaded',timeout:30000});
@@ -364,7 +427,7 @@ async function findZhilianCardByEvidence(page,candidate) {
       .replace(/(?:股份)?有限公司|有限责任公司|公司$/g,'')
       .replace(/[^\p{Script=Han}A-Za-z0-9]/gu,''))
     .filter(value=>value.length>=6))].slice(0,5);
-  if (!/^[\p{Script=Han}]{1,4}(?:先生|女士)$/u.test(name) || companies.length<2)
+  if (!/^[\p{Script=Han}]{1,4}(?:先生|女士)$/u.test(name) || companies.length<1)
     return null;
   const matches=await page.locator('div.search-resume-item.resume-item-exp')
     .evaluateAll((elements,evidence)=>{
@@ -379,7 +442,7 @@ async function findZhilianCardByEvidence(page,candidate) {
             if(text.includes(company.slice(i,i+6))) return true;
           return false;
         });
-        return distinct.length>=2?[index]:[];
+        return distinct.length>=1?[index]:[];
       });
     },{name,companies}).catch(()=>[]);
   return matches.length>1?'ambiguous':matches.length===1?matches[0]:null;

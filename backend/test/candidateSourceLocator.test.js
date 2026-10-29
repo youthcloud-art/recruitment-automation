@@ -352,6 +352,19 @@ test('BOSS locator stops scanning when official result count no longer grows',as
   assert.equal(loaded,1);
 });
 
+test('BOSS locator waits for cards that arrive after an official scroll',async()=>{
+  let loaded=0,settled=false,waits=0;
+  const collector={selectJob:async()=>{},scrollCards:async()=>{loaded++;}};
+  const session={evaluate:async()=>({state:loaded && settled?'ready':'not_in_current_list',
+    cardCount:loaded && settled?30:15})};
+  const found=await scanBossSearchForCandidate(session,'磁轴销售工程师',
+    '247229183',async()=>{settled=true;waits++;},
+    {createCollector:()=>collector});
+  assert.equal(found.state,'ready');
+  assert.equal(loaded,1);
+  assert.equal(waits,1);
+});
+
 test('旧 BOSS 简历只按唯一候选卡证据补录官方编号',async()=>{
   new vm.Script(bossFingerprintProbe('磁轴销售工程师'));
   const title='磁轴销售工程师';
@@ -419,11 +432,38 @@ test('智联当前官方简历号与可见详情一致时直接核实',async()=>
   const candidate={source:'zlzp',sourceUrl:url,sourceCandidateId:'ZL_2026-abc123'};
   let current=url;
   const page={goto:async()=>{throw new Error('must not navigate');},url:()=>current,
-    locator:selector=>selector.startsWith('div.search-resume-item')
+    locator:selector=>selector==='.new-shortcut-resume__modal'
+      ? {first:()=>({isVisible:async()=>false})}
+      : selector.startsWith('div.search-resume-item')
       ? {evaluateAll:async()=>[]} : {first:()=>({waitFor:async()=>{}})}};
   assert.equal((await locateOfficialCandidate(page,candidate)).verified,'official_detail');
   current='https://rd6.zhaopin.com/app/search?resumeNumber=other';
-  await assert.rejects(locateOfficialCandidate(page,candidate),/当前打开的是另一份简历/);
+  await assert.rejects(locateOfficialCandidate(page,candidate),/详情弹窗无法确认/);
+});
+
+test('智联回查下一人前关闭并确认上一份官方详情',async()=>{
+  const id='XevrLIqHU6t4wDMqb6)yt9PUL0fFDpih';
+  const candidate={source:'zlzp',sourceCandidateId:id,
+    sourceUrl:`https://rd6.zhaopin.com/app/search?resumeNumber=${encodeURIComponent(id)}`};
+  let oldOpen=true,targetOpen=false,escapes=0;
+  const card={getAttribute:key=>key==='data-resume-number'?id:null,
+    querySelectorAll:()=>[]};
+  const page={url:()=>targetOpen?candidate.sourceUrl:oldOpen
+    ? 'https://rd6.zhaopin.com/app/search?resumeNumber=previous-id'
+    : 'https://rd6.zhaopin.com/app/search',
+  keyboard:{press:async key=>{assert.equal(key,'Escape');oldOpen=false;escapes++;}},
+  locator:selector=>selector==='.new-shortcut-resume__modal'
+    ? {first:()=>({isVisible:async()=>oldOpen,
+      waitFor:async({state})=>{assert.equal(state,'hidden');assert.equal(oldOpen,false);}})}
+    : selector.startsWith('div.search-resume-item')
+      ? {evaluateAll:async(fn,arg)=>fn([card],arg),
+        nth:()=>({click:async()=>{targetOpen=true;}})}
+      : {first:()=>({waitFor:async({state})=>{
+        assert.equal(state,'visible');
+        if(!oldOpen&&!targetOpen)throw new Error('detail closed');
+      }})}};
+  assert.equal((await locateOfficialCandidate(page,candidate)).verified,'exact_card');
+  assert.equal(escapes,1);
 });
 
 test('智联仅打开带简历号的搜索地址不能冒充已核实详情或重置搜索页',async()=>{

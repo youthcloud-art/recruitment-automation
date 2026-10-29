@@ -37,7 +37,11 @@ async function scanBossSearchForCandidate(session, title, id, wait,
     // verifies the job, filters, iframe, button and list identity before any
     // click; the locator itself never guesses a card by position or name.
     await collector.scrollCards();
-    found=await session.evaluate(expression,{timeoutMs:12000});
+    for (let poll=0;poll<8;poll++) {
+      found=await session.evaluate(expression,{timeoutMs:12000});
+      if (found?.state!=='not_in_current_list' || found.cardCount>count) break;
+      if (poll<7) await wait(400);
+    }
     if (found?.state==='not_in_current_list' && found.cardCount<=count) break;
   }
   return found;
@@ -495,6 +499,24 @@ async function searchZhilianForSavedCandidate(page,candidate,locator,searchTerms
   return null;
 }
 
+async function closeExistingZhilianDetail(page) {
+  const modal=page.locator('.new-shortcut-resume__modal').first();
+  if (!await modal.isVisible().catch(()=>false))
+    throw locatorError(409,'智联当前详情弹窗无法确认，未打开下一位候选人');
+  await page.keyboard.press('Escape');
+  try { await modal.waitFor({state:'hidden',timeout:2500}); }
+  catch (_) {
+    const close=modal.locator('[aria-label="关闭"], [aria-label="close"], '
+      + '.km-modal__close, .modal-close, button[class*="close"]').first();
+    if (!await close.isVisible().catch(()=>false))
+      throw locatorError(409,'智联上一份简历仍未关闭，未打开下一位候选人');
+    await close.click({timeout:5000});
+    await modal.waitFor({state:'hidden',timeout:5000});
+  }
+  if (await waitForZhilianDetail(page,500))
+    throw locatorError(409,'智联上一份简历关闭后仍显示详情，未打开下一位候选人');
+}
+
 async function locateOfficialCandidate(page, candidate, {searchTerms=[]}={}) {
   const locator=platformLocator(candidate);
   if (!['zlzp','qcwy'].includes(candidate?.source) || locator.status!=='official_url' ||
@@ -508,7 +530,7 @@ async function locateOfficialCandidate(page, candidate, {searchTerms=[]}={}) {
         await waitForZhilianDetail(page,1000))
       return {platform:'zlzp',recordId:locator.id,verified:'official_detail'};
     if (await waitForZhilianDetail(page,500))
-      throw locatorError(409,'智联当前打开的是另一份简历；请先关闭该弹窗后再定位');
+      await closeExistingZhilianDetail(page);
     const inCurrent=await openZhilianCandidateFromCurrentResults(page,candidate,locator);
     if(inCurrent) return inCurrent;
     const recovered=await searchZhilianForSavedCandidate(page,candidate,locator,searchTerms);

@@ -288,6 +288,23 @@ test('search scroll brings the unique load-more control into view before one cli
   assert.equal(clicks,1);
 });
 
+test('search scroll restores a hidden recruiter tab only before a verified load-more click',async()=>{
+  let visible=false,count=15,focuses=0,clicks=0;
+  const collector=new BossRawSearchCollector({wait:async()=>{}});
+  collector.activeSearchTitle=TITLE;
+  collector.assertJob=async()=>({frameOrigin:1,cardCount:count});
+  collector.assertPage=async()=>({visibilityState:'hidden'});
+  collector.ensureVisibleRecruiterPage=async()=>{focuses++;visible=true;};
+  collector.readModal=async()=>({active:false});
+  collector.readOnlyExpression=async()=>({state:visible?'ready':'page_changed',
+    cardCount:15,lastCardText:'末尾卡',frameOrigin:1});
+  collector.session={assertUsableRecruiterWindow:async()=>true,
+    evaluate:async()=>true,clickUnique:async()=>{clicks++;count=16;}};
+  await collector.scrollCards();
+  assert.equal(focuses,1);
+  assert.equal(clicks,1);
+});
+
 test('search load-more never retries an uncertain click or a stalled response',async()=>{
   const collector=new BossRawSearchCollector({
     jobService:{current:()=>({title:TITLE})},wait:async()=>{}

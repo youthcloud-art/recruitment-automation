@@ -803,6 +803,22 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     if (afterScroll.cardCount>before.cardCount) return;
     const expression=searchLoadMoreProbe(title,before.frameOrigin);
     let first=await this.readOnlyExpression(expression,'search_load_more_probe');
+    if (first?.state==='page_changed') {
+      // A second dedicated Chrome can put this tab in the background between
+      // the verified list scroll and the load-more probe. Restore only that
+      // known hidden state, then verify the same job and list before clicking.
+      const page=await this.assertPage();
+      if (page.visibilityState==='hidden') {
+        await this.ensureVisibleRecruiterPage();
+        const focused=await this.assertJob(title,id);
+        if (focused.frameOrigin!==before.frameOrigin ||
+            focused.cardCount!==afterScroll.cardCount ||
+            (await this.readModal()).active) throw fail(
+          'BOSS_SEARCH_LOAD_MORE_UNAVAILABLE',
+          'BOSS 页面恢复可见后岗位或候选列表已变化，未发出点击，已暂停采集');
+        first=await this.readOnlyExpression(expression,'search_load_more_after_focus');
+      }
+    }
     if (first?.state==='absent') return;
     if (first?.state==='not_at_end' && first.cardCount===afterScroll.cardCount &&
         first.frameOrigin===before.frameOrigin) {

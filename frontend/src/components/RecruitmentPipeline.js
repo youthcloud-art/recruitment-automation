@@ -33,6 +33,8 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const [summary, setSummary] = useState({});
   const [candidates, setCandidates] = useState([]);
   const [candidateTotal, setCandidateTotal] = useState(0);
+  const [loadedListKey, setLoadedListKey] = useState('');
+  const [listLoadError, setListLoadError] = useState(false);
   const [availableJobs, setAvailableJobs] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -76,6 +78,9 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
   const listGeneration = useRef(0);
   const lastEvaluationQueueChange = useRef(null);
   const reportGeneration = useRef(0);
+  const listKey = JSON.stringify([source, status, keyword, viewJobTitle,
+    viewJobGroup, scoreOrder, page, pageSize]);
+  const listMatchesQuery = loadedListKey === listKey;
 
   const toggleGuide = () => setShowGuide(previous => {
     try { window.localStorage.setItem('recruitment-pipeline-guide', previous ? 'hidden' : 'visible'); }
@@ -95,6 +100,7 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
 
   const refresh = useCallback(async () => {
     const generation = ++listGeneration.current;
+    setListLoadError(false);
     try {
       const [list, stats, jobs] = await Promise.all([
         apiGet('/recruitment-pipeline/candidates/page', {
@@ -114,15 +120,19 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       }
       setCandidates(data.items || []);
       setCandidateTotal(data.total || 0);
+      setLoadedListKey(listKey);
       setSummary(stats.data || {});
       setAvailableJobs(jobs.data || []);
       setSelected(current => current
         ? (data.items || []).find(item => item.id === current.id) || current
         : null);
     } catch (error) {
-      if (generation === listGeneration.current) message.error('读取候选人失败：' + error.message);
+      if (generation === listGeneration.current) {
+        setListLoadError(true);
+        message.error('读取候选人失败：' + error.message);
+      }
     }
-  }, [source, status, keyword, viewJobTitle, viewJobGroup, scoreOrder, page, pageSize]);
+  }, [source, status, keyword, viewJobTitle, viewJobGroup, scoreOrder, page, pageSize, listKey]);
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
@@ -582,7 +592,8 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
       <div className="pipeline-context" role="status">
         <Text strong>当前查看：</Text><Text>{viewJobTitle
           ? `${viewJobGroup === 'current' ? '在用岗位' : '历史/已删除'} · ${viewJobTitle}`
-          : '全部招聘岗位'} · {source ? sourceLabel(source) : '全部平台'} · {candidateTotal} 位候选人</Text>
+          : '全部招聘岗位'} · {source ? sourceLabel(source) : '全部平台'} · {listMatchesQuery
+            ? `${candidateTotal} 位候选人` : listLoadError ? '读取失败' : '正在读取…'}</Text>
         {showGuide && <Text type="secondary">岗位、平台与状态可组合筛选；未评估简历排在评分列表末尾。不同岗位条件版本的分数不能直接比较。</Text>}
       </div>
       <Card size="small" className="pipeline-report" title="按实际岗位导出初筛报告">
@@ -612,13 +623,16 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
             : '报告按所选岗位、平台、状态和搜索关键词生成；默认排除人工标记为“不合适”的简历。'}
         </Text></div>
       </Card>
-      <Table rowKey="id" dataSource={candidates} columns={columns} size="small" scroll={{ x: 1440 }}
+      <Table rowKey="id" dataSource={listMatchesQuery ? candidates : []}
+        loading={!listMatchesQuery && !listLoadError}
+        columns={columns} size="small" scroll={{ x: 1440 }}
         rowSelection={viewJobGroup === 'historical' && viewJobTitle ? {
           selectedRowKeys: selectedHistoryIds,
           onChange: keys => setSelectedHistoryIds(keys),
           getCheckboxProps: row => ({ disabled: row.jobGroup !== 'historical' })
         } : undefined}
-        pagination={{ current: page, pageSize, total: candidateTotal, showSizeChanger: true,
+        pagination={{ current: page, pageSize,
+          total: listMatchesQuery ? candidateTotal : 0, showSizeChanger: true,
           pageSizeOptions: [10, 20, 50], showTotal: count => `共 ${count} 位候选人`,
           onChange: (nextPage, nextSize) => {
             setPageSize(nextSize);

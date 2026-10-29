@@ -965,6 +965,25 @@ test('assistant accepts stable official cards after submitting the same visible 
   assert.equal(collector.searchEvidence.keyword,TITLE);
 });
 
+test('assistant accepts the same official job after the site reorders safe cards without a timing entry',async()=>{
+  const collector=new BossRawSearchCollector();
+  let state={state:'ready',value:TITLE,cardCount:15,safeCardCount:15,
+    cardIdsReady:false,cardIdentity:'',frameOrigin:7,matchingSearchRequests:0,
+    latestOfficialSearchRequestAt:0,selectedFiltersReady:true,
+    nonDefaultSelected:0,checkedCount:0,activeCustomSliderCount:0};
+  collector.readOnlyExpression=async()=>state;
+  collector.readModal=async()=>({active:false});
+  collector.assertPage=async()=>({url:PAGE});
+  collector.wait=async()=>{};
+  collector.session={assertUsableRecruiterWindow:async()=>true,
+    clickUnique:async options=>{
+      if(options.selector==='.search-input-wrap .icon-search')
+        state={...state,cardCount:17,safeCardCount:17};
+    },send:async()=>{}};
+  assert.match((await collector.selectJob(TITLE)).value,/^search-[a-f0-9]{32}$/);
+  assert.equal(collector.searchEvidence.keyword,TITLE);
+});
+
 test('assistant rejects unchanged cards when switching to a different keyword',async()=>{
   const collector=new BossRawSearchCollector();
   let state={state:'ready',value:'旧岗位',cardCount:15,safeCardCount:15,

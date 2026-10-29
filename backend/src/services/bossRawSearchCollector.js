@@ -548,15 +548,13 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
     // Its visible search icon submits without depending on that focus.
     await this.clickStableSearchControl('.search-input-wrap .icon-search',title,
       before.frameOrigin);
-    // Some BOSS search pages reuse the already visible result list without
-    // issuing a new Resource Timing entry when the recruiter submits the
-    // same keyword again. Only accept that case when the exact keyword and
-    // every unique official candidate-card identity were already visible
-    // before the click and remain unchanged in the same document. A switch
-    // from another keyword still requires a fresh official search request.
+    // BOSS can reuse or reorder the visible list without exposing a Resource
+    // Timing entry. If the same exact job was already displayed, the official
+    // card list itself is sufficient evidence after a checked submit. Each
+    // later candidate still needs its own unique platform ID and detail check.
+    // A switch from a different keyword still requires a new search request.
     const reuseVisibleResults=normalized(before.value)===normalized(title) &&
-      before.cardCount>0 && before.cardIdsReady &&
-      before.safeCardCount===before.cardCount && !!before.cardIdentity;
+      before.cardCount>0 && before.safeCardCount===before.cardCount;
     let stableReusedResults=0;
     for (let poll=0;poll<20;poll++) {
       await this.wait(500);
@@ -572,7 +570,7 @@ class BossRawSearchCollector extends BossRawRecommendCollector {
       }
       if (reuseVisibleResults && state?.state==='ready' &&
           state.frameOrigin===before.frameOrigin &&
-          state.cardIdsReady && state.cardIdentity===before.cardIdentity &&
+          normalized(state.value)===normalized(title) && state.cardCount>0 &&
           state.safeCardCount===state.cardCount &&
           state.selectedFiltersReady && state.nonDefaultSelected===0 &&
           state.checkedCount===0 && state.activeCustomSliderCount===0 &&

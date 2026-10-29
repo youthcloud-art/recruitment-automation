@@ -124,6 +124,8 @@ test('三平台邮件报告与页面 TXT 均带完整官方编号，缺号旧 BO
     const input = { minScore: 70, topN: 10, jobRequirements: requirements, reportFormat };
     const preview = await service.preview(input);
     assert.equal(preview.count, 4);
+    assert.deepEqual(preview.candidates.map(item => item.platformRecordId),
+      [bossId, zhilianId, wuyouId, '待平台核实']);
     await service.send({ ...input, to: recipient, previewToken: preview.previewToken });
     const report = reportFormat === 'docx'
       ? (await mammoth.extractRawText({ buffer: sent.attachments[0].content })).value

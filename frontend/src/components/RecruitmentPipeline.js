@@ -742,13 +742,19 @@ export default function RecruitmentPipeline({ sourceRequest = null }) {
           description={emailBatch.nextOffset < emailBatch.total
             ? '请点击“预览下一批”。刷新页面后填入同一收件邮箱即可恢复进度；候选人集合变化会暂停后续批次。'
             : '本轮已全部发送，请核对收件箱。'} />}
-        {emailPreview && <Alert style={{ marginBottom: 12 }} type={emailPreview.count ? 'success' : 'warning'}
+        {emailPreview && <Alert style={{ marginBottom: 12 }}
+          type={emailPreview.candidates.some(item => !item.platformRecordId ||
+            item.platformRecordId === '待平台核实') ? 'warning' : emailPreview.count ? 'success' : 'warning'}
           message={emailNewOnly
             ? `新增候选人邮件预览：本封 ${emailPreview.count} 份，发送前共有 ${emailPreview.total} 份未发送`
             : `本批邮件预览：${emailPreview.count} 份（第 ${Math.floor(emailPreview.offset / topN) + 1}/${Math.max(1, Math.ceil(emailPreview.total / topN))} 批；合格总数 ${emailPreview.total} 份）`}
           description={<div>
             <div>本封附初筛报告：{reportFormatLabel(emailPreview.selection?.reportFormat || emailReportFormat)}</div>
-            <div>{emailPreview.candidates.map(item => `${item.name}（${sourceLabel(item.source)}，${item.score}分；${item.attachmentType || '简历材料'}）`).join('、') || '请先填写本次岗位要求并完成对应的岗位评估。'}</div>
+            {emailPreview.candidates.some(item => !item.platformRecordId ||
+              item.platformRecordId === '待平台核实') && <div>本批存在缺少官方编号的历史简历；报告将标为“待平台核实”，请先核对后再决定是否发送。</div>}
+            {emailPreview.candidates.length ? emailPreview.candidates.map((item, index) =>
+              <div key={item.id}>{index + 1}. {item.name}（{sourceLabel(item.source)}；平台记录号：{item.platformRecordId || '待平台核实'}；{item.score}分；{item.attachmentType || '简历材料'}）</div>)
+              : <div>请先填写本次岗位要求并完成对应的岗位评估。</div>}
           </div>} />}
         <Space wrap>
           <Input style={{ width: 310 }} type="email" placeholder="先填收件邮箱；刷新后可恢复发送进度"

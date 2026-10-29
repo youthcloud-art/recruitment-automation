@@ -251,6 +251,7 @@ class CandidateEmailService {
         id: item.id,
         name: candidateName(item),
         source: item.source,
+        platformRecordId: platformRecord(item).id,
         score: item.matchScore,
         position: candidatePosition(item),
         attachmentType: ATTACHMENT_LABELS[attachments[index].attachmentKind]

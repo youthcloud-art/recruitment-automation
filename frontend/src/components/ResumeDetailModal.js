@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CloseOutlined } from '@ant-design/icons';
 import { apiGet } from '../utils/apiClient';
 import './ResumeDetailModal.css';
@@ -55,7 +56,7 @@ export default function ResumeDetailModal({ visible, onClose, resume }) {
     if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
   };
 
-  return <div className="resume-window-backdrop" onMouseDown={event => {
+  return createPortal(<div className="resume-window-backdrop" onMouseDown={event => {
     if (event.target === event.currentTarget) onClose();
   }}>
     <article ref={windowRef} className="resume-window" role="dialog" aria-modal="true"
@@ -86,5 +87,5 @@ export default function ResumeDetailModal({ visible, onClose, resume }) {
           </div>
         </div>}
     </article>
-  </div>;
+  </div>, document.body);
 }

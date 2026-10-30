@@ -13,6 +13,8 @@ test('居中的可移动简历窗口显示后端整理结果并隐藏页面页�
   render(<ResumeDetailModal visible onClose={() => {}} resume={{ id: 'resume_12345678' }} />);
   expect(await screen.findByText('负责磁轴产品销售')).not.toBeNull();
   expect(screen.getByRole('dialog', { name: '简历详情' }).className).toContain('resume-window');
+  expect(screen.getByRole('dialog', { name: '简历详情' }).parentElement.parentElement)
+    .toBe(document.body);
   expect(screen.queryByText('举报')).toBeNull();
   expect(apiGet).toHaveBeenCalledWith('/resume/resume_12345678/presentation');
 });

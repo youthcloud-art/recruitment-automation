@@ -63,6 +63,28 @@ test('邮件预览仅包含本次岗位已评估且达到分数的简历', async
   assert.equal(empty.previewToken, null);
 });
 
+test('公司运行环境未注入公开地址时从固定交付配置生成助手记录链接', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'company-mail-origin-'));
+  const original = { deployment: process.env.COMPANY_DEPLOYMENT,
+    envFile: process.env.RECRUITMENT_ENV_FILE, origin: process.env.ASSISTANT_PUBLIC_ORIGIN };
+  t.after(async () => {
+    for (const [key, value] of Object.entries({ COMPANY_DEPLOYMENT: original.deployment,
+      RECRUITMENT_ENV_FILE: original.envFile, ASSISTANT_PUBLIC_ORIGIN: original.origin })) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  await fs.mkdir(path.join(root, 'delivery'));
+  await fs.writeFile(path.join(root, 'delivery', 'config.json'),
+    JSON.stringify({ companyHost: '192.168.1.24', gatewayPort: 4001 }));
+  process.env.COMPANY_DEPLOYMENT = 'true';
+  process.env.RECRUITMENT_ENV_FILE = path.join(root, 'shared', 'backend.env');
+  delete process.env.ASSISTANT_PUBLIC_ORIGIN;
+  const service = new CandidateEmailService({ pipeline: { list: () => [] } });
+  assert.equal(service.candidateLink({ id: 'resume_boss_verified' }),
+    'http://192.168.1.24:4001/?candidate=resume_boss_verified');
+});
+
 test('BOSS 邮件预览和 Word 附件排除显式不推荐的高分候选人', async t => {
   configureSmtp(t);
   const items = [

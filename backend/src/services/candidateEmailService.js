@@ -1,6 +1,7 @@
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 const { RecruitmentPipelineService, SOURCES, STATUSES } = require('./recruitmentPipelineService');
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
@@ -91,6 +92,20 @@ function assistantOrigin(value) {
   } catch (_) { return ''; }
 }
 
+function companyAssistantOrigin() {
+  if (process.env.COMPANY_DEPLOYMENT !== 'true') return '';
+  try {
+    const envFile = path.resolve(process.env.RECRUITMENT_ENV_FILE || '');
+    if (path.basename(envFile).toLowerCase() !== 'backend.env' ||
+        path.basename(path.dirname(envFile)).toLowerCase() !== 'shared') return '';
+    const configPath = path.join(path.dirname(path.dirname(envFile)), 'delivery', 'config.json');
+    const config = JSON.parse(fsSync.readFileSync(configPath, 'utf8'));
+    const port = Number(config.gatewayPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return '';
+    return assistantOrigin(`http://${config.companyHost}:${port}`);
+  } catch (_) { return ''; }
+}
+
 function reportCell(value) {
   return String(value ?? '').replace(/[\r\n|]/g, ' ').trim();
 }
@@ -133,7 +148,7 @@ class CandidateEmailService {
   constructor({ pipeline = new RecruitmentPipelineService(), transportFactory = nodemailer.createTransport,
     now = Date.now, resumeDirectory = path.join(__dirname, '../../storage/resume_library'),
     deliveryReceiptDirectory = null,
-    publicOrigin = process.env.ASSISTANT_PUBLIC_ORIGIN } = {}) {
+    publicOrigin = process.env.ASSISTANT_PUBLIC_ORIGIN || companyAssistantOrigin() } = {}) {
     this.pipeline = pipeline;
     this.transportFactory = transportFactory;
     this.now = now;

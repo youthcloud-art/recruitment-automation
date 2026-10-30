@@ -27,3 +27,14 @@ test('单个真实公司名称不被误删，长段落仅分段不改写事实',
   assert.ok(presentation.sections[0].paragraphs.length > 1);
   assert.match(presentationMarkdown(presentation), /负责客户沟通/);
 });
+
+test('BOSS 画布文本拆分经历标题并排除平台活跃度分析', () => {
+  const presentation = buildResumePresentation({ source: 'boss', name: '明**',
+    originalText: '本科 近14天你首次看到该牛人,赶紧联系TA吧 工作经历 销售经理负责客户。 ' +
+      '教育经历 华中农业大学本科。 牛人分析器 牛人通常活跃时间为上午 举报' });
+  const markdown = presentationMarkdown(presentation);
+  assert.match(markdown, /## 工作经历/);
+  assert.match(markdown, /## 教育经历/);
+  assert.match(markdown, /销售经理负责客户/);
+  assert.doesNotMatch(markdown, /首次看到该牛人|牛人分析|举报/);
+});

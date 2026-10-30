@@ -493,7 +493,7 @@ export default function RecruitmentPipeline({ sourceRequest = null, initialCandi
         setLastLocated({candidateId:candidate.id,recordId:result.data.recordId,
           verified:result.data.verified});
       }
-      message.success(result.data?.recovered ? '已核对原候选卡并补录 BOSS 平台编号' :
+      message.success(result.data?.recovered ? '已核对原候选卡并补齐 BOSS 定位信息' :
         candidate.source === 'boss' ? '已按候选卡记录号打开 BOSS 官方详情，请人工确认人物' :
           '已按官方简历号核对并打开原候选人详情');
       window.dispatchEvent(new CustomEvent('company-browser-open', {
@@ -529,11 +529,11 @@ export default function RecruitmentPipeline({ sourceRequest = null, initialCandi
       const needsReview = /未识别|待核实|平台脱敏|平台称呼/.test(label);
       return <span>{label}{needsReview && <Tag color="gold" style={{ marginLeft: 5 }}>待核实</Tag>}</span>;
     } },
-    { title: '平台记录号', dataIndex: 'platformRecordId', width: 190,
-      render: (value, row) => value
-        ? <Text copyable={{ text: value }} ellipsis={{ tooltip: `${value} · 平台编号未必支持关键词搜索，请从详情定位` }} style={{ maxWidth: 150 }}>
-            {value}</Text>
-        : <Tag color="gold" title="本机简历号或文本指纹不能代替招聘平台的唯一编号">待平台核实</Tag> },
+    { title: '回查入口', dataIndex: 'platformRecordId', width: 190,
+      render: (value, row) => row.source === 'qcwy'
+        ? (value ? <Text copyable={{ text: value }} ellipsis={{ tooltip: `前程无忧简历 ID：${value}` }} style={{ maxWidth: 150 }}>
+            简历 ID：{value}</Text> : <Tag color="gold">简历 ID 待核实</Tag>)
+        : <a href={`/?candidate=${encodeURIComponent(row.id)}`} title="在公司助手中打开记录；官方候选人仍须核对">打开候选人记录</a> },
     { title: '招聘岗位', dataIndex: 'hiringJobTitle', width: 175,
       render: value => value && value !== '招聘岗位待核实' ? value :
         <Tag color="gold">招聘岗位待核实</Tag> },
@@ -599,7 +599,7 @@ export default function RecruitmentPipeline({ sourceRequest = null, initialCandi
           options={[{ value: 'createdAt', label: '按入库时间' },
             { value: 'scoreDesc', label: '匹配分从高到低' },
             { value: 'scoreAsc', label: '匹配分从低到高' }]} />
-        <Input.Search placeholder="搜索姓名、岗位、平台记录号" allowClear style={{ width: 245 }}
+        <Input.Search placeholder="搜索姓名、岗位或内部标识" allowClear style={{ width: 245 }}
           onSearch={value => { setKeyword(value); setPage(1); }}
           onChange={event => { if (!event.target.value && keyword) { setKeyword(''); setPage(1); } }} />
         <Button icon={<ReloadOutlined />} onClick={() => {
@@ -771,17 +771,22 @@ export default function RecruitmentPipeline({ sourceRequest = null, initialCandi
             ? '请点击“预览下一批”。刷新页面后填入同一收件邮箱即可恢复进度；候选人集合变化会暂停后续批次。'
             : '本轮已全部发送，请核对收件箱。'} />}
         {emailPreview && <Alert style={{ marginBottom: 12 }}
-          type={emailPreview.candidates.some(item => !item.platformRecordId ||
-            item.platformRecordId === '待平台核实') ? 'warning' : emailPreview.count ? 'success' : 'warning'}
+          type={emailPreview.candidates.some(item => (item.source === 'qcwy' &&
+            (!item.platformRecordId || item.platformRecordId === '待平台核实')) ||
+            (item.source !== 'qcwy' && !item.assistantLink)) ? 'warning' : emailPreview.count ? 'success' : 'warning'}
           message={emailNewOnly
             ? `新增候选人邮件预览：本封 ${emailPreview.count} 份，发送前共有 ${emailPreview.total} 份未发送`
             : `本批邮件预览：${emailPreview.count} 份（第 ${Math.floor(emailPreview.offset / topN) + 1}/${Math.max(1, Math.ceil(emailPreview.total / topN))} 批；合格总数 ${emailPreview.total} 份）`}
           description={<div>
             <div>本封附初筛报告：{reportFormatLabel(emailPreview.selection?.reportFormat || emailReportFormat)}</div>
-            {emailPreview.candidates.some(item => !item.platformRecordId ||
-              item.platformRecordId === '待平台核实') && <div>本批存在缺少官方编号的历史简历；报告将标为“待平台核实”，请先核对后再决定是否发送。</div>}
+            {emailPreview.candidates.some(item => item.source === 'qcwy' &&
+              (!item.platformRecordId || item.platformRecordId === '待平台核实')) &&
+              <div>本批存在缺少前程无忧简历 ID 的历史简历；请先核对后再决定是否发送。</div>}
+            <div>前程无忧可在官方简历 ID 入口查询；智联与 BOSS 请使用邮件中的助手记录链接，并由已获授权的招聘管理员在公司服务器核对。链接不会在收件人设备登录招聘平台，请勿共享管理员账号。</div>
             {emailPreview.candidates.length ? emailPreview.candidates.map((item, index) =>
-              <div key={item.id}>{index + 1}. {item.name}（{sourceLabel(item.source)}；平台记录号：{item.platformRecordId || '待平台核实'}；{item.score}分；{item.attachmentType || '简历材料'}）</div>)
+              <div key={item.id}>{index + 1}. {item.name}（{sourceLabel(item.source)}；{item.source === 'qcwy'
+                ? `简历 ID：${item.platformRecordId || '待核实'}`
+                : `助手内候选人链接：${item.assistantLink || '暂无可用链接'}`}；{item.score}分；{item.attachmentType || '简历材料'}）</div>)
               : <div>请先填写本次岗位要求并完成对应的岗位评估。</div>}
           </div>} />}
         <Space wrap>
@@ -805,18 +810,17 @@ export default function RecruitmentPipeline({ sourceRequest = null, initialCandi
         {selected && <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div><Text>招聘岗位：{selected.hiringJobTitle || '招聘岗位待核实'}</Text>
             {selected.name === '姓名待核实' && <Text type="warning"> · 平台未提供可核实姓名，请在原始页面确认</Text>}</div>
-          <div><Text strong>{selected.platformRecordKind || '平台记录号'}：</Text>
+          <div>{selected.source === 'qcwy' && <div><Text strong>前程无忧简历 ID：</Text>
             {selected.platformRecordId
               ? <Text copyable={{ text: selected.platformRecordId }}>{selected.platformRecordId}</Text>
-              : <Text type="warning">平台未提供可验证编号；本机简历号不能用于平台查找</Text>}
-            {selected.platformRecordId && <div><Text type="secondary">{selected.source === 'qcwy'
-              ? '前程无忧支持在简历 ID 查询入口按此号查找。'
-              : selected.source === 'zlzp'
-                ? '这是官方详情地址中的简历标识，不是“搜索人才”关键词；请用下方按钮核对原简历。'
-                : '这是官方候选卡的期望记录标识，不等于可在“搜索牛人”框查询的唯一人员账号；请用下方按钮核对原卡。'}</Text></div>}
-            <div style={{ marginTop: 8 }}><Text type="secondary">从邮件返回这份记录：</Text>
+              : <Text type="warning">简历 ID 待核实</Text>}
+            <div><Text type="secondary">请在前程无忧官方简历 ID 查询入口核对。</Text></div></div>}
+            <div style={{ marginTop: 8 }}><Text strong>{selected.source === 'qcwy' ? '助手内记录：' : '候选人专属链接：'}</Text>
+              <a href={`/?candidate=${encodeURIComponent(selected.id)}`}>打开助手内候选人链接</a>{' '}
               <Text copyable={{ text: `${window.location.origin}/?candidate=${encodeURIComponent(selected.id)}` }}>
-                复制助手内候选人链接</Text></div>
+                复制链接</Text>
+              <div><Text type="secondary">此链接只打开公司助手记录，不会在同事设备登录智联或 BOSS；
+                查看助手仍需授权，请勿共享管理员账号。官方原候选人由公司服务器专用浏览器核对。</Text></div></div>
             {selected.platformRecordId && ((selected.source === 'boss' &&
               ['platform_card','official_url'].includes(selected.platformLocatorStatus)) ||
               (selected.platformLocatorStatus === 'official_url' &&
@@ -829,16 +833,16 @@ export default function RecruitmentPipeline({ sourceRequest = null, initialCandi
               <Alert style={{ marginTop: 8 }} type="success" showIcon
                 message="本次已打开官方候选人详情"
                 description={selected.source === 'boss'
-                  ? '已按原岗位和候选卡记录号核对并打开详情；BOSS 详情未必显示人员账号 ID，请人工核对简历内容。'
+                  ? '已按原岗位和候选卡证据核对并打开详情；请人工核对简历内容。'
                   : '已核对官方详情简历号；平台普通关键词搜索框不一定支持粘贴编号查找。'} />}
             {!selected.platformRecordId && selected.source === 'boss' &&
               (selected.platformLocatorStatus === 'unavailable') &&
               (selected.sourceCardFingerprint
                 ? <div><Button style={{ marginTop: 8 }} loading={locating}
-                    onClick={() => locateOnServer(selected)}>核对候选卡并补录平台编号</Button>
+                    onClick={() => locateOnServer(selected)}>核对候选卡并补齐定位信息</Button>
                   <div><Text type="secondary">请先在服务器 BOSS 浏览器打开该招聘岗位的原候选结果。</Text></div>
                 </div>
-                : <div><Text type="secondary">这份旧记录没有可核对的候选卡证据；重新采集同一官方简历后，系统可据完整简历内容补录编号。</Text></div>)}
+                : <div><Text type="secondary">这份旧记录没有可核对的候选卡证据；重新采集同一官方简历后，系统可据完整简历内容补齐定位信息。</Text></div>)}
           </div>
           {selected.jobGroup === 'historical' && <Alert type="info" showIcon
             message="历史/已删除岗位简历已单独保留"
@@ -863,9 +867,9 @@ export default function RecruitmentPipeline({ sourceRequest = null, initialCandi
             <Text strong>待核实：</Text><p>{selected.matchEvaluation.gaps?.join('；') || '暂无'}</p>
           </Card>}
           {selected.source === 'zlzp'
-            ? <Text type="secondary">智联详情依赖官方搜索结果；直接打开保存的地址不会自动恢复原候选人弹窗。请使用上方的服务器浏览器定位，并以详情简历号核对。</Text>
+              ? <Text type="secondary">智联详情依赖官方搜索结果；直接打开保存的地址不会自动恢复原候选人弹窗。请使用上方的服务器浏览器定位，并以原简历内容核对。</Text>
             : selected.platformRecordUrl
-              ? <a href={selected.platformRecordUrl} target="_blank" rel="noreferrer">在当前电脑打开官方来源页面</a>
+              ? <a href={selected.platformRecordUrl} target="_blank" rel="noreferrer">尝试在当前电脑打开官方来源页面（需本人企业成员账号，可能无法直达）</a>
               : <Text type="secondary">当前来源地址无法精准定位该候选人，已隐藏通用链接。</Text>}
         </Space>}
       </Modal>

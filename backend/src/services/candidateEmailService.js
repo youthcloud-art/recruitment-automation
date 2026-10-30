@@ -68,6 +68,19 @@ function platformRecord(item) {
   return { label: locator.kind || '平台记录号', id: locator.id || '待平台核实' };
 }
 
+function recipientLookupLine(item, assistantLink) {
+  const record = platformRecord(item);
+  if (item.source === 'qcwy') {
+    return record.id === '待平台核实'
+      ? '前程无忧简历 ID 待平台核实；请招聘管理员核对官方详情后再查找'
+      : `前程无忧简历 ID：${record.id}（请在前程无忧官方简历 ID 查询入口核对）`;
+  }
+  const platform = item.source === 'zlzp' ? '智联' : 'BOSS';
+  return assistantLink
+    ? `${platform} 助手记录：${assistantLink}（仅供已获助手授权者查看；官方原候选人需在公司服务器浏览器再次核对）`
+    : `${platform} 助手记录：暂无可用链接；请联系招聘管理员在公司服务器核对原候选人`;
+}
+
 function assistantOrigin(value) {
   try {
     const url = new URL(value);
@@ -268,6 +281,7 @@ class CandidateEmailService {
         name: candidateName(item),
         source: item.source,
         platformRecordId: platformRecord(item).id,
+        assistantLink: this.candidateLink(item),
         score: item.matchScore,
         position: candidatePosition(item),
         attachmentType: ATTACHMENT_LABELS[attachments[index].attachmentKind]
@@ -332,13 +346,16 @@ class CandidateEmailService {
         content: [
           `平台：${SOURCE_NAMES[item.source]}`,
           `候选人：${candidateName(item)}`,
-          `${platformRecord(item).label}：${platformRecord(item).id}`,
+          ...(item.source === 'qcwy'
+            ? [`前程无忧简历 ID：${platformRecord(item).id}`]
+            : []),
           `招聘岗位：${hiringJobTitle(item)}`,
           `求职岗位：${candidatePosition(item) || '待核实'}`,
           `岗位匹配分：${item.matchScore}/100`,
           `附件类型：${ATTACHMENT_LABELS[attachmentKind]}`,
           ...(this.candidateLink(item) ? [`助手内候选人链接：${this.candidateLink(item)}`] : []),
-          '回查提示：请在公司智能招聘助手的候选人详情中使用“在公司服务器浏览器定位原候选人”，核对官方原卡与详情；BOSS 详情未必显示人员账号 ID，智联与 BOSS 普通关键词搜索框不能据此保证查人。',
+          `回查方式：${recipientLookupLine(item, this.candidateLink(item))}`,
+          '助手链接只打开公司助手记录，不会在收件人设备登录招聘平台。请勿共用管理员账号；未获助手授权的同事可查看本邮件附件，并请招聘管理员在公司服务器核对官方原候选人。同事若需自行访问官方平台，须使用平台分配给本人的企业成员账号，并通过平台允许的候选人协作方式查找。智联与 BOSS 标识不能当作普通搜索框的人才 ID。',
           '',
           String(item.originalText || item.content)
         ].join('\n'),
@@ -615,11 +632,11 @@ class CandidateEmailService {
       '## 本次岗位要求',
       selection.jobRequirements,
       '',
-      '| 序号 | 平台 | 平台记录号 | 候选人 | 招聘岗位 | 求职岗位 | 匹配分 | 评估摘要 |',
+      '| 序号 | 平台 | 回查入口 | 候选人 | 招聘岗位 | 求职岗位 | 匹配分 | 评估摘要 |',
       '| ---: | --- | --- | --- | --- | --- | ---: | --- |',
-      ...candidates.map((item, index) => `| ${index + 1} | ${SOURCE_NAMES[item.source]} | ${platformRecord(item).id} | ${reportCell(candidateName(item))} | ${reportCell(hiringJobTitle(item))} | ${reportCell(candidatePosition(item) || '待核实')} | ${item.matchScore} | ${reportCell(item.matchEvaluation.summary || '')} |`),
+      ...candidates.map((item, index) => `| ${index + 1} | ${SOURCE_NAMES[item.source]} | ${reportCell(recipientLookupLine(item, this.candidateLink(item)))} | ${reportCell(candidateName(item))} | ${reportCell(hiringJobTitle(item))} | ${reportCell(candidatePosition(item) || '待核实')} | ${item.matchScore} | ${reportCell(item.matchEvaluation.summary || '')} |`),
       '',
-      '平台记录号来自官方候选卡或详情地址；“待平台核实”不能用于查人。各简历附件 candidate-N 对应表中同序号。前程无忧可用简历 ID 查询入口；智联保存的是详情简历标识，BOSS 保存的是候选卡期望记录标识，后两者不是普通人才关键词搜索码。请在智能招聘助手候选人详情中使用服务器浏览器定位，并以官方原卡和详情核对。',
+      '各简历附件 candidate-N 对应表中同序号。前程无忧可用官方简历 ID 查询入口；智联和 BOSS 的技术标识不是普通人才关键词搜索码，报告以助手内候选人链接作为回查入口。已获授权的招聘管理员可在公司服务器浏览器尝试核对官方原卡与详情。助手链接不会把招聘平台账号登录到收件人设备，也不要向同事共享管理员账号；同事要自行进入官方平台，应使用本人获分配的企业成员账号和平台允许的候选人协作方式。',
       '',
       '## 岗位匹配评估明细',
       '',
@@ -627,8 +644,11 @@ class CandidateEmailService {
         `### 候选人 ${index + 1}`,
         '',
         `平台：${SOURCE_NAMES[item.source]}`,
-        `${platformRecord(item).label}：${platformRecord(item).id}`,
+        ...(item.source === 'qcwy'
+          ? [`前程无忧简历 ID：${platformRecord(item).id}`]
+          : []),
         ...(this.candidateLink(item) ? [`助手内候选人链接：${this.candidateLink(item)}`] : []),
+        `回查方式：${recipientLookupLine(item, this.candidateLink(item))}`,
         `招聘岗位：${hiringJobTitle(item)}`,
         `求职岗位：${candidatePosition(item) || '待核实'}`,
         `评估方式：${item.matchEvaluation.method === 'local' ? '本机关键词证据评分' : 'AI 辅助岗位匹配'}`,
@@ -669,7 +689,7 @@ class CandidateEmailService {
       from: process.env.SMTP_FROM,
       to,
       subject: `${jobTitleFromRequirements(selection.jobRequirements) || ''}候选人初筛报告（${selection.newOnly ? '新增候选人，' : batchLabel ? `第${batchNumber}/${batchCount}批，` : ''}${candidates.length}份）`,
-      text: `随信附上 ${candidates.length} 份进入本次岗位初筛名单的候选人简历材料和初筛报告。${batchLabel ? `${batchLabel}。` : ''}报告覆盖${platformScope}，其中本邮件附简历：${attachedBySource}。完整平台记录号见报告“平台记录号”列，candidate-N 附件与报告序号对应；编号待核实的记录不能据此查人。前程无忧可在简历 ID 入口查询；智联与 BOSS 的标识请在助手中通过“定位原候选人”核对，不能当作普通搜索框的关键词。请结合待核实事项人工复核。\n\n平台编号索引：\n${candidates.map((item,index)=>`candidate-${index+1} · ${SOURCE_NAMES[item.source]} · ${reportCell(candidateName(item))} · ${reportCell(hiringJobTitle(item))} · ${platformRecord(item).id}${this.candidateLink(item) ? ` · 助手内查看：${this.candidateLink(item)}` : ''}`).join('\n')}\n` +
+      text: `随信附上 ${candidates.length} 份进入本次岗位初筛名单的候选人简历材料和初筛报告。${batchLabel ? `${batchLabel}。` : ''}报告覆盖${platformScope}，其中本邮件附简历：${attachedBySource}。candidate-N 附件与报告序号对应。前程无忧请在官方简历 ID 入口查询；智联与 BOSS 请从助手链接返回对应记录，再由已获授权的招聘管理员在公司服务器浏览器尝试核对原候选人。助手链接不会在收件人设备登录招聘平台，也不应向同事共享管理员账号；同事要自行进入官方平台，须使用本人获分配的企业成员账号和平台允许的候选人协作方式。智联与 BOSS 的技术标识不能作为普通人才搜索关键词。请结合待核实事项人工复核。\n\n候选人回查索引：\n${candidates.map((item,index)=>`candidate-${index+1} · ${SOURCE_NAMES[item.source]} · ${reportCell(candidateName(item))} · ${reportCell(hiringJobTitle(item))} · ${recipientLookupLine(item,this.candidateLink(item))}`).join('\n')}\n` +
         (candidates.some(item => item.source === 'qcwy' && item.matchEvaluation.method === 'local')
           ? '前程无忧候选人仅达到本地初筛的最低证据门槛，仍须人工复核全部岗位条件。' : '') +
         (resumeAttachments.some(item => item.attachmentKind === 'page-text')

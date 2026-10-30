@@ -91,7 +91,7 @@ test('BOSS 邮件预览和 Word 附件排除显式不推荐的高分候选人', 
   assert.doesNotMatch(sent.attachments[1].content, /不应发送/);
 });
 
-test('三平台邮件报告与页面 TXT 均带完整官方编号，缺号旧 BOSS 明确待核实', async t => {
+test('邮件与附件仅以前程无忧 ID、智联和 BOSS 助手链接供收件人回查', async t => {
   configureSmtp(t);
   const requirements = '岗位名称：磁轴销售工程师\n工作地点：惠州';
   const bossId = 'BOSS_2026_12345';
@@ -127,31 +127,40 @@ test('三平台邮件报告与页面 TXT 均带完整官方编号，缺号旧 BO
     assert.equal(preview.count, 4);
     assert.deepEqual(preview.candidates.map(item => item.platformRecordId),
       [bossId, zhilianId, wuyouId, '待平台核实']);
+    assert.match(preview.candidates[0].assistantLink, /\?candidate=resume_boss_verified/);
     await service.send({ ...input, to: recipient, previewToken: preview.previewToken });
     const report = reportFormat === 'docx'
       ? (await mammoth.extractRawText({ buffer: sent.attachments[0].content })).value
       : sent.attachments[0].content;
-    for (const id of [bossId, zhilianId, wuyouId]) assert.ok(report.includes(id));
-    assert.match(report, /平台记录号/);
-    assert.match(report, /待平台核实/);
+    assert.ok(report.includes(wuyouId));
+    assert.doesNotMatch(report, new RegExp(bossId));
+    assert.doesNotMatch(report, new RegExp(zhilianId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(report, /回查入口/);
     assert.doesNotMatch(report, /LOCAL_99999/);
     assert.match(report, /招聘岗位/);
     assert.match(report, /求职岗位/);
-    assert.match(sent.text, /完整平台记录号见报告/);
-    for (const id of [bossId, zhilianId, wuyouId]) assert.ok(sent.text.includes(id));
-    assert.match(sent.text, /candidate-4.*待平台核实/);
+    assert.match(sent.text, /候选人回查索引/);
+    assert.ok(sent.text.includes(wuyouId));
+    assert.doesNotMatch(sent.text, new RegExp(bossId));
+    assert.doesNotMatch(sent.text, new RegExp(zhilianId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(sent.text, /candidate-4.*助手记录：/);
     assert.match(sent.text,
       /http:\/\/192\.168\.1\.24:4001\/\?candidate=resume_boss_verified/);
+    assert.match(sent.text, /不会在收件人设备登录招聘平台/);
+    assert.match(sent.text, /不应向同事共享管理员账号/);
+    assert.match(sent.text, /本人获分配的企业成员账号/);
+    assert.doesNotMatch(sent.text, /https:\/\/(?:www\.zhipin\.com|rd6\.zhaopin\.com)\//);
     assert.doesNotMatch(sent.text, /LOCAL_99999/);
     assert.match(report, /助手内候选人链接：http:\/\/192\.168\.1\.24:4001/);
     for (const [index, candidate] of preview.candidates.entries()) {
       const content = sent.attachments[index + 1].content;
-      const expected = candidate.id === 'resume_boss_verified' ? bossId
-        : candidate.id === 'resume_zhilian_verified' ? zhilianId
-          : candidate.id === 'resume_wuyou_verified' ? wuyouId : '待平台核实';
-      assert.ok(content.includes(expected));
+      if (candidate.source === 'qcwy') assert.ok(content.includes(wuyouId));
+      else {
+        assert.doesNotMatch(content, new RegExp(bossId));
+        assert.doesNotMatch(content, new RegExp(zhilianId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      }
       assert.match(content, /招聘岗位：磁轴销售工程师/);
-      assert.match(content, /回查提示：/);
+      assert.match(content, /回查方式：/);
       assert.match(content, /助手内候选人链接：http:\/\/192\.168\.1\.24:4001/);
       assert.doesNotMatch(content, /LOCAL_99999/);
     }

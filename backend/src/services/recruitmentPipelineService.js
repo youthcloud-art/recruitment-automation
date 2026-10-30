@@ -59,6 +59,17 @@ function line(value) {
   return String(value ?? '').replace(/[\r\n|]/g, ' ').trim().slice(0, 400);
 }
 
+function candidateReturnLine(item) {
+  if (item.source === 'qcwy') {
+    return `前程无忧简历 ID：${line(platformLocator(item).id) || '待平台核实'}`;
+  }
+  const origin = String(process.env.ASSISTANT_PUBLIC_ORIGIN || '').replace(/\/$/, '');
+  if (/^https?:\/\/[^/?#]+$/i.test(origin) && /^resume_[A-Za-z0-9_-]{8,100}$/.test(item.id || '')) {
+    return `助手内候选人链接：${origin}/?candidate=${encodeURIComponent(item.id)}`;
+  }
+  return '助手内候选人链接：请在公司助手的候选人列表打开该记录';
+}
+
 class RecruitmentPipelineService {
   constructor({ store = resumeModel, llmFactory = () => new LLMService(),
     activeJobService = new ActiveJobService() } = {}) {
@@ -310,7 +321,7 @@ class RecruitmentPipelineService {
       group.forEach((item, candidateIndex) => lines.push(
         `#### ${candidateIndex + 1}. ${line(candidateName(item))}`, '',
         `- 平台：${LABELS[item.source]}`,
-        `- 平台记录号：${line(platformLocator(item).id) || '平台未提供可核实编号'}`,
+        `- ${candidateReturnLine(item)}`,
         `- 求职岗位：${line(candidatePosition(item))}`,
         `- 匹配分：${item.matchScore}/100`,
         `- 跟进状态：${line(item.workflowStatus || 'new')}`,
@@ -318,7 +329,7 @@ class RecruitmentPipelineService {
         `- 相关优势：${line(item.matchEvaluation?.strengths?.join('；')) || '暂无'}`,
         `- 待核实：${line(item.matchEvaluation?.gaps?.join('；')) || '暂无'}`,
         `- 备注：${line(item.candidateNotes) || '暂无'}`,
-        platformLocator(item).url ? `- 可定位的来源页面：${line(platformLocator(item).url)}` : '', ''));
+        platformLocator(item).url ? `- 官方来源页面（需本人企业成员账号，可能无法直达）：${line(platformLocator(item).url)}` : '', ''));
     });
     lines.push('> 不同岗位条件版本的匹配分不能直接横向比较；最终判断需人工复核。', '');
     return lines.join('\n');
@@ -400,7 +411,7 @@ class RecruitmentPipelineService {
     candidates.forEach((item, index) => {
       lines.push(`### ${index + 1}. ${line(candidateName(item))}`, '',
         `- 平台：${LABELS[item.source]}`,
-        `- 平台记录号：${line(platformLocator(item).id) || '平台未提供可核实编号'}`,
+        `- ${candidateReturnLine(item)}`,
         `- 岗位：${line(candidatePosition(item))}`,
         `- 匹配分：${Number.isFinite(item.matchScore) ? `${item.matchScore}/100` : '未评估'}`,
         `- 跟进状态：${line(item.workflowStatus || 'new')}`,
@@ -409,7 +420,7 @@ class RecruitmentPipelineService {
         `- 相关优势：${line(item.matchEvaluation?.strengths?.join('；')) || '暂无'}`,
         `- 待核实：${line(item.matchEvaluation?.gaps?.join('；')) || '暂无'}`,
         `- 备注：${line(item.candidateNotes) || '暂无'}`,
-        platformLocator(item).url ? `- 可定位的来源页面：${line(platformLocator(item).url)}` : '', '');
+        platformLocator(item).url ? `- 官方来源页面（需本人企业成员账号，可能无法直达）：${line(platformLocator(item).url)}` : '', '');
     });
     lines.push('', '> 岗位匹配分仅供人工复核，不代表自动录用或淘汰决定。', '');
     return lines.join('\n');

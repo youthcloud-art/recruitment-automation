@@ -46,6 +46,37 @@ test('三平台候选人可按平台、状态、关键词查询，手动简历�
   assert.throws(() => service.update('a', { status: 'unknown' }), /不支持/);
 });
 
+test('岗位报告用助手链接回查智联和 BOSS，仅前程无忧展示官方简历 ID', t => {
+  const before = process.env.ASSISTANT_PUBLIC_ORIGIN;
+  process.env.ASSISTANT_PUBLIC_ORIGIN = 'http://192.168.1.24:4001';
+  t.after(() => {
+    if (before === undefined) delete process.env.ASSISTANT_PUBLIC_ORIGIN;
+    else process.env.ASSISTANT_PUBLIC_ORIGIN = before;
+  });
+  const requirements = '岗位名称：磁轴销售工程师\n工作地点：惠州';
+  const records = [
+    { id: 'resume_boss_test123', source: 'boss', name: '王先生',
+      sourceCandidateId: 'BOSS_INTERNAL_123', sourceCandidateIdSource: 'platform_card' },
+    { id: 'resume_zhilian_test123', source: 'zlzp', name: '李女士',
+      sourceCandidateId: 'ZL_INTERNAL_456', sourceCandidateIdSource: 'official_url' },
+    { id: 'resume_qcwy_test123', source: 'qcwy', name: '张先生',
+      sourceCandidateId: 'WY_OFFICIAL_789', sourceCandidateIdSource: 'official_url',
+      sourceUrl: 'https://ehire.51job.com/candidate/detail/WY_OFFICIAL_789' }
+  ].map(item => ({ ...item, captureJobTitle: '磁轴销售工程师', originalText: '合成岗位简历原文',
+    matchScore: 85, matchEvaluationStatus: 'completed', matchEvaluation: {
+      method: 'llm', evaluationVersion: 1, evaluatedAt: '2026-10-30T00:00:00.000Z',
+      jobRequirements: requirements, summary: '合成评估，仅用于测试'
+    } }));
+  const service = new RecruitmentPipelineService({ store: { getResumes: () => records },
+    activeJobService: { current: () => ({ title: '磁轴销售工程师', jobRequirements: requirements,
+      updatedAt: '2026-10-30T00:00:00.000Z' }) } });
+  const report = service.report({ minScore: 0, topN: 10 });
+  assert.match(report, /\?candidate=resume_boss_test123/);
+  assert.match(report, /\?candidate=resume_zhilian_test123/);
+  assert.match(report, /前程无忧简历 ID：WY_OFFICIAL_789/);
+  assert.doesNotMatch(report, /BOSS_INTERNAL_123|ZL_INTERNAL_456/);
+});
+
 test('大简历库按流筛选后才截取报告上限，末尾命中的候选人仍可读取', () => {
   const store = {
     getResumes: () => { throw new Error('不应把全部简历加载进内存'); },

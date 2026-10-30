@@ -5,6 +5,7 @@ const path = require('path');
 const { RecruitmentPipelineService, SOURCES, STATUSES } = require('./recruitmentPipelineService');
 const { isSameZhilianResume } = require('../utils/zhilianResumeIdentity');
 const { markdownToDocx } = require('./candidateReportDocx');
+const { buildResumePresentation, presentationMarkdown } = require('./resumePresentation');
 const { candidateName, candidatePosition, hiringJobTitle } = require('../utils/candidateDisplay');
 const { platformLocator } = require('../utils/platformLocator');
 const { hasTrackedActiveJob } = require('../utils/activeJobScope');
@@ -17,8 +18,8 @@ const FILE_TYPES = { '.pdf': 'application/pdf',
   '.txt': 'text/plain; charset=utf-8' };
 const ATTACHMENT_LABELS = {
   original: '导入的原文件',
-  'import-text': '导入简历的提取文本（非原版文件）',
-  'page-text': '页面提取文本（非平台原版简历文件）'
+  'import-text': '整理排版的 Word 简历（由导入文本生成，非原版文件）',
+  'page-text': '整理排版的 Word 简历（由页面提取文本生成，非平台原版文件）'
 };
 
 function isWithin(directory, target) {
@@ -291,7 +292,8 @@ class CandidateEmailService {
 
   fingerprint(selection, candidates, attachments, screening, poolFingerprint) {
     const files = attachments.map(file => ({ filename: file.filename,
-      hash: crypto.createHash('sha256').update(file.content).digest('hex') }));
+      // OOXML ZIP metadata can differ between two otherwise identical renders.
+      hash: file.fingerprintHash || crypto.createHash('sha256').update(file.content).digest('hex') }));
     return crypto.createHash('sha256').update(JSON.stringify({ selection, candidates, files,
       screening, poolFingerprint })).digest('hex');
   }
@@ -338,28 +340,22 @@ class CandidateEmailService {
   async candidateAttachments(candidates) {
     const attachments = [];
     let size = 0;
+    const sourceSize = candidates.reduce((total, candidate) => total +
+      Buffer.byteLength(String(candidate.originalText || candidate.content || '')), 0);
+    if (sourceSize > MAX_TOTAL_ATTACHMENT_BYTES) throw new Error('邮件附件总大小不能超过 20MB，请减少发送份数');
     for (const [index, item] of candidates.entries()) {
       const original = await this.originalAttachment(item, index);
-      const attachmentKind = original ? 'original' : item.fileHash ? 'import-text' : 'page-text';
-      const attachment = original || {
-        filename: `candidate-${index + 1}.txt`,
-        content: [
-          `平台：${SOURCE_NAMES[item.source]}`,
-          `候选人：${candidateName(item)}`,
-          ...(item.source === 'qcwy'
-            ? [`前程无忧简历 ID：${platformRecord(item).id}`]
-            : []),
-          `招聘岗位：${hiringJobTitle(item)}`,
-          `求职岗位：${candidatePosition(item) || '待核实'}`,
-          `岗位匹配分：${item.matchScore}/100`,
-          `附件类型：${ATTACHMENT_LABELS[attachmentKind]}`,
-          ...(this.candidateLink(item) ? [`助手内候选人链接：${this.candidateLink(item)}`] : []),
-          `回查方式：${recipientLookupLine(item, this.candidateLink(item))}`,
-          '助手链接只打开公司助手记录，不会在收件人设备登录招聘平台。请勿共用管理员账号；未获助手授权的同事可查看本邮件附件，并请招聘管理员在公司服务器核对官方原候选人。同事若需自行访问官方平台，须使用平台分配给本人的企业成员账号，并通过平台允许的候选人协作方式查找。智联与 BOSS 标识不能当作普通搜索框的人才 ID。',
-          '',
-          String(item.originalText || item.content)
-        ].join('\n'),
-        contentType: FILE_TYPES['.txt']
+      const preserveOriginal = original && !original.filename.endsWith('.txt');
+      const attachmentKind = preserveOriginal ? 'original' : item.fileHash ? 'import-text' : 'page-text';
+      const presentationInput = original?.filename.endsWith('.txt')
+        ? { ...item, originalText: original.content.toString('utf8') } : item;
+      const markdown = preserveOriginal ? '' : presentationMarkdown(buildResumePresentation(presentationInput));
+      if (markdown.length > 300000) throw new Error('单份简历内容过长，无法排版发送；请核对原始文件');
+      const attachment = preserveOriginal ? original : {
+        filename: `candidate-${index + 1}.docx`,
+        content: await markdownToDocx(markdown),
+        contentType: FILE_TYPES['.docx'],
+        fingerprintHash: crypto.createHash('sha256').update(markdown).digest('hex')
       };
       size += Buffer.byteLength(attachment.content);
       if (size > MAX_TOTAL_ATTACHMENT_BYTES) throw new Error('邮件附件总大小不能超过 20MB，请减少发送份数');
@@ -677,7 +673,7 @@ class CandidateEmailService {
         contentType: 'text/markdown; charset=utf-8' };
     const attachments = [
       reportAttachment,
-      ...resumeAttachments.map(({ attachmentKind: _, ...attachment }) => attachment)
+      ...resumeAttachments.map(({ attachmentKind: _, fingerprintHash: __, ...attachment }) => attachment)
     ];
     if (attachments.reduce((total, file) => total + Buffer.byteLength(file.content), 0) > MAX_TOTAL_ATTACHMENT_BYTES) {
       throw new Error('邮件附件总大小不能超过 20MB，请减少发送份数');
@@ -693,7 +689,7 @@ class CandidateEmailService {
         (candidates.some(item => item.source === 'qcwy' && item.matchEvaluation.method === 'local')
           ? '前程无忧候选人仅达到本地初筛的最低证据门槛，仍须人工复核全部岗位条件。' : '') +
         (resumeAttachments.some(item => item.attachmentKind === 'page-text')
-          ? '其中页面采集的 TXT 附件是页面提取文本，非平台原版简历文件。' : ''),
+          ? '其中页面采集的 Word 简历由页面提取文本排版，非平台原版简历文件。' : ''),
       attachments
     }); } catch (error) {
       await this.updateDeliveryReceipt(receipt, 'uncertain');

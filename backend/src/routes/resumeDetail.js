@@ -1,4 +1,21 @@
 const { publicCandidate } = require('../utils/candidateDisplay');
+const { buildResumePresentation } = require('../services/resumePresentation');
+
+function createResumePresentationHandler(store) {
+  return async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!/^resume_[A-Za-z0-9_-]{8,100}$/.test(req.params.id)) {
+        return res.status(400).json({ success: false, message: '简历编号无效' });
+      }
+      const resume = await store.getResumeById(req.params.id);
+      if (!resume) return res.status(404).json({ success: false, message: '简历不存在' });
+      return res.json({ success: true, data: buildResumePresentation(resume) });
+    } catch (_) {
+      return res.status(500).json({ success: false, message: '简历排版读取失败' });
+    }
+  };
+}
 
 function createResumeDetailHandler(store) {
   return async (req, res) => {
@@ -23,4 +40,4 @@ function createResumeDetailHandler(store) {
   };
 }
 
-module.exports = { createResumeDetailHandler };
+module.exports = { createResumeDetailHandler, createResumePresentationHandler };

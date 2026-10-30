@@ -1,10 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
-const { createResumeDetailHandler } = require('../src/routes/resumeDetail');
+const { createResumeDetailHandler, createResumePresentationHandler } = require('../src/routes/resumeDetail');
 
 async function serve(t, store) {
   const app = express();
+  app.get('/api/resume/:id/presentation', createResumePresentationHandler(store));
   app.get('/api/resume/:id', createResumeDetailHandler(store));
   const server = app.listen(0, '127.0.0.1');
   t.after(() => server.close());
@@ -33,6 +34,19 @@ test('detail loads one ID through indexed store method without reading full libr
     platformLocatorStatus: 'unavailable', platformRecordUrl: '' } });
   assert.deepEqual(calls, ['boss-1']);
   assert.doesNotMatch(JSON.stringify(body), /候选人乙/);
+});
+
+test('presentation endpoint reads one saved resume, omits trailing page chrome and disables caching', async t => {
+  const base = await serve(t, { getResumeById: id => ({ id, source: 'boss',
+    name: '吴女士', originalText: '工作经历\n磁轴销售\n举报' }) });
+  const response = await fetch(`${base}/api/resume/resume_12345678/presentation`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  const body = (await response.json()).data;
+  assert.equal(body.sections[0].title, '工作经历');
+  assert.deepEqual(body.sections[0].paragraphs, ['磁轴销售']);
+  assert.doesNotMatch(JSON.stringify(body), /举报/);
+  assert.equal((await fetch(`${base}/api/resume/bad/presentation`)).status, 400);
 });
 
 test('detail retains 51job anonymous display projection without changing stored evidence', async t => {

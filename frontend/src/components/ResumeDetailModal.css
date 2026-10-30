@@ -1,0 +1,21 @@
+.resume-window-backdrop { position: fixed; inset: 0; z-index: 1400; background: rgba(23, 42, 63, .42); display: grid; place-items: center; }
+.resume-window { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(860px, calc(100vw - 32px)); height: min(82vh, 920px); min-width: 350px; min-height: 280px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); resize: both; overflow: hidden; display: flex; flex-direction: column; background: #edf2f7; border: 1px solid #d9e4ee; border-radius: 16px; box-shadow: 0 24px 75px rgba(18, 44, 74, .32); }
+.resume-window-handle { height: 54px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 17px; background: #fff; border-bottom: 1px solid #e4eaf0; color: #1c334f; font-size: 15px; font-weight: 700; cursor: move; user-select: none; touch-action: none; }
+.resume-window-handle small { margin-left: 14px; color: #75869a; font-size: 12px; font-weight: 400; }
+.resume-window-handle button { border: 0; background: #f2f6fa; border-radius: 8px; width: 30px; height: 30px; cursor: pointer; color: #52677e; }
+.resume-window-scroll { flex: 1; min-height: 0; overflow: auto; padding: 22px; }
+.resume-window-state { padding: 34px; color: #60748a; }
+.resume-paper { width: min(100%, 730px); min-height: 100%; margin: auto; background: #fff; box-shadow: 0 4px 20px rgba(28, 51, 79, .08); }
+.resume-paper-header { padding: 32px 42px 26px; border-bottom: 3px solid #1677c9; }
+.resume-paper-kicker { color: #1677c9; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+.resume-paper h1 { margin: 9px 0 20px; color: #182b3e; font-size: 29px; line-height: 1.25; }
+.resume-paper-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 24px; }
+.resume-paper-facts div { min-width: 0; display: flex; gap: 9px; font-size: 13px; line-height: 1.5; }
+.resume-paper-facts span { flex: none; color: #7b8b9c; }
+.resume-paper-facts strong { font-weight: 500; color: #263c52; overflow-wrap: anywhere; }
+.resume-paper-content { padding: 12px 42px 40px; }
+.resume-paper-content section { margin-top: 23px; }
+.resume-paper h2 { margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid #dce7f0; color: #175a93; font-size: 17px; }
+.resume-paper p { margin: 0 0 11px; color: #2d3e50; line-height: 1.85; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.resume-paper .resume-paper-note { margin-top: 28px; padding: 12px 15px; background: #f3f8fc; border-left: 3px solid #8db9dc; color: #5b7186; font-size: 12px; }
+@media (max-width: 600px) { .resume-window { min-width: 0; height: min(88vh, 900px); resize: none; } .resume-window-handle small { display: none; } .resume-window-scroll { padding: 8px; } .resume-paper-header, .resume-paper-content { padding-left: 20px; padding-right: 20px; } .resume-paper-facts { grid-template-columns: 1fr; } }

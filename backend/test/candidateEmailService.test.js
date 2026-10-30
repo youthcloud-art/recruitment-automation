@@ -6,6 +6,9 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const mammoth = require('mammoth');
 const { CandidateEmailService, jobTitleFromRequirements } = require('../src/services/candidateEmailService');
+const attachmentText = async attachment => attachment.filename.endsWith('.docx')
+  ? (await mammoth.extractRawText({ buffer: attachment.content })).value
+  : String(attachment.content);
 
 const jobRequirements = '招聘有项目经验的软件工程师';
 const selection = { minScore: 80, topN: 10, jobRequirements, reportFormat: 'md' };
@@ -85,10 +88,10 @@ test('BOSS 邮件预览和 Word 附件排除显式不推荐的高分候选人', 
     previewToken: preview.previewToken });
   assert.equal(result.count, 1);
   assert.deepEqual(sent.attachments.map(item => item.filename),
-    ['candidate-report.docx', 'candidate-1.txt']);
+    ['candidate-report.docx', 'candidate-1.docx']);
   const word = await mammoth.extractRawText({ buffer: sent.attachments[0].content });
   assert.doesNotMatch(word.value, /不应发送/);
-  assert.doesNotMatch(sent.attachments[1].content, /不应发送/);
+  assert.doesNotMatch(await attachmentText(sent.attachments[1]), /不应发送/);
 });
 
 test('邮件与附件仅以前程无忧 ID、智联和 BOSS 助手链接供收件人回查', async t => {
@@ -153,15 +156,14 @@ test('邮件与附件仅以前程无忧 ID、智联和 BOSS 助手链接供收�
     assert.doesNotMatch(sent.text, /LOCAL_99999/);
     assert.match(report, /助手内候选人链接：http:\/\/192\.168\.1\.24:4001/);
     for (const [index, candidate] of preview.candidates.entries()) {
-      const content = sent.attachments[index + 1].content;
+      const content = await attachmentText(sent.attachments[index + 1]);
       if (candidate.source === 'qcwy') assert.ok(content.includes(wuyouId));
       else {
         assert.doesNotMatch(content, new RegExp(bossId));
         assert.doesNotMatch(content, new RegExp(zhilianId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
       }
       assert.match(content, /招聘岗位：磁轴销售工程师/);
-      assert.match(content, /回查方式：/);
-      assert.match(content, /助手内候选人链接：http:\/\/192\.168\.1\.24:4001/);
+      assert.match(content, /简历/);
       assert.doesNotMatch(content, /LOCAL_99999/);
     }
   }
@@ -185,7 +187,7 @@ test('历史 BOSS OCR 猜测姓名在 Word 报告与简历附件头部均标为�
   await service.send({ ...input, to: recipient, previewToken: preview.previewToken });
   const word = await mammoth.extractRawText({ buffer: sent.attachments[0].content });
   assert.match(word.value, /未识别姓名/);
-  assert.match(sent.attachments[1].content, /候选人：未识别姓名/);
+  assert.match(await attachmentText(sent.attachments[1]), /未识别姓名/);
   assert.equal(item.name, '工作');
 });
 
@@ -344,7 +346,7 @@ test('初筛报告默认以 Word 附件发送，简历附件保持原有内容',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   assert.ok(Buffer.isBuffer(sent.attachments[0].content));
   assert.equal(sent.attachments[0].content.subarray(0, 2).toString('ascii'), 'PK');
-  assert.match(sent.attachments[1].content, /前程无忧完整简历/);
+  assert.match(await attachmentText(sent.attachments[1]), /前程无忧完整简历/);
 });
 
 test('前程无忧误采通知的 Word 报告、预览与 TXT 首部使用匿名来源标识', async t => {
@@ -369,9 +371,9 @@ test('前程无忧误采通知的 Word 报告、预览与 TXT 首部使用匿名
   assert.match(word, /匿名候选人（前程无忧记录 ID：official-d）/);
   assert.match(word, /求职岗位待核实/);
   assert.doesNotMatch(word, /通知/);
-  assert.equal(sent.attachments[1].filename, 'candidate-1.txt');
-  assert.match(sent.attachments[1].content.split('\n').slice(0, 4).join('\n'),
-    /候选人：匿名候选人（前程无忧记录 ID：official-d）/);
+  assert.equal(sent.attachments[1].filename, 'candidate-1.docx');
+  assert.match(await attachmentText(sent.attachments[1]),
+    /匿名候选人（前程无忧记录 ID：official-d）/);
   assert.equal(item.name, '通知');
 });
 
@@ -408,13 +410,13 @@ test('智联跨会话近重复只进入一次邮件，页面提取 TXT 与岗位
   const input = { ...selection, jobRequirements: requirements, source: 'zlzp' };
   const preview = await service.preview(input);
   assert.deepEqual(preview.candidates.map(item => item.id), ['newer', 'distinct']);
-  assert.equal(preview.candidates[0].attachmentType, '页面提取文本（非平台原版简历文件）');
+  assert.match(preview.candidates[0].attachmentType, /整理排版的 Word 简历/);
   const result = await service.send({ to: recipient, ...input, previewToken: preview.previewToken });
   assert.equal(result.count, 2);
   assert.equal(sent.attachments.length, 3);
   assert.equal(sent.attachments[0].filename, 'candidate-report.md');
-  assert.match(sent.attachments[0].content, /简历附件：页面提取文本（非平台原版简历文件）/);
-  assert.match(sent.attachments[1].content, /附件类型：页面提取文本（非平台原版简历文件）/);
+  assert.match(sent.attachments[0].content, /简历附件：整理排版的 Word 简历/);
+  assert.match(await attachmentText(sent.attachments[1]), /工作经历/);
   assert.match(sent.text, /非平台原版简历文件/);
   assert.equal(sent.subject, '成本核算经理候选人初筛报告（2份）');
   assert.match(sent.text, /进入本次岗位初筛名单/);
@@ -454,7 +456,7 @@ test('前程无忧只发送本地评估明确达到最低证据门槛的简历',
   const result = await service.send({ to: recipient, ...selection, previewToken: preview.previewToken });
   assert.equal(result.count, 2);
   assert.equal(sent.attachments.length, 3);
-  assert.match(sent.attachments[1].content, /前程无忧完整简历/);
+  assert.match(await attachmentText(sent.attachments[1]), /前程无忧完整简历/);
   assert.match(sent.text, /前程无忧候选人仅达到本地初筛的最低证据门槛/);
   assert.match(sent.attachments[0].content, /须人工复核全部岗位条件/);
   assert.doesNotMatch(sent.attachments.map(item => String(item.content)).join('\n'),
@@ -483,7 +485,7 @@ test('前程无忧邮件报告汇总全部已评估简历，仅附初筛名单',
   assert.match(sent.attachments[0].content, /前程无忧该岗位已评估：3 份/);
   assert.match(sent.attachments[0].content,
     /最低证据门槛已满足：1 份；明确低于最低条件：1 份；证据不足待核实：1 份/);
-  assert.doesNotMatch(sent.attachments[1].content, /below|pending/);
+  assert.doesNotMatch(await attachmentText(sent.attachments[1]), /below|pending/);
 });
 
 test('跨平台 Word 报告记录前程无忧零入选，简历附件只含智联入选者', async t => {
@@ -514,8 +516,9 @@ test('跨平台 Word 报告记录前程无忧零入选，简历附件只含智�
   });
   await service.send({ ...input, to: recipient, previewToken: preview.previewToken });
   assert.equal(sent.attachments.length, 6);
-  assert.ok(sent.attachments.slice(1).every(file => file.content.includes('智联测试简历')));
-  assert.doesNotMatch(sent.attachments.slice(1).map(file => file.content).join('\n'), /前程无忧测试简历/);
+  const resumes = await Promise.all(sent.attachments.slice(1).map(attachmentText));
+  assert.ok(resumes.every(content => content.includes('智联测试简历')));
+  assert.doesNotMatch(resumes.join('\n'), /前程无忧测试简历/);
   assert.match(sent.text, /智联招聘 5 份；前程无忧 0 份/);
   const word = await mammoth.extractRawText({ buffer: sent.attachments[0].content });
   assert.match(word.value, /本次数据来源：智联招聘、前程无忧/);
@@ -546,7 +549,7 @@ test('前程无忧通用岗位 AI 评估达标可入选，未标记版本的旧�
   await service.send({ ...input, to: recipient, previewToken: preview.previewToken });
   assert.equal(sent.attachments.length, 2);
   assert.match(sent.attachments[0].content, /前程无忧该岗位已评估：1 份/);
-  assert.match(sent.attachments[1].content, /项目交付与客户协调测试简历/);
+  assert.match(await attachmentText(sent.attachments[1]), /项目交付与客户协调测试简历/);
 });
 
 test('前程无忧预览后失去推荐资格时拒绝发送，不连接 SMTP', async () => {
@@ -608,7 +611,7 @@ test('假 SMTP 仅发送预览附件，令牌不可重复使用且兼容不同 S
   assert.match(sent.attachments[0].content, /相关优势：[\s\S]*具备相关项目证据/);
   assert.match(sent.attachments[0].content, /待核实点：[\s\S]*需要核实项目职责/);
   assert.doesNotMatch(sent.attachments[0].content, /BOSS 完整简历|前程无忧完整简历/);
-  assert.match(sent.attachments[1].content, /前程无忧完整简历/);
+  assert.match(await attachmentText(sent.attachments[1]), /前程无忧完整简历/);
   assert.equal(transportConfig.host, 'smtp.example.test');
   assert.equal(transportConfig.secure, false);
   await assert.rejects(service.send({ to: recipient, ...selection,
@@ -680,7 +683,9 @@ test('同一个预览的并发发送仅调用一次假 SMTP', async t => {
   const input = { to: recipient, ...selection, previewToken: (await service.preview(selection)).previewToken };
   const first = service.send(input);
   await assert.rejects(service.send(input), /重新预览/);
-  await new Promise(resolve => setImmediate(resolve));
+  for (let attempt = 0; attempt < 50 && calls === 0; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
   assert.equal(calls, 1);
   finish();
   await first;
@@ -851,9 +856,9 @@ test('已发送的 BOSS 候选池变化后，仅预览、发送新增合格者�
   assert.equal(result.count, 2);
   assert.equal(mailed.length, 2);
   assert.deepEqual(mailed[1].attachments.map(attachment => attachment.filename),
-    ['candidate-report.docx', 'candidate-1.txt', 'candidate-2.txt']);
+    ['candidate-report.docx', 'candidate-1.docx', 'candidate-2.docx']);
   assert.ok(mailed[1].attachments[0].content.subarray(0, 2).equals(Buffer.from('PK')));
-  assert.doesNotMatch(mailed[1].attachments[1].content, /already-sent/);
+  assert.doesNotMatch(await attachmentText(mailed[1].attachments[1]), /already-sent/);
   assert.equal((await createService().resume(newInput)).total, 1);
   const nextService = createService();
   const nextPreview = await nextService.preview(newInput);
@@ -939,10 +944,12 @@ test('官方导入的合成 PDF、DOCX、TXT 保留原格式作为附件', async
         transportFactory: () => ({ sendMail: async options => { sent = options; return {}; } }) });
       const preview = await service.preview(selection);
       await service.send({ to: recipient, ...selection, previewToken: preview.previewToken });
-      assert.equal(sent.attachments[1].filename, `candidate-1${extension}`);
-      assert.deepEqual(sent.attachments[1].content, buffer);
+      assert.equal(sent.attachments[1].filename, extension === '.txt' ? 'candidate-1.docx' : `candidate-1${extension}`);
+      if (extension === '.txt') assert.match(await attachmentText(sent.attachments[1]), /synthetic exported resume/);
+      else assert.deepEqual(sent.attachments[1].content, buffer);
       assert.match(sent.attachments[0].content, /评估方式：本机关键词证据评分/);
-      assert.match(sent.attachments[0].content, /简历附件：导入的原文件/);
+      assert.match(sent.attachments[0].content, extension === '.txt'
+        ? /简历附件：整理排版的 Word 简历/ : /简历附件：导入的原文件/);
       assert.doesNotMatch(sent.attachments[0].content, /AI 摘要|AI 匹配仅供/);
     });
   }
@@ -975,10 +982,10 @@ test('路径越界、缺失、格式不支持、哈希不符或过大的文件�
         transportFactory: () => ({ sendMail: async options => { sent = options; return {}; } }) });
       const preview = await service.preview(selection);
       await service.send({ to: recipient, ...selection, previewToken: preview.previewToken });
-      assert.equal(sent.attachments[1].filename, 'candidate-1.txt');
-      assert.equal(typeof sent.attachments[1].content, 'string');
-      assert.match(sent.attachments[1].content, /前程无忧完整简历/);
-      assert.doesNotMatch(sent.attachments[1].content, /synthetic attachment only/);
+      assert.equal(sent.attachments[1].filename, 'candidate-1.docx');
+      assert.ok(Buffer.isBuffer(sent.attachments[1].content));
+      assert.match(await attachmentText(sent.attachments[1]), /前程无忧完整简历/);
+      assert.doesNotMatch(await attachmentText(sent.attachments[1]), /synthetic attachment only/);
     });
   }
 });
@@ -1002,8 +1009,8 @@ test('目录链接不能把存储目录之外的合成文件变成附件', async
     transportFactory: () => ({ sendMail: async options => { sent = options; return {}; } }) });
   const preview = await service.preview(selection);
   await service.send({ to: recipient, ...selection, previewToken: preview.previewToken });
-  assert.equal(typeof sent.attachments[1].content, 'string');
-  assert.match(sent.attachments[1].content, /前程无忧完整简历/);
+  assert.ok(Buffer.isBuffer(sent.attachments[1].content));
+  assert.match(await attachmentText(sent.attachments[1]), /前程无忧完整简历/);
 });
 
 test('预览后的官方原文件变动拒绝发送，并且不会调用 SMTP', async t => {

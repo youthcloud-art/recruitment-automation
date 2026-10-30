@@ -3,7 +3,7 @@ const router = express.Router();
 const ResumeParserService = require('../services/resumeParserService');
 const ResumeModel = require('../models/resumeModel');
 const { publicCandidate } = require('../utils/candidateDisplay');
-const { createResumeDetailHandler } = require('./resumeDetail');
+const { createResumeDetailHandler, createResumePresentationHandler } = require('./resumeDetail');
 
 /**
  * 解析简历文本
@@ -158,6 +158,8 @@ router.get('/list', async (req, res) => {
  * 获取简历详情
  * GET /api/resume/:id
  */
+router.get('/:id/presentation', createResumePresentationHandler(ResumeModel));
+
 router.get('/:id', createResumeDetailHandler(ResumeModel));
 
 /**
